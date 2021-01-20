@@ -4,9 +4,12 @@ SET(MAIN_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../include")
 add_library(rlpbr SHARED
     ../include/rlpbr.hpp rlpbr.cpp 
     ../include/rlpbr/config.hpp ../include/rlpbr/utils.hpp
-    ../include/rlpbr/environment.hpp
+    ../include/rlpbr/environment.hpp ../include/rlpbr/backend.hpp
     scene.hpp scene.cpp
     shader.hpp utils.hpp
+    optix_render.hpp optix_render.cpp
+    optix_scene.hpp optix_scene.cpp
+    optix_utils.hpp optix_utils.cpp
 )
 
 target_include_directories(rlpbr
@@ -14,7 +17,12 @@ target_include_directories(rlpbr
         ${MAIN_INCLUDE_DIR}
 )
 
-target_link_libraries(rlpbr CUDA::cudart Threads::Threads glm)
+target_include_directories(rlpbr SYSTEM
+    PRIVATE
+        /home/bps/rendering/optix/cur/include
+)
+
+target_link_libraries(rlpbr CUDA::cudart CUDA::nvrtc Threads::Threads glm)
 
 add_library(rlpbr_preprocess SHARED
     import.hpp import.cpp

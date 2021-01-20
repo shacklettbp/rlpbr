@@ -5,8 +5,10 @@
 #include <glm/glm.hpp>
 
 #include <filesystem>
+#include <fstream>
 #include <functional>
 #include <string_view>
+#include <variant>
 #include <vector>
 
 namespace RLpbr {
@@ -67,16 +69,12 @@ struct SceneLoadData {
     MaterialMetadata materialInfo;
     EnvironmentInit envInit;
 
-    HostRenderData data;
+    std::variant<std::ifstream, std::vector<char>> data;
 
-    static SceneLoadData loadFromDisk(std::string_view scene_path,
-                                      LoaderBackend &backend);
+    static SceneLoadData loadFromDisk(std::string_view scene_path);
 };
 
 struct Scene {
-    ~Scene() { std::invoke(destroy, this); }
-    void (Scene::*destroy)();
-
     EnvironmentInit envInit;
 };
 

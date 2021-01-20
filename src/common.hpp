@@ -7,43 +7,60 @@
 
 namespace RLpbr {
 
-struct SceneLoadData;
+struct EnvironmentBackend {};
 
-struct HostRenderData {
-    uint64_t backendIdx;
-    void *ptr;
-};
+struct LoaderBackend {};
 
-struct LoaderBackend {
-    ~LoaderBackend();
-    void (LoaderBackend::*destroy)();
+struct RenderBackend {};
 
-    std::shared_ptr<Scene> (LoaderBackend::*loadScene)(
-        const SceneLoadData &scene_data);
+template <typename LoaderType>
+void destroyLoader(LoaderBackend *ptr)
+{
+    auto *backend_ptr = static_cast<LoaderType *>(ptr);
+    delete backend_ptr;
+}
 
-    HostRenderData (LoaderBackend::*allocHostData)(uint64_t num_bytes);
-};
+template <typename LoaderType>
+LoaderImpl makeLoaderImpl(LoaderBackend *ptr)
+{
+    return LoaderImpl(destroyLoader<LoaderType>,
+        static_cast<LoaderImpl::LoadSceneType>(&LoaderType::loadScene), ptr);
+}
 
-struct EnvironmentState {
-    ~EnvironmentState();
-    void (EnvironmentState::*destroy)();
+template <typename EnvType>
+void destroyEnvironment(EnvironmentBackend *ptr)
+{
+    auto *backend_ptr = static_cast<EnvType *>(ptr);
+    delete backend_ptr;
+}
 
-    void (EnvironmentState::*addLight)(const glm::vec3 &position,
-                                       const glm::vec3 &color);
+template <typename EnvType>
+EnvironmentImpl makeEnvironmentImpl(EnvironmentBackend *ptr)
+{
+    return EnvironmentImpl(destroyEnvironment<EnvType>,
+        static_cast<EnvironmentImpl::AddLightType>(&EnvType::addLight),
+        static_cast<EnvironmentImpl::RemoveLightType>(&EnvType::removeLight),
+        ptr);
+}
 
-    void (EnvironmentState::*deleteLight)(uint32_t idx);
-};
+template <typename RendererType>
+void destroyRenderer(RenderBackend *ptr)
+{
+    auto *backend_ptr = static_cast<RendererType *>(ptr);
+    delete backend_ptr;
+}
 
-struct RenderBackend {
-    ~RenderBackend();
-    void (RenderBackend::*destroy)();
-
-    Handle<LoaderBackend> (RenderBackend::*makeLoader)();
-
-    Handle<EnvironmentState> (RenderBackend::*makeEnvironment)(
-        const std::shared_ptr<Scene> &scene);
-
-    void (RenderBackend::*render)(const Environment *envs);
-};
+template <typename RendererType>
+RendererImpl makeRendererImpl(RenderBackend *ptr)
+{
+    return RendererImpl(destroyRenderer<RendererType>,
+        static_cast<RendererImpl::MakeLoaderType>(
+            &RendererType::makeLoader),
+        static_cast<RendererImpl::MakeEnvironmentType>(
+            &RendererType::makeEnvironment),
+        static_cast<RendererImpl::RenderType>(
+            &RendererType::render),
+        ptr);
+}
 
 }

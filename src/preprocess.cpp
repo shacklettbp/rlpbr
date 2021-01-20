@@ -357,8 +357,7 @@ void ScenePreprocessor::dump(string_view out_path_name)
 
         StagingHeader hdr = make_staging_header(geometry, material_params);
         write(hdr);
-
-        write_staging(geometry, material_params, hdr);
+        write_pad();
 
         // Write mesh infos
         out.write(reinterpret_cast<const char *>(geometry.meshInfos.data()),
@@ -367,7 +366,8 @@ void ScenePreprocessor::dump(string_view out_path_name)
         write_materials(material_metadata);
 
         write_instances(desc, geometry.meshIDRemap);
-        write_pad();
+
+        write_staging(geometry, material_params, hdr);
     };
 
     // Header: magic

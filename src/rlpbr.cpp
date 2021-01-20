@@ -2,65 +2,118 @@
 #include "common.hpp"
 #include "scene.hpp"
 #include "utils.hpp"
+#include "optix_render.hpp"
 
 #include <functional>
+#include <iostream>
 
 using namespace std;
 
 namespace RLpbr {
 
-AssetLoader::AssetLoader(Handle<LoaderBackend> &&backend)
-    : backend_(move(backend))
+AssetLoader::AssetLoader(LoaderImpl backend)
+    : backend_(backend)
 {}
 
 shared_ptr<Scene> AssetLoader::loadScene(string_view scene_path)
 {
     SceneLoadData load_data =
-        SceneLoadData::loadFromDisk(scene_path, *backend_);
+        SceneLoadData::loadFromDisk(scene_path);
 
-    return invoke(backend_->loadScene, backend_, load_data);
+    return backend_.loadScene(move(load_data));
+}
+
+static RendererImpl makeBackend(const RenderConfig &cfg)
+{
+    switch(cfg.backend) {
+        case BackendSelect::Optix: {
+            auto *renderer = new optix::OptixBackend(cfg);
+            return makeRendererImpl<optix::OptixBackend>(renderer);
+        }
+    }
+
+    cerr << "Unknown backend" << endl;
+    abort();
 }
 
 Renderer::Renderer(const RenderConfig &cfg)
-    : backend_(nullptr)
+    : backend_(makeBackend(cfg)),
+      aspect_ratio_(float(cfg.imgWidth) / float(cfg.imgHeight))
 {}
 
 AssetLoader Renderer::makeLoader()
 {
-    return AssetLoader(invoke(backend_->makeLoader, backend_));
+    return AssetLoader(backend_.makeLoader());
 }
 
 Environment Renderer::makeEnvironment(const shared_ptr<Scene> &scene)
 {
-    return makeEnvironment(scene, glm::vec3(0.f), glm::vec3(0.f, 0.f, 1.f),
-                           glm::vec3(0.f, 1.f, 0.f));
+    return Environment(backend_.makeEnvironment(scene), scene);
 }
 
 Environment Renderer::makeEnvironment(const shared_ptr<Scene> &scene,
-                                      const glm::vec3 &eye, const glm::vec3 &look,
-                                      const glm::vec3 &up)
+                                      const glm::vec3 &eye, const glm::vec3 &target,
+                                      const glm::vec3 &up, float vertical_fov,
+                                      float aspect_ratio)
 {
-    return Environment(invoke(backend_->makeEnvironment, backend_, scene),
-                       scene->envInit, eye, look, up);
+    return Environment(backend_.makeEnvironment(scene),
+                       scene, eye, target, up, vertical_fov, aspect_ratio);
 }
 
-Environment::Environment(Handle<EnvironmentState> &&renderer_state,
-                         const EnvironmentInit &init,
-                         const glm::vec3 &eye, const glm::vec3 &look,
-                         const glm::vec3 &up)
-    : renderer_state_(move(renderer_state)),
-      camera_(eye, look, up),
-      transforms_(init.transforms),
-      materials_(init.materials),
-      index_map_(init.indexMap),
-      reverse_id_map_(init.reverseIDMap),
+Environment Renderer::makeEnvironment(const shared_ptr<Scene> &scene,
+                                      const glm::mat4 &camera_to_world,
+                                      float vertical_fov, float aspect_ratio)
+{
+    return Environment(backend_.makeEnvironment(scene),
+                       scene, camera_to_world, vertical_fov, aspect_ratio);
+}
+
+void Renderer::render(const Environment *envs)
+{
+    backend_.render(envs);
+}
+
+Environment::Environment(EnvironmentImpl backend,
+                         const shared_ptr<Scene> &scene,
+                         const Camera &cam)
+    : backend_(backend),
+      scene_(scene),
+      camera_(cam),
+      transforms_(scene_->envInit.transforms),
+      materials_(scene_->envInit.materials),
+      index_map_(scene_->envInit.indexMap),
+      reverse_id_map_(scene_->envInit.reverseIDMap),
       free_ids_(),
       free_light_ids_(),
-      light_ids_(init.lightIDs),
-      light_reverse_ids_(init.lightReverseIDs)
+      light_ids_(scene_->envInit.lightIDs),
+      light_reverse_ids_(scene_->envInit.lightReverseIDs)
 {
     // FIXME use EnvironmentInit lights
 }
+
+Environment::Environment(EnvironmentImpl backend,
+                         const shared_ptr<Scene> &scene)
+    : Environment(backend, scene,
+                  Camera(glm::vec3(0.f), glm::vec3(0.f, 0.f, 1.f),
+                         glm::vec3(0.f, 1.f, 0.f), 90.f, 1.f))
+{}
+
+Environment::Environment(EnvironmentImpl backend,
+                         const shared_ptr<Scene> &scene,
+                         const glm::vec3 &eye, const glm::vec3 &target,
+                         const glm::vec3 &up, float vertical_fov,
+                         float aspect_ratio)
+    : Environment(backend, scene,
+                  Camera(eye, target, up, vertical_fov, aspect_ratio))
+{}
+
+Environment::Environment(EnvironmentImpl backend,
+                         const shared_ptr<Scene> &scene,
+                         const glm::mat4 &camera_to_world, float vertical_fov,
+                         float aspect_ratio)
+    : Environment(backend, scene,
+                  Camera(camera_to_world, vertical_fov, aspect_ratio))
+{}
 
 uint32_t Environment::addInstance(uint32_t model_idx, uint32_t material_idx,
                                   const glm::mat4x3 &model_matrix)
@@ -111,7 +164,7 @@ void Environment::deleteInstance(uint32_t inst_id)
 uint32_t Environment::addLight(const glm::vec3 &position,
                                const glm::vec3 &color)
 {
-    invoke(renderer_state_->addLight, renderer_state_, position, color);
+    backend_.addLight(position, color);
     uint32_t light_idx = light_reverse_ids_.size();
 
     uint32_t light_id;
@@ -130,10 +183,10 @@ uint32_t Environment::addLight(const glm::vec3 &position,
     return light_id;
 }
 
-void Environment::deleteLight(uint32_t light_id)
+void Environment::removeLight(uint32_t light_id)
 {
     uint32_t light_idx = light_ids_[light_id];
-    invoke(renderer_state_->deleteLight, renderer_state_, light_idx);
+    backend_.removeLight(light_idx);
 
     if (light_reverse_ids_.size() > 1) {
         light_reverse_ids_[light_idx] = light_reverse_ids_.back();
@@ -144,23 +197,79 @@ void Environment::deleteLight(uint32_t light_id)
     free_light_ids_.push_back(light_id);
 }
 
-LoaderBackend::~LoaderBackend()
+EnvironmentImpl::EnvironmentImpl(
+    DestroyType destroy_ptr, AddLightType add_light_ptr,
+    RemoveLightType remove_light_ptr,
+    EnvironmentBackend *state)
+    : destroy_ptr_(destroy_ptr),
+      add_light_ptr_(add_light_ptr),
+      remove_light_ptr_(remove_light_ptr),
+      state_(state)
+{}
+
+EnvironmentImpl::~EnvironmentImpl()
 {
-    invoke(destroy, this);
+    invoke(destroy_ptr_, state_);
 }
 
-EnvironmentState::~EnvironmentState()
+uint32_t EnvironmentImpl::addLight(const glm::vec3 &position,
+                                   const glm::vec3 &color)
 {
-    invoke(destroy, this);
+    return invoke(add_light_ptr_, state_, position, color);
 }
 
-RenderBackend::~RenderBackend()
+void EnvironmentImpl::removeLight(uint32_t idx)
 {
-    invoke(destroy, this);
+    invoke(remove_light_ptr_, state_, idx);
 }
 
-template struct HandleDeleter<LoaderBackend>;
-template struct HandleDeleter<RenderBackend>;
-template struct HandleDeleter<EnvironmentState>;
+LoaderImpl::LoaderImpl(DestroyType destroy_ptr, LoadSceneType load_scene_ptr,
+                       LoaderBackend *state)
+    : destroy_ptr_(destroy_ptr),
+      load_scene_ptr_(load_scene_ptr),
+      state_(state)
+{}
+
+LoaderImpl::~LoaderImpl()
+{
+    invoke(destroy_ptr_, state_);
+}
+
+shared_ptr<Scene> LoaderImpl::loadScene(SceneLoadData &&scene_data)
+{
+    return invoke(load_scene_ptr_, state_, move(scene_data));
+}
+
+RendererImpl::RendererImpl(DestroyType destroy_ptr,
+                           MakeLoaderType make_loader_ptr,
+                           MakeEnvironmentType make_env_ptr,
+                           RenderType render_ptr, RenderBackend *state)
+    : destroy_ptr_(destroy_ptr),
+      make_loader_ptr_(make_loader_ptr),
+      make_env_ptr_(make_env_ptr),
+      render_ptr_(render_ptr),
+      state_(state)
+{}
+
+RendererImpl::~RendererImpl()
+{
+    invoke(destroy_ptr_, state_);
+}
+
+LoaderImpl RendererImpl::makeLoader()
+{
+    return invoke(make_loader_ptr_, state_);
+}
+
+EnvironmentImpl RendererImpl::makeEnvironment(
+    const std::shared_ptr<Scene> &scene) const
+{
+    return invoke(make_env_ptr_, state_, scene);
+}
+
+void RendererImpl::render(const Environment *envs)
+{
+    invoke(render_ptr_, state_, envs);
+}
 
 }
