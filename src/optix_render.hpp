@@ -29,7 +29,7 @@ struct RenderState {
 
 class OptixBackend : public RenderBackend {
 public:
-    OptixBackend(const RenderConfig &cfg);
+    OptixBackend(const RenderConfig &cfg, bool validate);
     LoaderImpl makeLoader();
 
     EnvironmentImpl makeEnvironment(const std::shared_ptr<Scene> &scene);

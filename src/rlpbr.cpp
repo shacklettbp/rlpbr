@@ -23,11 +23,22 @@ shared_ptr<Scene> AssetLoader::loadScene(string_view scene_path)
     return backend_.loadScene(move(load_data));
 }
 
+static bool enableValidation()
+{
+    char *enable_env = getenv("RLPBR_VALIDATE");
+    if (!enable_env || enable_env[0] == '0')
+        return false;
+
+    return true;
+}
+
 static RendererImpl makeBackend(const RenderConfig &cfg)
 {
+    bool validate = enableValidation();
+
     switch(cfg.backend) {
         case BackendSelect::Optix: {
-            auto *renderer = new optix::OptixBackend(cfg);
+            auto *renderer = new optix::OptixBackend(cfg, validate);
             return makeRendererImpl<optix::OptixBackend>(renderer);
         }
     }
