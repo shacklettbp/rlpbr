@@ -2,7 +2,9 @@
 
 #include <optix.h>
 
+#ifndef __CUDACC__
 #include <cuda_runtime.h>
+#endif
 
 namespace RLpbr {
 namespace optix {

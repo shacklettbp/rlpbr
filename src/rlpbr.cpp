@@ -11,8 +11,8 @@ using namespace std;
 
 namespace RLpbr {
 
-AssetLoader::AssetLoader(LoaderImpl backend)
-    : backend_(backend)
+AssetLoader::AssetLoader(LoaderImpl &&backend)
+    : backend_(move(backend))
 {}
 
 shared_ptr<Scene> AssetLoader::loadScene(string_view scene_path)
@@ -57,7 +57,8 @@ Environment Renderer::makeEnvironment(const shared_ptr<Scene> &scene,
                                       float aspect_ratio)
 {
     return Environment(backend_.makeEnvironment(scene),
-                       scene, eye, target, up, vertical_fov, aspect_ratio);
+                       scene, eye, target, up, vertical_fov,
+                       aspect_ratio == 0.f ? aspect_ratio_ : aspect_ratio);
 }
 
 Environment Renderer::makeEnvironment(const shared_ptr<Scene> &scene,
@@ -65,7 +66,8 @@ Environment Renderer::makeEnvironment(const shared_ptr<Scene> &scene,
                                       float vertical_fov, float aspect_ratio)
 {
     return Environment(backend_.makeEnvironment(scene),
-                       scene, camera_to_world, vertical_fov, aspect_ratio);
+                       scene, camera_to_world, vertical_fov,
+                       aspect_ratio == 0.f ? aspect_ratio_ : aspect_ratio);
 }
 
 Environment Renderer::makeEnvironment(const std::shared_ptr<Scene> &scene,
@@ -77,7 +79,8 @@ Environment Renderer::makeEnvironment(const std::shared_ptr<Scene> &scene,
 {
     return Environment(backend_.makeEnvironment(scene),
                        scene, pos, fwd, up, right,
-                       vertical_fov, aspect_ratio);
+                       vertical_fov,
+                       aspect_ratio == 0.f ? aspect_ratio_ : aspect_ratio);
 }
 
 void Renderer::render(const Environment *envs)
@@ -85,10 +88,20 @@ void Renderer::render(const Environment *envs)
     backend_.render(envs);
 }
 
-Environment::Environment(EnvironmentImpl backend,
+void Renderer::waitForFrame(uint32_t frame_idx)
+{
+    backend_.waitForFrame(frame_idx);
+}
+
+float *Renderer::getOutputPointer(uint32_t frame_idx)
+{
+    return backend_.getOutputPointer(frame_idx);
+}
+
+Environment::Environment(EnvironmentImpl &&backend,
                          const shared_ptr<Scene> &scene,
                          const Camera &cam)
-    : backend_(backend),
+    : backend_(move(backend)),
       scene_(scene),
       camera_(cam),
       transforms_(scene_->envInit.transforms),
@@ -103,38 +116,38 @@ Environment::Environment(EnvironmentImpl backend,
     // FIXME use EnvironmentInit lights
 }
 
-Environment::Environment(EnvironmentImpl backend,
+Environment::Environment(EnvironmentImpl &&backend,
                          const shared_ptr<Scene> &scene)
-    : Environment(backend, scene,
+    : Environment(move(backend), scene,
                   Camera(glm::vec3(0.f), glm::vec3(0.f, 0.f, 1.f),
                          glm::vec3(0.f, 1.f, 0.f), 90.f, 1.f))
 {}
 
-Environment::Environment(EnvironmentImpl backend,
+Environment::Environment(EnvironmentImpl &&backend,
                          const shared_ptr<Scene> &scene,
                          const glm::vec3 &eye, const glm::vec3 &target,
                          const glm::vec3 &up, float vertical_fov,
                          float aspect_ratio)
-    : Environment(backend, scene,
+    : Environment(move(backend), scene,
                   Camera(eye, target, up, vertical_fov, aspect_ratio))
 {}
 
-Environment::Environment(EnvironmentImpl backend,
+Environment::Environment(EnvironmentImpl &&backend,
                          const shared_ptr<Scene> &scene,
                          const glm::mat4 &camera_to_world, float vertical_fov,
                          float aspect_ratio)
-    : Environment(backend, scene,
+    : Environment(move(backend), scene,
                   Camera(camera_to_world, vertical_fov, aspect_ratio))
 {}
 
-Environment::Environment(EnvironmentImpl backend,
+Environment::Environment(EnvironmentImpl &&backend,
                          const shared_ptr<Scene> &scene,
                          const glm::vec3 &position_vec,
                          const glm::vec3 &forward_vec,
                          const glm::vec3 &up_vec,
                          const glm::vec3 &right_vec,
                          float vertical_fov, float aspect_ratio)
-    : Environment(backend, scene,
+    : Environment(move(backend), scene,
                   Camera(position_vec, forward_vec, up_vec, right_vec,
                          vertical_fov, aspect_ratio))
 {}
@@ -231,9 +244,20 @@ EnvironmentImpl::EnvironmentImpl(
       state_(state)
 {}
 
+EnvironmentImpl::EnvironmentImpl(EnvironmentImpl &&o)
+    : destroy_ptr_(o.destroy_ptr_),
+      add_light_ptr_(o.add_light_ptr_),
+      remove_light_ptr_(o.remove_light_ptr_),
+      state_(o.state_)
+{
+    o.state_ = nullptr;
+}
+
 EnvironmentImpl::~EnvironmentImpl()
 {
-    invoke(destroy_ptr_, state_);
+    if (state_) {
+        invoke(destroy_ptr_, state_);
+    }
 }
 
 uint32_t EnvironmentImpl::addLight(const glm::vec3 &position,
@@ -254,9 +278,19 @@ LoaderImpl::LoaderImpl(DestroyType destroy_ptr, LoadSceneType load_scene_ptr,
       state_(state)
 {}
 
+LoaderImpl::LoaderImpl(LoaderImpl &&o)
+    : destroy_ptr_(o.destroy_ptr_),
+      load_scene_ptr_(o.load_scene_ptr_),
+      state_(o.state_)
+{
+    o.state_ = nullptr;
+}
+
 LoaderImpl::~LoaderImpl()
 {
-    invoke(destroy_ptr_, state_);
+    if (state_) {
+        invoke(destroy_ptr_, state_);
+    }
 }
 
 shared_ptr<Scene> LoaderImpl::loadScene(SceneLoadData &&scene_data)
@@ -267,17 +301,36 @@ shared_ptr<Scene> LoaderImpl::loadScene(SceneLoadData &&scene_data)
 RendererImpl::RendererImpl(DestroyType destroy_ptr,
                            MakeLoaderType make_loader_ptr,
                            MakeEnvironmentType make_env_ptr,
-                           RenderType render_ptr, RenderBackend *state)
+                           RenderType render_ptr,
+                           WaitType wait_ptr,
+                           GetOutputType get_output_ptr,
+                           RenderBackend *state)
     : destroy_ptr_(destroy_ptr),
       make_loader_ptr_(make_loader_ptr),
       make_env_ptr_(make_env_ptr),
       render_ptr_(render_ptr),
+      wait_ptr_(wait_ptr),
+      get_output_ptr_(get_output_ptr),
       state_(state)
 {}
 
+RendererImpl::RendererImpl(RendererImpl &&o)
+    : destroy_ptr_(o.destroy_ptr_),
+      make_loader_ptr_(o.make_loader_ptr_),
+      make_env_ptr_(o.make_env_ptr_),
+      render_ptr_(o.render_ptr_),
+      wait_ptr_(o.wait_ptr_),
+      get_output_ptr_(o.get_output_ptr_),
+      state_(o.state_)
+{
+    o.state_ = nullptr;
+}
+
 RendererImpl::~RendererImpl()
 {
-    invoke(destroy_ptr_, state_);
+    if (state_) {
+        invoke(destroy_ptr_, state_);
+    }
 }
 
 LoaderImpl RendererImpl::makeLoader()
@@ -294,6 +347,16 @@ EnvironmentImpl RendererImpl::makeEnvironment(
 void RendererImpl::render(const Environment *envs)
 {
     invoke(render_ptr_, state_, envs);
+}
+
+void RendererImpl::waitForFrame(uint32_t frame_idx)
+{
+    invoke(wait_ptr_, state_, frame_idx);
+}
+
+float *RendererImpl::getOutputPointer(uint32_t frame_idx)
+{
+    return invoke(get_output_ptr_, state_, frame_idx);
 }
 
 }

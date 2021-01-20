@@ -18,7 +18,7 @@ namespace optix {
 static void optixLog(unsigned int level, const char *tag,
                      const char *message, void *)
 {
-    cerr << "[" << std::setw( 2 ) << level << "][" << std::setw( 12 )
+    cerr << "[" << setw(2) << level << "][" << setw(12)
          << tag << "]: " << message << "\n";
 }
 
@@ -47,50 +47,50 @@ static OptixDeviceContext initializeOptix(uint32_t gpu_id)
 
 static vector<char> compileToPTX(const char *cu_path)
 {
-    ifstream cu_file(cu_path, ios::binary);
-    cu_file.seekg(ios::end);
+    ifstream cu_file(cu_path, ios::binary | ios::ate);
     size_t num_cu_bytes = cu_file.tellg();
     cu_file.seekg(ios::beg);
+
     vector<char> cu_src(num_cu_bytes);
     cu_file.read(cu_src.data(), num_cu_bytes);
     cu_file.close();
 
     nvrtcProgram prog;
-    auto res = nvrtcCreateProgram(&prog, cu_src.data(), cu_path, 0,
-                                  nullptr, nullptr);
+    REQ_NVRTC(nvrtcCreateProgram(&prog, cu_src.data(), cu_path, 0,
+                                 nullptr, nullptr));
 
-    if (res != NVRTC_SUCCESS) {
-        cerr << "Creating NVRTC program failed" << endl;
-        abort();
-    }
+    static const char *nvrtc_options[] = {
+        NVRTC_OPTIONS
+        "--device-debug",
+    };
 
-    res = nvrtcCompileProgram(prog, 0, nullptr);
+    auto res = nvrtcCompileProgram(prog,
+        sizeof(nvrtc_options) / sizeof(nvrtc_options[0]), nvrtc_options);
 
     if (res != NVRTC_SUCCESS) {
         cerr << "NVRTC compilation failed" << endl;
+
+        // Retrieve log output
+        size_t log_size = 0;
+        REQ_NVRTC(nvrtcGetProgramLogSize(prog, &log_size));
+
+        vector<char> nvrtc_log(log_size);
+        if (log_size > 1) {
+            REQ_NVRTC(nvrtcGetProgramLog(prog, &nvrtc_log[0]));
+            cerr << nvrtc_log.data() << endl;
+        }
+
         abort();
     }
 
     size_t num_ptx_bytes;
-    res = nvrtcGetPTXSize(prog, &num_ptx_bytes);
-    if (res != NVRTC_SUCCESS) {
-        cerr << "NVRTC ptx bytes failed" << endl;
-        abort();
-    }
+    REQ_NVRTC(nvrtcGetPTXSize(prog, &num_ptx_bytes));
 
     vector<char> ptx_data(num_ptx_bytes);
 
-    res = nvrtcGetPTX(prog, ptx_data.data());
-    if (res != NVRTC_SUCCESS) {
-        cerr << "NVRTC failed to get PTX" << endl;
-        abort();
-    }
+    REQ_NVRTC(nvrtcGetPTX(prog, ptx_data.data()));
 
-    res = nvrtcDestroyProgram(&prog);
-    if (res != NVRTC_SUCCESS) {
-        cerr << "NVRTC cleanup failed" << endl;
-        abort();
-    }
+    REQ_NVRTC(nvrtcDestroyProgram(&prog));
 
     return ptx_data;
 }
@@ -98,6 +98,8 @@ static vector<char> compileToPTX(const char *cu_path)
 static Pipeline buildPipeline(OptixDeviceContext ctx)
 {
     OptixModuleCompileOptions module_compile_options {};
+    module_compile_options.debugLevel = OPTIX_COMPILE_DEBUG_LEVEL_FULL;
+    module_compile_options.optLevel = OPTIX_COMPILE_OPTIMIZATION_LEVEL_0;
 
     OptixPipelineCompileOptions pipeline_compile_options {};
     pipeline_compile_options.traversableGraphFlags =
@@ -292,17 +294,23 @@ OptixBackend::OptixBackend(const RenderConfig &cfg)
       img_dims_(cfg.imgWidth, cfg.imgHeight),
       cur_frame_(0),
       num_frames_(1), // FIXME
-      stream_([]() {
+      streams_([this]() {
           cudaStream_t strm;
           REQ_CUDA(cudaStreamCreate(&strm));
-          return strm;
+
+          cudaStream_t strm2 = nullptr;
+          if (num_frames_ > 1) {
+              REQ_CUDA(cudaStreamCreate(&strm2));
+          }
+
+          return array<cudaStream_t, 2>{strm, strm2};
       }()),
       ctx_(initializeOptix(cfg.gpuID)),
       pipeline_(buildPipeline(ctx_)),
-      sbt_(buildSBT(stream_, pipeline_)),
-      render_state_(makeRenderState(cfg, stream_, num_frames_))
+      sbt_(buildSBT(streams_[0], pipeline_)),
+      render_state_(makeRenderState(cfg, streams_[0], num_frames_))
 {
-    REQ_CUDA(cudaStreamSynchronize(stream_));
+    REQ_CUDA(cudaStreamSynchronize(streams_[0]));
 }
 
 LoaderImpl OptixBackend::makeLoader()
@@ -350,13 +358,21 @@ void OptixBackend::render(const Environment *envs)
 
     const ShaderParams &dev_params = render_state_.deviceParams[cur_frame_];
 
-    REQ_OPTIX(optixLaunch(pipeline_.hdl, stream_,
+    REQ_OPTIX(optixLaunch(pipeline_.hdl, streams_[cur_frame_],
         (CUdeviceptr)&dev_params, sizeof(ShaderParams),
         &sbt_.hdl, img_dims_.x, img_dims_.y, batch_size_));
 
-    REQ_CUDA(cudaStreamSynchronize(stream_));
-
     cur_frame_ = (cur_frame_ + 1) % num_frames_;
+}
+
+void OptixBackend::waitForFrame(uint32_t frame_idx)
+{
+    REQ_CUDA(cudaStreamSynchronize(streams_[frame_idx]));
+}
+
+float *OptixBackend::getOutputPointer(uint32_t frame_idx)
+{
+    return render_state_.hostParams[frame_idx].outputBuffer;
 }
 
 }
