@@ -2,9 +2,14 @@
 
 namespace RLpbr {
 
+struct SceneLoadData;
 struct Scene;
+struct EnvironmentBackend;
 struct LoaderBackend;
-struct EnvironmentState;
 struct RenderBackend;
+
+class Environment;
+class AssetLoader;
+class Renderer;
 
 }

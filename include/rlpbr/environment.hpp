@@ -1,37 +1,53 @@
 #pragma once 
 
 #include <rlpbr/fwd.hpp>
+#include <rlpbr/backend.hpp>
 #include <rlpbr/utils.hpp>
 
 #include <glm/glm.hpp>
-#include <variant>
 #include <vector>
 
 namespace RLpbr {
 
 struct EnvironmentInit;
 
-struct CameraVectors {
+struct Camera {
+    inline Camera(const glm::vec3 &eye, const glm::vec3 &target,
+                  const glm::vec3 &up_vec, float tan_fov,
+                  float aspect_ratio);
+
+    inline Camera(const glm::mat4 &camera_to_world,
+                  float tan_fov, float aspect_ratio);
+
+    inline void updateView(const glm::vec3 &eye, const glm::vec3 &target,
+                           const glm::vec3 &up_vec);
+
+    inline void updateView(const glm::mat4 &camera_to_world);
+
     glm::vec3 position;
+    glm::vec3 view;
     glm::vec3 up;
     glm::vec3 right;
-};
 
-struct Camera {
-    inline Camera(const glm::vec3 &eye, const glm::vec3 &look_vec,
-                  const glm::vec3 &up_vec);
-
-    inline Camera(const glm::mat4 &view_matrix);
-
-    std::variant<CameraVectors, glm::mat4> state;
+    float tanFOV;
+    float aspectRatio;
 };
 
 class Environment {
 public:
-    Environment(Handle<EnvironmentState> &&renderer_state_,
-                const EnvironmentInit &init,
-                const glm::vec3 &eye, const glm::vec3 &look,
-                const glm::vec3 &up);
+    Environment(EnvironmentImpl backend,
+                const std::shared_ptr<Scene> &scene,
+                const glm::vec3 &eye, const glm::vec3 &target,
+                const glm::vec3 &up, float vertical_fov,
+                float aspect_ratio);
+
+    Environment(EnvironmentImpl backend,
+                const std::shared_ptr<Scene> &scene,
+                const glm::mat4 &camera_to_world, float vertical_fov,
+                float aspect_ratio);
+
+    Environment(EnvironmentImpl backend,
+                const std::shared_ptr<Scene> &scene);
 
     Environment(const Environment &) = delete;
     Environment & operator=(const Environment &) = delete;
@@ -58,14 +74,23 @@ public:
 
     inline void setInstanceMaterial(uint32_t inst_id, uint32_t material_idx);
 
-    inline void setCameraView(const glm::vec3 &eye, const glm::vec3 &look,
+    inline void setCameraView(const glm::vec3 &eye, const glm::vec3 &target,
                               const glm::vec3 &up);
+    inline void setCameraView(const glm::mat4 &camera_to_world);
 
     uint32_t addLight(const glm::vec3 &position, const glm::vec3 &color);
-    void deleteLight(uint32_t light_id);
+    void removeLight(uint32_t light_id);
+
+    inline const std::shared_ptr<Scene> getScene() const;
+    inline const Camera &getCamera() const;
 
 private:
-    Handle<EnvironmentState> renderer_state_;
+    Environment(EnvironmentImpl backend,
+                const std::shared_ptr<Scene> &scene,
+                const Camera &cam);
+
+    EnvironmentImpl backend_;
+    std::shared_ptr<Scene> scene_;
 
     Camera camera_;
 

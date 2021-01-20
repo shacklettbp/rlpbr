@@ -236,6 +236,10 @@ private:
     friend class IterBase<T>;
 };
 
+inline uint64_t alignOffset(uint64_t offset, uint64_t alignment)
+{
+    return ((offset + alignment - 1) / alignment) * alignment;
+}
 
 template <typename T>
 inline void HandleDeleter<T>::operator()(std::remove_extent_t<T> *ptr) const

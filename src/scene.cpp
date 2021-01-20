@@ -8,8 +8,7 @@ using namespace std;
 
 namespace RLpbr {
 
-SceneLoadData SceneLoadData::loadFromDisk(string_view scene_path_name,
-                                          LoaderBackend &backend)
+SceneLoadData SceneLoadData::loadFromDisk(string_view scene_path_name)
 {
     filesystem::path scene_path(scene_path_name);
     filesystem::path scene_dir = scene_path.parent_path();
@@ -37,12 +36,6 @@ SceneLoadData SceneLoadData::loadFromDisk(string_view scene_path_name,
     if (post_hdr_alignment != 0) {
         scene_file.seekg(256 - post_hdr_alignment, ios::cur);
     }
-
-    HostRenderData staging_data = invoke(backend.allocHostData, backend,
-                                         hdr.totalBytes);
-
-    scene_file.read(reinterpret_cast<char *>(staging_data.ptr),
-                    hdr.totalBytes);
 
     vector<MeshInfo> mesh_infos(hdr.numMeshes);
     scene_file.read(reinterpret_cast<char *>(mesh_infos.data()),
@@ -84,12 +77,18 @@ SceneLoadData SceneLoadData::loadFromDisk(string_view scene_path_name,
         });
     }
 
+    cur_pos = scene_file.tellg();
+    auto post_inst_alignment = cur_pos % 256;
+    if (post_inst_alignment != 0) {
+        scene_file.seekg(256 - post_inst_alignment, ios::cur);
+    }
+
     return SceneLoadData {
         hdr,
         move(mesh_infos),
         move(materials),
         EnvironmentInit(move(instances), {}, hdr.numMeshes),
-        staging_data,
+        variant<ifstream, vector<char>>(move(scene_file)),
     };
 }
 
