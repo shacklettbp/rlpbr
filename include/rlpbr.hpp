@@ -37,6 +37,13 @@ public:
                                 const glm::mat4 &camera_to_world,
                                 float vertical_fov = 90.f,
                                 float aspect_ratio = 0.f);
+    Environment makeEnvironment(const std::shared_ptr<Scene> &scene,
+                                const glm::vec3 &pos,
+                                const glm::vec3 &fwd,
+                                const glm::vec3 &up,
+                                const glm::vec3 &right,
+                                float vertical_fov = 90.f,
+                                float aspect_ratio = 0.f);
     
     void render(const Environment *envs);
 

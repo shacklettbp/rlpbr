@@ -68,6 +68,18 @@ Environment Renderer::makeEnvironment(const shared_ptr<Scene> &scene,
                        scene, camera_to_world, vertical_fov, aspect_ratio);
 }
 
+Environment Renderer::makeEnvironment(const std::shared_ptr<Scene> &scene,
+                                      const glm::vec3 &pos,
+                                      const glm::vec3 &fwd,
+                                      const glm::vec3 &up,
+                                      const glm::vec3 &right,
+                                      float vertical_fov, float aspect_ratio)
+{
+    return Environment(backend_.makeEnvironment(scene),
+                       scene, pos, fwd, up, right,
+                       vertical_fov, aspect_ratio);
+}
+
 void Renderer::render(const Environment *envs)
 {
     backend_.render(envs);
@@ -113,6 +125,18 @@ Environment::Environment(EnvironmentImpl backend,
                          float aspect_ratio)
     : Environment(backend, scene,
                   Camera(camera_to_world, vertical_fov, aspect_ratio))
+{}
+
+Environment::Environment(EnvironmentImpl backend,
+                         const shared_ptr<Scene> &scene,
+                         const glm::vec3 &position_vec,
+                         const glm::vec3 &forward_vec,
+                         const glm::vec3 &up_vec,
+                         const glm::vec3 &right_vec,
+                         float vertical_fov, float aspect_ratio)
+    : Environment(backend, scene,
+                  Camera(position_vec, forward_vec, up_vec, right_vec,
+                         vertical_fov, aspect_ratio))
 {}
 
 uint32_t Environment::addInstance(uint32_t model_idx, uint32_t material_idx,

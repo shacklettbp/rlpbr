@@ -65,6 +65,20 @@ Camera::Camera(const glm::mat4 &camera_to_world,
       aspectRatio(aspect_ratio)
 {}
 
+Camera::Camera(const glm::vec3 &position_vec,
+               const glm::vec3 &forward_vec,
+               const glm::vec3 &up_vec,
+               const glm::vec3 &right_vec,
+               float vertical_fov,
+               float aspect_ratio)
+    : position(position_vec),
+      view(forward_vec),
+      up(up_vec),
+      right(right_vec),
+      tanFOV(tanf(vertical_fov / 2.f)),
+      aspectRatio(aspect_ratio)
+{}
+
 void Camera::updateView(const glm::vec3 &eye, const glm::vec3 &target,
                         const glm::vec3 &up_vec)
 {
@@ -82,6 +96,17 @@ void Camera::updateView(const glm::mat4 &camera_to_world)
     view = extractViewVector(camera_to_world);
     up = extractUpVector(camera_to_world);
     right = extractRightVector(camera_to_world);
+}
+
+void Camera::updateView(const glm::vec3 &position_vec,
+                        const glm::vec3 &forward_vec,
+                        const glm::vec3 &up_vec,
+                        const glm::vec3 &right_vec)
+{
+    position = position_vec;
+    view = forward_vec;
+    up = up_vec;
+    right = right_vec;
 }
 
 uint32_t Environment::addInstance(uint32_t model_idx, uint32_t material_idx,

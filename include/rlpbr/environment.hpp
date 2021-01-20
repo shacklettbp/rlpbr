@@ -13,16 +13,28 @@ struct EnvironmentInit;
 
 struct Camera {
     inline Camera(const glm::vec3 &eye, const glm::vec3 &target,
-                  const glm::vec3 &up_vec, float tan_fov,
+                  const glm::vec3 &up_vec, float vertical_fov,
                   float aspect_ratio);
 
     inline Camera(const glm::mat4 &camera_to_world,
-                  float tan_fov, float aspect_ratio);
+                  float vertical_fov, float aspect_ratio);
+
+    inline Camera(const glm::vec3 &position_vec,
+                  const glm::vec3 &forward_vec,
+                  const glm::vec3 &up_vec,
+                  const glm::vec3 &right_vec,
+                  float vertical_fov,
+                  float aspect_ratio);
 
     inline void updateView(const glm::vec3 &eye, const glm::vec3 &target,
                            const glm::vec3 &up_vec);
 
     inline void updateView(const glm::mat4 &camera_to_world);
+
+    inline void updateView(const glm::vec3 &position_vec,
+                           const glm::vec3 &forward_vec,
+                           const glm::vec3 &up_vec,
+                           const glm::vec3 &right_vec);
 
     glm::vec3 position;
     glm::vec3 view;
@@ -43,8 +55,16 @@ public:
 
     Environment(EnvironmentImpl backend,
                 const std::shared_ptr<Scene> &scene,
-                const glm::mat4 &camera_to_world, float vertical_fov,
-                float aspect_ratio);
+                const glm::mat4 &camera_to_world,
+                float vertical_fov, float aspect_ratio);
+
+    Environment(EnvironmentImpl backend,
+                const std::shared_ptr<Scene> &scene,
+                const glm::vec3 &position_vec,
+                const glm::vec3 &forward_vec,
+                const glm::vec3 &up_vec,
+                const glm::vec3 &right_vec,
+                float vertical_fov, float aspect_ratio);
 
     Environment(EnvironmentImpl backend,
                 const std::shared_ptr<Scene> &scene);
