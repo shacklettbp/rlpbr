@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cuda_runtime.h>
+#include <nvrtc.h>
 #include <optix.h>
 
 namespace RLpbr {
@@ -36,6 +37,21 @@ static inline cudaError_t checkCuda(cudaError_t res, const char *msg,
     return res;
 }
 
+void printNVRTCError(nvrtcResult res, const char *msg);
+
+static inline nvrtcResult checkNVRTC(nvrtcResult res, const char *msg,
+                                     bool fatal = true) noexcept
+{
+    if (res != NVRTC_SUCCESS) {
+        printNVRTCError(res, msg);
+        if (fatal) {
+            std::abort();
+        }
+    }
+
+    return res;
+}
+
 #define STRINGIFY_HELPER(m) #m
 #define STRINGIFY(m) STRINGIFY_HELPER(m)
 
@@ -45,6 +61,9 @@ static inline cudaError_t checkCuda(cudaError_t res, const char *msg,
 
 #define REQ_CUDA(expr) checkCuda((expr), LOC_APPEND(#expr))
 #define CHK_CUDA(expr) checkCuda((expr), LOC_APPEND(#expr), false)
+
+#define REQ_NVRTC(expr) checkNVRTC((expr), LOC_APPEND(#expr))
+#define CHK_NVRTC(expr) checkNVRTC((expr), LOC_APPEND(#expr), false)
 
 inline void *allocCU(size_t num_bytes)
 {

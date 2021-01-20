@@ -12,7 +12,7 @@ namespace RLpbr {
 
 class AssetLoader {
 public:
-    AssetLoader(LoaderImpl backend);
+    AssetLoader(LoaderImpl &&backend);
 
     std::shared_ptr<Scene> loadScene(std::string_view scene_path);
 
@@ -47,9 +47,13 @@ public:
     
     void render(const Environment *envs);
 
+    void waitForFrame(uint32_t frame_idx = 0);
+
+    float *getOutputPointer(uint32_t frame_idx = 0);
+
 private:
     RendererImpl backend_;
-    glm::vec2 aspect_ratio_;
+    float aspect_ratio_;
 };
 
 }

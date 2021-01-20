@@ -24,6 +24,24 @@ target_include_directories(rlpbr SYSTEM
 
 target_link_libraries(rlpbr CUDA::cudart CUDA::nvrtc Threads::Threads glm)
 
+set(NVRTC_COMPILE_FLAGS -std=c++17 -default-device -rdc true -arch compute_86
+    -use_fast_math -lineinfo)
+
+get_target_property(RLPBR_INCLUDES rlpbr INCLUDE_DIRECTORIES)
+set(NVRTC_OPTIONS)
+foreach(f ${RLPBR_INCLUDES})
+    set(NVRTC_OPTIONS "${NVRTC_OPTIONS}\"-I${f}\", ")
+endforeach()
+foreach(f ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES})
+    set(NVRTC_OPTIONS "${NVRTC_OPTIONS}\"-I${f}\", ")
+endforeach()
+foreach(f ${NVRTC_COMPILE_FLAGS})
+    set(NVRTC_OPTIONS "${NVRTC_OPTIONS}\"${f}\", ")
+endforeach()
+set(NVRTC_OPTIONS "${NVRTC_OPTIONS}")
+
+target_compile_definitions(rlpbr PRIVATE "-DNVRTC_OPTIONS=${NVRTC_OPTIONS}")
+
 add_library(rlpbr_preprocess SHARED
     import.hpp import.cpp
     gltf.hpp gltf.cpp

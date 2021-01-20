@@ -3,6 +3,9 @@
 #include "shader.hpp"
 
 #include <optix_stubs.h>
+#include <iostream>
+
+#include <glm/gtc/type_ptr.hpp>
 
 using namespace std;
 
@@ -36,19 +39,30 @@ shared_ptr<Scene> OptixLoader::loadScene(SceneLoadData &&load_info)
 {
     CUdeviceptr scene_storage = (CUdeviceptr)allocCU(load_info.hdr.totalBytes);
 
-    if (holds_alternative<ifstream>(load_info.data)) {
-        vector<char> staging(load_info.hdr.totalBytes);
-        ifstream &file = *get_if<ifstream>(&load_info.data);
-        file.read(staging.data(), load_info.hdr.totalBytes);
+    char *data_src = nullptr;
+    bool cuda_staging = false;
 
-        cudaMemcpyAsync((void *)scene_storage, staging.data(), staging.size(),
-                        cudaMemcpyHostToDevice, stream_);
+    if (holds_alternative<ifstream>(load_info.data)) {
+        REQ_CUDA(cudaHostAlloc((void **)&data_src, load_info.hdr.totalBytes,
+                               cudaHostAllocWriteCombined));
+        cuda_staging = true;
+
+        ifstream &file = *get_if<ifstream>(&load_info.data);
+        file.read(data_src, load_info.hdr.totalBytes);
     } else {
-        cudaMemcpyAsync((void *)scene_storage,
-                        get_if<vector<char>>(&load_info.data)->data(),
-                        load_info.hdr.totalBytes, cudaMemcpyHostToDevice,
-                        stream_);
+        data_src = get_if<vector<char>>(&load_info.data)->data();
     }
+
+    cudaMemcpyAsync((void *)scene_storage, data_src, load_info.hdr.totalBytes,
+                    cudaMemcpyHostToDevice, stream_);
+
+    // FIXME
+    glm::mat4x3 mat = load_info.envInit.transforms[0][0];
+    void *transform_ptr;
+    REQ_CUDA(cudaHostAlloc(&transform_ptr, sizeof(glm::mat4x3),
+                           cudaHostAllocMapped));
+    cudaMemcpy(transform_ptr, glm::value_ptr(glm::transpose(mat)),
+               sizeof(glm::mat4x3), cudaMemcpyHostToHost);
 
     OptixBuildInput geometry_info;
     geometry_info.type = OPTIX_BUILD_INPUT_TYPE_TRIANGLES;
@@ -63,17 +77,17 @@ shared_ptr<Scene> OptixLoader::loadScene(SceneLoadData &&load_info)
     tri_info.numIndexTriplets = load_info.meshInfo[0].numTriangles;
     tri_info.indexFormat = OPTIX_INDICES_FORMAT_UNSIGNED_INT3;
     tri_info.indexStrideInBytes = 0;
-    tri_info.preTransform = 0;
+    tri_info.preTransform = (CUdeviceptr)transform_ptr;
     tri_info.flags = &tri_info_flag;
-    tri_info.numSbtRecords = 0;
+    tri_info.numSbtRecords = 1;
     tri_info.sbtIndexOffsetBuffer = 0;
     tri_info.sbtIndexOffsetSizeInBytes = 0;
     tri_info.sbtIndexOffsetStrideInBytes = 0;
     tri_info.primitiveIndexOffset = 0;
-    tri_info.transformFormat = OPTIX_TRANSFORM_FORMAT_NONE;
+    tri_info.transformFormat = OPTIX_TRANSFORM_FORMAT_MATRIX_FLOAT12;
 
     OptixAccelBuildOptions accel_options {
-        OPTIX_BUILD_FLAG_NONE,
+        OPTIX_BUILD_FLAG_PREFER_FAST_TRACE,
         OPTIX_BUILD_OPERATION_BUILD,
         {},
     };
@@ -99,6 +113,10 @@ shared_ptr<Scene> OptixLoader::loadScene(SceneLoadData &&load_info)
     REQ_CUDA(cudaStreamSynchronize(stream_));
 
     REQ_CUDA(cudaFree((void *)scratch_storage));
+
+    if (cuda_staging) {
+        REQ_CUDA(cudaFreeHost(data_src));
+    }
 
     return make_shared<OptixScene>(OptixScene {
         { load_info.envInit },

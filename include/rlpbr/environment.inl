@@ -27,7 +27,7 @@ static inline glm::vec3 extractPosition(
 static inline glm::vec3 extractViewVector(
     const glm::mat4 &camera_to_world)
 {
-    return glm::normalize(-glm::vec3(camera_to_world[2]));
+    return -glm::normalize(glm::vec3(camera_to_world[2]));
 }
 
 static inline glm::vec3 extractUpVector(
@@ -44,6 +44,11 @@ static inline glm::vec3 extractRightVector(
 
 }
 
+static inline float convertFOV(float fov)
+{
+    return tanf(glm::radians(fov) / 2.f);
+}
+
 Camera::Camera(const glm::vec3 &eye, const glm::vec3 &target,
                const glm::vec3 &up_vec, float vertical_fov,
                float aspect_ratio)
@@ -51,7 +56,7 @@ Camera::Camera(const glm::vec3 &eye, const glm::vec3 &target,
       view(CameraHelper::computeViewVector(eye, target)),
       up(up_vec),
       right(CameraHelper::computeRightVector(view, up)),
-      tanFOV(tanf(vertical_fov / 2.f)),
+      tanFOV(convertFOV(vertical_fov)),
       aspectRatio(aspect_ratio)
 {}
 
@@ -61,7 +66,7 @@ Camera::Camera(const glm::mat4 &camera_to_world,
       view(CameraHelper::extractViewVector(camera_to_world)),
       up(CameraHelper::extractUpVector(camera_to_world)),
       right(CameraHelper::extractRightVector(camera_to_world)),
-      tanFOV(tanf(vertical_fov / 2.f)),
+      tanFOV(convertFOV(vertical_fov)),
       aspectRatio(aspect_ratio)
 {}
 
@@ -75,7 +80,7 @@ Camera::Camera(const glm::vec3 &position_vec,
       view(forward_vec),
       up(up_vec),
       right(right_vec),
-      tanFOV(tanf(vertical_fov / 2.f)),
+      tanFOV(convertFOV(vertical_fov)),
       aspectRatio(aspect_ratio)
 {}
 

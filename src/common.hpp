@@ -60,6 +60,10 @@ RendererImpl makeRendererImpl(RenderBackend *ptr)
             &RendererType::makeEnvironment),
         static_cast<RendererImpl::RenderType>(
             &RendererType::render),
+        static_cast<RendererImpl::WaitType>(
+            &RendererType::waitForFrame),
+        static_cast<RendererImpl::GetOutputType>(
+            &RendererType::getOutputPointer),
         ptr);
 }
 
