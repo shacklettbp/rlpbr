@@ -22,7 +22,7 @@ static void optixLog(unsigned int level, const char *tag,
          << tag << "]: " << message << "\n";
 }
 
-static OptixDeviceContext initializeOptix(uint32_t gpu_id)
+static OptixDeviceContext initializeOptix(uint32_t gpu_id, bool validate)
 {
     REQ_CUDA(cudaSetDevice(gpu_id));
 
@@ -33,9 +33,16 @@ static OptixDeviceContext initializeOptix(uint32_t gpu_id)
         abort();
     }
 
-    OptixDeviceContextOptions optix_opts {};
-    optix_opts.logCallbackFunction = &optixLog;
-    optix_opts.logCallbackLevel = 4;
+    OptixDeviceContextOptions optix_opts;
+    if (validate) {
+        optix_opts.logCallbackFunction = &optixLog;
+        optix_opts.logCallbackLevel = 4;
+        optix_opts.validationMode = OPTIX_DEVICE_CONTEXT_VALIDATION_MODE_ALL;
+    } else {
+        optix_opts.logCallbackFunction = nullptr;
+        optix_opts.logCallbackLevel = 0;
+    }
+    optix_opts.logCallbackData = nullptr;
 
     CUcontext cuda_ctx = nullptr;
 
@@ -45,7 +52,7 @@ static OptixDeviceContext initializeOptix(uint32_t gpu_id)
     return optix_ctx;
 }
 
-static vector<char> compileToPTX(const char *cu_path)
+static vector<char> compileToPTX(const char *cu_path, bool validate)
 {
     ifstream cu_file(cu_path, ios::binary | ios::ate);
     size_t num_cu_bytes = cu_file.tellg();
@@ -61,26 +68,44 @@ static vector<char> compileToPTX(const char *cu_path)
 
     static const char *nvrtc_options[] = {
         NVRTC_OPTIONS
+        "--extra-device-vectorization",
+    };
+
+    static constexpr const char *debug_nvrtc_options[] = {
+        NVRTC_OPTIONS
         "--device-debug",
     };
 
-    auto res = nvrtcCompileProgram(prog,
-        sizeof(nvrtc_options) / sizeof(nvrtc_options[0]), nvrtc_options);
+    nvrtcResult res;
+    if (validate) {
+        res = nvrtcCompileProgram(prog,
+            sizeof(debug_nvrtc_options) / sizeof(debug_nvrtc_options[0]),
+            debug_nvrtc_options);
+    } else {
+        res = nvrtcCompileProgram(prog,
+            sizeof(nvrtc_options) / sizeof(nvrtc_options[0]),
+            nvrtc_options);
+    }
 
-    if (res != NVRTC_SUCCESS) {
-        cerr << "NVRTC compilation failed" << endl;
-
+    auto print_compile_log = [&prog]() {
         // Retrieve log output
         size_t log_size = 0;
         REQ_NVRTC(nvrtcGetProgramLogSize(prog, &log_size));
 
-        vector<char> nvrtc_log(log_size);
         if (log_size > 1) {
+            vector<char> nvrtc_log(log_size);
             REQ_NVRTC(nvrtcGetProgramLog(prog, &nvrtc_log[0]));
             cerr << nvrtc_log.data() << endl;
         }
 
+    };
+
+    if (res != NVRTC_SUCCESS) {
+        cerr << "NVRTC compilation failed" << endl;
+        print_compile_log();
         abort();
+    } else if (validate) {
+        print_compile_log();
     }
 
     size_t num_ptx_bytes;
@@ -95,21 +120,25 @@ static vector<char> compileToPTX(const char *cu_path)
     return ptx_data;
 }
 
-static Pipeline buildPipeline(OptixDeviceContext ctx)
+static Pipeline buildPipeline(OptixDeviceContext ctx, bool validate)
 {
     OptixModuleCompileOptions module_compile_options {};
-    module_compile_options.debugLevel = OPTIX_COMPILE_DEBUG_LEVEL_FULL;
-    module_compile_options.optLevel = OPTIX_COMPILE_OPTIMIZATION_LEVEL_0;
+    if (validate) {
+        module_compile_options.debugLevel = OPTIX_COMPILE_DEBUG_LEVEL_FULL;
+        module_compile_options.optLevel = OPTIX_COMPILE_OPTIMIZATION_LEVEL_0;
+    } else {
+        module_compile_options.debugLevel = OPTIX_COMPILE_DEBUG_LEVEL_LINEINFO;
+        module_compile_options.optLevel = OPTIX_COMPILE_OPTIMIZATION_LEVEL_3;
+    }
 
     OptixPipelineCompileOptions pipeline_compile_options {};
     pipeline_compile_options.traversableGraphFlags =
         OPTIX_TRAVERSABLE_GRAPH_FLAG_ALLOW_SINGLE_GAS;
 
     pipeline_compile_options.numPayloadValues = 1;
-    
     pipeline_compile_options.pipelineLaunchParamsVariableName = "params";
     
-    vector<char> ptx = compileToPTX("/home/bps/rl/rlpbr/src/optix_shader.cu");
+    vector<char> ptx = compileToPTX(STRINGIFY(OPTIX_SHADER), validate);
 
     static constexpr size_t log_bytes = 2048;
     static char log_str[log_bytes];
@@ -173,7 +202,12 @@ static Pipeline buildPipeline(OptixDeviceContext ctx)
 
     OptixPipelineLinkOptions pipeline_link_options = {};
     pipeline_link_options.maxTraceDepth = 1;
-    pipeline_link_options.debugLevel = OPTIX_COMPILE_DEBUG_LEVEL_FULL;
+
+    if (validate) {
+        pipeline_link_options.debugLevel = OPTIX_COMPILE_DEBUG_LEVEL_FULL;
+    } else {
+        pipeline_link_options.debugLevel = OPTIX_COMPILE_DEBUG_LEVEL_LINEINFO;
+    }
     
     OptixPipeline pipeline = nullptr;
     REQ_OPTIX(optixPipelineCreate(
@@ -289,7 +323,7 @@ static RenderState makeRenderState(const RenderConfig &cfg, cudaStream_t strm,
     return state;
 }
 
-OptixBackend::OptixBackend(const RenderConfig &cfg)
+OptixBackend::OptixBackend(const RenderConfig &cfg, bool validate)
     : batch_size_(cfg.batchSize),
       img_dims_(cfg.imgWidth, cfg.imgHeight),
       cur_frame_(0),
@@ -305,8 +339,8 @@ OptixBackend::OptixBackend(const RenderConfig &cfg)
 
           return array<cudaStream_t, 2>{strm, strm2};
       }()),
-      ctx_(initializeOptix(cfg.gpuID)),
-      pipeline_(buildPipeline(ctx_)),
+      ctx_(initializeOptix(cfg.gpuID, validate)),
+      pipeline_(buildPipeline(ctx_, validate)),
       sbt_(buildSBT(streams_[0], pipeline_)),
       render_state_(makeRenderState(cfg, streams_[0], num_frames_))
 {
