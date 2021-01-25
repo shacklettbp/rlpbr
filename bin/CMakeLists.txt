@@ -3,6 +3,11 @@ add_executable(preprocess
 )
 target_link_libraries(preprocess rlpbr_preprocess)
 
+add_executable(singlebench
+    singlebench.cpp
+)
+target_link_libraries(singlebench rlpbr)
+
 add_executable(save_frame
     save_frame.cpp
 )

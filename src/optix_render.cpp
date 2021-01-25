@@ -133,7 +133,7 @@ static Pipeline buildPipeline(OptixDeviceContext ctx, bool validate)
 
     OptixPipelineCompileOptions pipeline_compile_options {};
     pipeline_compile_options.traversableGraphFlags =
-        OPTIX_TRAVERSABLE_GRAPH_FLAG_ALLOW_SINGLE_GAS;
+        OPTIX_TRAVERSABLE_GRAPH_FLAG_ALLOW_SINGLE_LEVEL_INSTANCING;
 
     pipeline_compile_options.numPayloadValues = 1;
     pipeline_compile_options.pipelineLaunchParamsVariableName = "params";
@@ -323,22 +323,30 @@ static RenderState makeRenderState(const RenderConfig &cfg, cudaStream_t strm,
     return state;
 }
 
+static cudaStream_t makeStream()
+{
+    cudaStream_t strm;
+    REQ_CUDA(cudaStreamCreate(&strm));
+
+    return strm;
+}
+
 OptixBackend::OptixBackend(const RenderConfig &cfg, bool validate)
     : batch_size_(cfg.batchSize),
       img_dims_(cfg.imgWidth, cfg.imgHeight),
       cur_frame_(0),
       num_frames_(1), // FIXME
       streams_([this]() {
-          cudaStream_t strm;
-          REQ_CUDA(cudaStreamCreate(&strm));
+          cudaStream_t strm = makeStream();
 
           cudaStream_t strm2 = nullptr;
           if (num_frames_ > 1) {
-              REQ_CUDA(cudaStreamCreate(&strm2));
+              strm2 = makeStream();
           }
 
           return array<cudaStream_t, 2>{strm, strm2};
       }()),
+      tlas_strm_(makeStream()),
       ctx_(initializeOptix(cfg.gpuID, validate)),
       pipeline_(buildPipeline(ctx_, validate)),
       sbt_(buildSBT(streams_[0], pipeline_)),
@@ -353,9 +361,11 @@ LoaderImpl OptixBackend::makeLoader()
     return makeLoaderImpl<OptixLoader>(loader);
 }
 
-EnvironmentImpl OptixBackend::makeEnvironment(const shared_ptr<Scene> &)
+EnvironmentImpl OptixBackend::makeEnvironment(const shared_ptr<Scene> &scene)
 {
-    OptixEnvironment *environment = new OptixEnvironment();
+    const OptixScene &optix_scene = *static_cast<OptixScene *>(scene.get());
+    OptixEnvironment *environment = new OptixEnvironment(
+        OptixEnvironment::make(ctx_, tlas_strm_, optix_scene));
     return makeEnvironmentImpl<OptixEnvironment>(environment);
 }
 
@@ -382,10 +392,10 @@ void OptixBackend::render(const Environment *envs)
 
     for (uint32_t batch_idx = 0; batch_idx < batch_size_; batch_idx++) {
         const Environment &env = envs[batch_idx];
-        const OptixScene &scene = 
-            *static_cast<OptixScene *>(env.getScene().get());
+        const OptixEnvironment &env_backend =
+            *static_cast<const OptixEnvironment *>(env.getBackend());
 
-        host_params.accelStructs[batch_idx] = scene.accelStructure;
+        host_params.accelStructs[batch_idx] = env_backend.tlas;
 
         host_params.cameras[batch_idx] = packCamera(env.getCamera());
     }

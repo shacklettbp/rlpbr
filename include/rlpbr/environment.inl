@@ -163,6 +163,11 @@ const std::shared_ptr<Scene> Environment::getScene() const
     return scene_;
 }
 
+const EnvironmentBackend *Environment::getBackend() const
+{
+    return backend_.getState();
+}
+
 const Camera &Environment::getCamera() const
 {
     return camera_;

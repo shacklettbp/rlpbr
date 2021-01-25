@@ -46,6 +46,7 @@ private:
     uint32_t cur_frame_;
     const uint32_t num_frames_;
     std::array<cudaStream_t, 2> streams_;
+    cudaStream_t tlas_strm_;
     OptixDeviceContext ctx_;
     Pipeline pipeline_;
     SBT sbt_;

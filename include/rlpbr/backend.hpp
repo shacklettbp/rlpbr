@@ -28,6 +28,9 @@ public:
                              const glm::vec3 &color);
     inline void removeLight(uint32_t idx);
 
+    inline EnvironmentBackend *getState() { return state_; };
+    inline const EnvironmentBackend *getState() const  { return state_; };
+
 private:
     DestroyType destroy_ptr_;
     AddLightType add_light_ptr_;
