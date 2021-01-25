@@ -102,6 +102,7 @@ public:
     void removeLight(uint32_t light_id);
 
     inline const std::shared_ptr<Scene> getScene() const;
+    inline const EnvironmentBackend *getBackend() const;
     inline const Camera &getCamera() const;
 
 private:

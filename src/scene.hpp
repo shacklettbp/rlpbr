@@ -75,6 +75,7 @@ struct SceneLoadData {
 };
 
 struct Scene {
+    std::vector<MeshInfo> meshInfo;
     EnvironmentInit envInit;
 };
 

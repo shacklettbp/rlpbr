@@ -65,7 +65,7 @@ extern "C" __global__ void __raygen__rg()
             0.0f,                // Min intersection distance
             1e16f,               // Max intersection distance
             0.0f,                // rayTime -- used for motion blur
-            OptixVisibilityMask(255), // Specify always visible
+            OptixVisibilityMask(0xff), // Specify always visible
             OPTIX_RAY_FLAG_NONE,
             0,                   // SBT offset   -- See SBT discussion
             1,                   // SBT stride   -- See SBT discussion
