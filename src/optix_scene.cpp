@@ -14,7 +14,9 @@ namespace optix {
 
 OptixScene::~OptixScene()
 {
-    cudaFree((void *)blasStorage);
+    for (auto blas_ptr : blasStorage) {
+        cudaFree((void *)blas_ptr);
+    }
     cudaFree((void *)sceneStorage);
 }
 
@@ -86,7 +88,7 @@ OptixEnvironment OptixEnvironment::make(OptixDeviceContext ctx,
         (CUdeviceptr)tlas_storage, tlas_buffer_sizes.outputSizeInBytes, &tlas,
         nullptr, 0));
 
-    cudaStreamSynchronize(build_stream);
+    REQ_CUDA(cudaStreamSynchronize(build_stream));
  
     REQ_CUDA(cudaFree(scratch_storage));
     REQ_CUDA(cudaFreeHost(instance_ptr));
@@ -146,27 +148,13 @@ shared_ptr<Scene> OptixLoader::loadScene(SceneLoadData &&load_info)
     cudaMemcpyAsync((void *)scene_storage, data_src, load_info.hdr.totalBytes,
                     cudaMemcpyHostToDevice, stream_);
 
-    OptixBuildInput geometry_info;
-    geometry_info.type = OPTIX_BUILD_INPUT_TYPE_TRIANGLES;
+    vector<CUdeviceptr> blas_storage;
+    blas_storage.reserve(load_info.meshInfo.size());
+    vector<OptixTraversableHandle> blases;
+    blases.reserve(load_info.meshInfo.size());
 
-    unsigned int tri_info_flag = OPTIX_GEOMETRY_FLAG_NONE;
-    auto &tri_info = geometry_info.triangleArray;
-    tri_info.vertexBuffers = &scene_storage;
-    tri_info.numVertices = load_info.hdr.numVertices;
-    tri_info.vertexFormat = OPTIX_VERTEX_FORMAT_FLOAT3;
-    tri_info.vertexStrideInBytes = sizeof(Vertex);
-    tri_info.indexBuffer = scene_storage + load_info.hdr.indexOffset;
-    tri_info.numIndexTriplets = load_info.meshInfo[0].numTriangles;
-    tri_info.indexFormat = OPTIX_INDICES_FORMAT_UNSIGNED_INT3;
-    tri_info.indexStrideInBytes = 0;
-    tri_info.preTransform = 0;
-    tri_info.flags = &tri_info_flag;
-    tri_info.numSbtRecords = 1;
-    tri_info.sbtIndexOffsetBuffer = 0;
-    tri_info.sbtIndexOffsetSizeInBytes = 0;
-    tri_info.sbtIndexOffsetStrideInBytes = 0;
-    tri_info.primitiveIndexOffset = 0;
-    tri_info.transformFormat = OPTIX_TRANSFORM_FORMAT_NONE;
+    // Improves performance slightly
+    unsigned int tri_build_flag = OPTIX_GEOMETRY_FLAG_DISABLE_ANYHIT;
 
     OptixAccelBuildOptions accel_options {
         OPTIX_BUILD_FLAG_PREFER_FAST_TRACE,
@@ -174,27 +162,55 @@ shared_ptr<Scene> OptixLoader::loadScene(SceneLoadData &&load_info)
         {},
     };
 
-    OptixAccelBufferSizes buffer_sizes;
-    REQ_OPTIX(optixAccelComputeMemoryUsage(ctx_, &accel_options,
-                                           &geometry_info, 1,
-                                           &buffer_sizes));
+    for (const MeshInfo &mesh_info : load_info.meshInfo) {
+        OptixBuildInput geometry_info;
+        geometry_info.type = OPTIX_BUILD_INPUT_TYPE_TRIANGLES;
 
-    CUdeviceptr scratch_storage =
-        (CUdeviceptr)allocCU(buffer_sizes.tempSizeInBytes);
+        auto &tri_info = geometry_info.triangleArray;
+        tri_info.vertexBuffers = &scene_storage;
+        tri_info.numVertices = load_info.hdr.numVertices;
+        tri_info.vertexFormat = OPTIX_VERTEX_FORMAT_FLOAT3;
+        tri_info.vertexStrideInBytes = sizeof(Vertex);
+        tri_info.indexBuffer = scene_storage + load_info.hdr.indexOffset;
+        tri_info.numIndexTriplets = mesh_info.numTriangles;
+        tri_info.indexFormat = OPTIX_INDICES_FORMAT_UNSIGNED_INT3;
+        tri_info.indexStrideInBytes = 0;
+        tri_info.preTransform = 0;
+        tri_info.flags = &tri_build_flag;
+        tri_info.numSbtRecords = 1;
+        tri_info.sbtIndexOffsetBuffer = 0;
+        tri_info.sbtIndexOffsetSizeInBytes = 0;
+        tri_info.sbtIndexOffsetStrideInBytes = 0;
+        tri_info.primitiveIndexOffset = 0;
+        tri_info.transformFormat = OPTIX_TRANSFORM_FORMAT_NONE;
 
-    CUdeviceptr accel_storage =
-        (CUdeviceptr)allocCU(buffer_sizes.outputSizeInBytes);
+        OptixAccelBufferSizes buffer_sizes;
+        REQ_OPTIX(optixAccelComputeMemoryUsage(ctx_, &accel_options,
+                                               &geometry_info, 1,
+                                               &buffer_sizes));
 
-    OptixTraversableHandle accel_struct;
-    REQ_OPTIX(optixAccelBuild(ctx_, stream_, &accel_options,
-                              &geometry_info, 1,
-                              scratch_storage, buffer_sizes.tempSizeInBytes,
-                              accel_storage, buffer_sizes.outputSizeInBytes,
-                              &accel_struct, nullptr, 0));
+        CUdeviceptr scratch_storage =
+            (CUdeviceptr)allocCU(buffer_sizes.tempSizeInBytes);
 
-    REQ_CUDA(cudaStreamSynchronize(stream_));
+        CUdeviceptr accel_storage =
+            (CUdeviceptr)allocCU(buffer_sizes.outputSizeInBytes);
 
-    REQ_CUDA(cudaFree((void *)scratch_storage));
+        OptixTraversableHandle blas;
+        REQ_OPTIX(optixAccelBuild(ctx_, stream_, &accel_options,
+                                  &geometry_info, 1,
+                                  scratch_storage, buffer_sizes.tempSizeInBytes,
+                                  accel_storage, buffer_sizes.outputSizeInBytes,
+                                  &blas, nullptr, 0));
+
+        REQ_CUDA(cudaStreamSynchronize(stream_));
+
+        REQ_CUDA(cudaFree((void *)scratch_storage));
+
+        blas_storage.push_back(accel_storage);
+        blases.push_back(blas);
+    }
+
+
     
     if (cuda_staging) {
         REQ_CUDA(cudaFreeHost(data_src));
@@ -206,8 +222,8 @@ shared_ptr<Scene> OptixLoader::loadScene(SceneLoadData &&load_info)
             move(load_info.envInit),
         },
         scene_storage,
-        accel_storage,
-        { accel_struct },
+        move(blas_storage),
+        move(blases),
     });
 }
 
