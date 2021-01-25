@@ -11,6 +11,12 @@
 namespace RLpbr {
 namespace optix {
 
+struct TLAS {
+    OptixTraversableHandle hdl;
+    CUdeviceptr storage;
+    size_t numBytes;
+};
+
 struct OptixScene : public Scene {
     OptixScene(const OptixScene &) = delete;
     OptixScene(OptixScene &&) = delete;
@@ -18,7 +24,9 @@ struct OptixScene : public Scene {
 
     CUdeviceptr sceneStorage;
     std::vector<CUdeviceptr> blasStorage;
-    std::vector<OptixTraversableHandle> blases;
+    OptixTraversableHandle *blases;
+
+    TLAS defaultTLAS;
 };
 
 class OptixEnvironment : public EnvironmentBackend {
