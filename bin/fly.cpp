@@ -128,29 +128,37 @@ int main(int argc, char *argv[]) {
         exit(EXIT_FAILURE);
     }
 
-    GLuint read_fbo;
-    glCreateFramebuffers(1, &read_fbo);
+    array<GLuint, 2> read_fbos;
+    glCreateFramebuffers(2, read_fbos.data());
 
-    GLuint render_texture;
-    glCreateTextures(GL_TEXTURE_2D, 1, &render_texture);
-    glTextureStorage2D(render_texture, 1, GL_R32F, img_dims.x, img_dims.y);
+    array<GLuint, 2> render_textures;
+    glCreateTextures(GL_TEXTURE_2D, 2, render_textures.data());
+    glTextureStorage2D(render_textures[0], 1, GL_R32F, img_dims.x, img_dims.y);
+    glTextureStorage2D(render_textures[1], 1, GL_R32F, img_dims.x, img_dims.y);
 
     Renderer renderer({0, 1, 1, img_dims.x, img_dims.y, true,
                        BackendSelect::Optix});
 
     cudaStream_t copy_stream;
-    auto res =  cudaStreamCreate(&copy_stream);
+    cudaError_t res =  cudaStreamCreate(&copy_stream);
     if (res != cudaSuccess) {
         cerr << "CUDA stream initialization failed" << endl;
         abort();
     }
 
-    cudaGraphicsResource_t dst_img;
-    res = cudaGraphicsGLRegisterImage(&dst_img, render_texture,
+    array<cudaGraphicsResource_t, 2> dst_imgs;
+    res = cudaGraphicsGLRegisterImage(&dst_imgs[0], render_textures[0],
+        GL_TEXTURE_2D, cudaGraphicsMapFlagsWriteDiscard);
+    if (res != cudaSuccess) {
+        cerr << "Failed to map texture into CUDA" << endl;
+        abort();
+    }
+
+    res = cudaGraphicsGLRegisterImage(&dst_imgs[1], render_textures[1],
         GL_TEXTURE_2D, cudaGraphicsMapFlagsWriteDiscard);
 
     if (res != cudaSuccess) {
-        cerr << "Failed to map renderbuffer into CUDA" << endl;
+        cerr << "Failed to map texture into CUDA" << endl;
         abort();
     }
 
@@ -228,37 +236,41 @@ int main(int argc, char *argv[]) {
 
         float *output = renderer.getOutputPointer(prev_frame);
 
-        glNamedFramebufferTexture(read_fbo, GL_COLOR_ATTACHMENT0, 0, 0);
+        glNamedFramebufferTexture(read_fbos[prev_frame], GL_COLOR_ATTACHMENT0,
+                                  0, 0);
 
-        res = cudaGraphicsMapResources(1, &dst_img, copy_stream);
+        res = cudaGraphicsMapResources(1, &dst_imgs[prev_frame], copy_stream);
         if (res != cudaSuccess) {
             cerr << "Failed to map opengl resource" << endl;
             abort();
         }
 
         cudaArray_t dst_arr;
-        res = cudaGraphicsSubResourceGetMappedArray(&dst_arr, dst_img, 0, 0);
+        res = cudaGraphicsSubResourceGetMappedArray(&dst_arr,
+            dst_imgs[prev_frame], 0, 0);
         if (res != cudaSuccess) {
             cerr << "Failed to get cuda array from opengl" << endl;
             abort();
         }
 
-        res = cudaMemcpy2DToArrayAsync(dst_arr, 0, 0, output, img_dims.x * sizeof(float),
-            img_dims.x * sizeof(float), img_dims.y, cudaMemcpyDeviceToDevice, copy_stream);
+        res = cudaMemcpy2DToArrayAsync(dst_arr, 0, 0, output,
+            img_dims.x * sizeof(float), img_dims.x * sizeof(float),
+            img_dims.y, cudaMemcpyDeviceToDevice, copy_stream);
+
         if (res != cudaSuccess) {
             cerr << "buffer to image copy failed " << endl;
         }
 
-        res = cudaGraphicsUnmapResources(1, &dst_img, copy_stream);
+        res = cudaGraphicsUnmapResources(1, &dst_imgs[prev_frame], copy_stream);
         if (res != cudaSuccess) {
             cerr << "Failed to unmap opengl resource" << endl;
             abort();
         }
 
-        glNamedFramebufferTexture(read_fbo, GL_COLOR_ATTACHMENT0,
-                                  render_texture, 0);
+        glNamedFramebufferTexture(read_fbos[prev_frame], GL_COLOR_ATTACHMENT0,
+                                  render_textures[prev_frame], 0);
 
-        glBlitNamedFramebuffer(read_fbo, 0,
+        glBlitNamedFramebuffer(read_fbos[prev_frame], 0,
                                0, 0, img_dims.x, img_dims.y,
                                0, 0, img_dims.x, img_dims.y,
                                GL_COLOR_BUFFER_BIT, GL_NEAREST);
@@ -268,5 +280,12 @@ int main(int argc, char *argv[]) {
         prev_frame = new_frame;
     }
 
-    cudaGraphicsUnregisterResource(dst_img);
+    cudaGraphicsUnregisterResource(dst_imgs[0]);
+    cudaGraphicsUnregisterResource(dst_imgs[1]);
+    cudaStreamDestroy(copy_stream);
+
+    glDeleteTextures(2, render_textures.data());
+    glDeleteFramebuffers(2, read_fbos.data());
+
+    glfwDestroyWindow(window);
 }
