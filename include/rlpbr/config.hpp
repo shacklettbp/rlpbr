@@ -14,6 +14,7 @@ struct RenderConfig {
     uint32_t batchSize;
     uint32_t imgWidth;
     uint32_t imgHeight;
+    bool doubleBuffered;
     BackendSelect backend;
 };
 

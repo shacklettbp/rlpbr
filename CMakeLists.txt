@@ -27,7 +27,7 @@ set(CMAKE_THREAD_PREFER_PTHREAD TRUE)
 set(THREADS_PREFER_PTHREAD_FLAG TRUE)
 find_package(Threads REQUIRED)
 find_package(CUDAToolkit REQUIRED)
-find_package(glm 0.9.9.8)
+find_package(glm 0.9.9.8 REQUIRED)
 
 add_subdirectory(external)
 add_subdirectory(src)

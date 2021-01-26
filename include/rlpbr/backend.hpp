@@ -65,7 +65,7 @@ public:
     typedef LoaderImpl(RenderBackend::*MakeLoaderType)();
     typedef EnvironmentImpl(RenderBackend::*MakeEnvironmentType)(
         const std::shared_ptr<Scene> &);
-    typedef void(RenderBackend::*RenderType)(const Environment *);
+    typedef uint32_t(RenderBackend::*RenderType)(const Environment *);
     typedef void(RenderBackend::*WaitType)(uint32_t frame_idx);
     typedef float *(RenderBackend::*GetOutputType)(uint32_t frame_idx);
 
@@ -83,7 +83,7 @@ public:
     inline EnvironmentImpl makeEnvironment(
         const std::shared_ptr<Scene> &scene) const;
 
-    inline void render(const Environment *envs);
+    inline uint32_t render(const Environment *envs);
 
     inline void waitForFrame(uint32_t frame_idx);
 

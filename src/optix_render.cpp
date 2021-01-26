@@ -335,7 +335,7 @@ OptixBackend::OptixBackend(const RenderConfig &cfg, bool validate)
     : batch_size_(cfg.batchSize),
       img_dims_(cfg.imgWidth, cfg.imgHeight),
       cur_frame_(0),
-      num_frames_(1), // FIXME
+      num_frames_(cfg.doubleBuffered ? 2 : 1),
       streams_([this]() {
           cudaStream_t strm = makeStream();
 
@@ -386,7 +386,7 @@ static CameraParams packCamera(const Camera &cam)
     return params;
 }
 
-void OptixBackend::render(const Environment *envs)
+uint32_t OptixBackend::render(const Environment *envs)
 {
     const ShaderParams &host_params = render_state_.hostParams[cur_frame_];
 
@@ -406,7 +406,10 @@ void OptixBackend::render(const Environment *envs)
         (CUdeviceptr)&dev_params, sizeof(ShaderParams),
         &sbt_.hdl, img_dims_.x, img_dims_.y, batch_size_));
 
+    uint32_t rendered_idx = cur_frame_;
     cur_frame_ = (cur_frame_ + 1) % num_frames_;
+
+    return rendered_idx;
 }
 
 void OptixBackend::waitForFrame(uint32_t frame_idx)
