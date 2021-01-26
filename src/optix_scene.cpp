@@ -221,12 +221,15 @@ shared_ptr<Scene> OptixLoader::loadScene(SceneLoadData &&load_info)
         OptixBuildInput geometry_info {};
         geometry_info.type = OPTIX_BUILD_INPUT_TYPE_TRIANGLES;
 
+        CUdeviceptr index_ptr = scene_storage + load_info.hdr.indexOffset +
+            mesh_info.indexOffset * sizeof(uint32_t);
+
         auto &tri_info = geometry_info.triangleArray;
         tri_info.vertexBuffers = &scene_storage;
         tri_info.numVertices = load_info.hdr.numVertices;
         tri_info.vertexFormat = OPTIX_VERTEX_FORMAT_FLOAT3;
         tri_info.vertexStrideInBytes = sizeof(Vertex);
-        tri_info.indexBuffer = scene_storage + load_info.hdr.indexOffset;
+        tri_info.indexBuffer = index_ptr;
         tri_info.numIndexTriplets = mesh_info.numTriangles;
         tri_info.indexFormat = OPTIX_INDICES_FORMAT_UNSIGNED_INT3;
         tri_info.indexStrideInBytes = 0;
