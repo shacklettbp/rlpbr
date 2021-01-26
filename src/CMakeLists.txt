@@ -47,6 +47,7 @@ target_compile_definitions(rlpbr PRIVATE
 add_library(rlpbr_preprocess SHARED
     import.hpp import.cpp
     gltf.hpp gltf.cpp
+    habitat_json.hpp habitat_json.cpp
     ../include/rlpbr/preprocess.hpp preprocess.cpp
 )
 
