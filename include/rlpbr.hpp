@@ -45,7 +45,7 @@ public:
                                 float vertical_fov = 90.f,
                                 float aspect_ratio = 0.f);
     
-    void render(const Environment *envs);
+    uint32_t render(const Environment *envs);
 
     void waitForFrame(uint32_t frame_idx = 0);
 

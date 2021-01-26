@@ -57,7 +57,8 @@ int main(int argc, char *argv[]) {
 
     uint32_t batch_size = stoul(argv[2]);
 
-    Renderer renderer({0, 1, batch_size, 256, 256, BackendSelect::Optix});
+    Renderer renderer({0, 1, batch_size, 256, 256, false,
+                       BackendSelect::Optix});
 
     auto loader = renderer.makeLoader();
     auto scene = loader.loadScene(argv[1]);

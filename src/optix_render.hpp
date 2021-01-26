@@ -34,7 +34,7 @@ public:
 
     EnvironmentImpl makeEnvironment(const std::shared_ptr<Scene> &scene);
 
-    void render(const Environment *envs);
+    uint32_t render(const Environment *envs);
 
     void waitForFrame(uint32_t frame_idx);
 

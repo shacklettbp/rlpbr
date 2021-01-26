@@ -94,9 +94,9 @@ Environment Renderer::makeEnvironment(const std::shared_ptr<Scene> &scene,
                        aspect_ratio == 0.f ? aspect_ratio_ : aspect_ratio);
 }
 
-void Renderer::render(const Environment *envs)
+uint32_t Renderer::render(const Environment *envs)
 {
-    backend_.render(envs);
+    return backend_.render(envs);
 }
 
 void Renderer::waitForFrame(uint32_t frame_idx)
@@ -355,9 +355,9 @@ EnvironmentImpl RendererImpl::makeEnvironment(
     return invoke(make_env_ptr_, state_, scene);
 }
 
-void RendererImpl::render(const Environment *envs)
+uint32_t RendererImpl::render(const Environment *envs)
 {
-    invoke(render_ptr_, state_, envs);
+    return invoke(render_ptr_, state_, envs);
 }
 
 void RendererImpl::waitForFrame(uint32_t frame_idx)

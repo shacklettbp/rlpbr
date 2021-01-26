@@ -50,7 +50,8 @@ int main(int argc, char *argv[]) {
         };
     }
 
-    Renderer renderer({0, 1, batch_size, res, res, BackendSelect::Optix});
+    Renderer renderer({0, 1, batch_size, res, res, false,
+                       BackendSelect::Optix});
 
     auto loader = renderer.makeLoader();
     auto scene = loader.loadScene(argv[1]);
