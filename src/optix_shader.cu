@@ -43,6 +43,12 @@ __device__ __forceinline__ CameraRay computeCameraRay(
     };
 }
 
+__device__ __forceinline__ float computeDepth()
+{
+    float3 scaled_dir = optixGetWorldRayDirection() * optixGetRayTmax();
+    return length(scaled_dir);
+}
+
 __device__ __forceinline__ float3 computeBarycentrics()
 {
     float2 attrs  = optixGetTriangleBarycentrics();
@@ -130,10 +136,7 @@ extern "C" __global__ void __miss__ms()
 
 extern "C" __global__ void __closesthit__ch()
 {
-    float3 scaled_dir = optixGetWorldRayDirection() * optixGetRayTmax();
-    float depth = length(scaled_dir);
-
     float3 barys = computeBarycentrics();
 
-    setPayload(barys.y, barys.z, depth);
+    setPayload(barys.y, barys.z, computeDepth());
 }
