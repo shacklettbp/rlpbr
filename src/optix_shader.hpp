@@ -1,6 +1,7 @@
 #pragma once
 
 #include <optix.h>
+#include <cuda_fp16.h>
 
 #ifndef __CUDACC__
 #include <cuda_runtime.h>
@@ -14,7 +15,7 @@ struct CameraParams {
 };
 
 struct ShaderParams {
-    float *outputBuffer;
+    half *outputBuffer;
     OptixTraversableHandle *accelStructs;
     CameraParams *cameras;
 };

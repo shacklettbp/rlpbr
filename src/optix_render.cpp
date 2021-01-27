@@ -135,7 +135,7 @@ static Pipeline buildPipeline(OptixDeviceContext ctx, bool validate)
     pipeline_compile_options.traversableGraphFlags =
         OPTIX_TRAVERSABLE_GRAPH_FLAG_ALLOW_SINGLE_LEVEL_INSTANCING;
 
-    pipeline_compile_options.numPayloadValues = 1;
+    pipeline_compile_options.numPayloadValues = 2;
     pipeline_compile_options.pipelineLaunchParamsVariableName = "params";
     
     vector<char> ptx = compileToPTX(STRINGIFY(OPTIX_SHADER), validate);
@@ -286,7 +286,7 @@ static RenderState makeRenderState(const RenderConfig &cfg, cudaStream_t strm,
         cudaHostAllocMapped | cudaHostAllocWriteCombined));
 
     RenderState state {
-        (float *)allocCU(sizeof(float) * cfg.batchSize * cfg.imgHeight *
+        (half *)allocCU(sizeof(half) * 3 * cfg.batchSize * cfg.imgHeight *
                          cfg.imgWidth * num_frames),
         param_buffer,
         (ShaderParams *)allocCU(
@@ -298,7 +298,7 @@ static RenderState makeRenderState(const RenderConfig &cfg, cudaStream_t strm,
         char *frame_param_buffer = 
             (char *)param_buffer + total_param_bytes * frame_idx;
 
-        float *output_ptr = state.output + frame_idx * cfg.batchSize *
+        half *output_ptr = state.output + 3 * frame_idx * cfg.batchSize *
                 cfg.imgHeight * cfg.imgWidth;
 
         OptixTraversableHandle *accel_ptr =
@@ -417,7 +417,7 @@ void OptixBackend::waitForFrame(uint32_t frame_idx)
     REQ_CUDA(cudaStreamSynchronize(streams_[frame_idx]));
 }
 
-float *OptixBackend::getOutputPointer(uint32_t frame_idx)
+half *OptixBackend::getOutputPointer(uint32_t frame_idx)
 {
     return render_state_.hostParams[frame_idx].outputBuffer;
 }

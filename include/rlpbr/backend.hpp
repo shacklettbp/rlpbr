@@ -4,6 +4,8 @@
 
 #include <glm/glm.hpp>
 
+#include <cuda_fp16.h>
+
 #include <memory>
 #include <string_view>
 
@@ -67,7 +69,7 @@ public:
         const std::shared_ptr<Scene> &);
     typedef uint32_t(RenderBackend::*RenderType)(const Environment *);
     typedef void(RenderBackend::*WaitType)(uint32_t frame_idx);
-    typedef float *(RenderBackend::*GetOutputType)(uint32_t frame_idx);
+    typedef half *(RenderBackend::*GetOutputType)(uint32_t frame_idx);
 
     RendererImpl(DestroyType destroy_ptr,
         MakeLoaderType make_loader_ptr, MakeEnvironmentType make_env_ptr,
@@ -87,7 +89,7 @@ public:
 
     inline void waitForFrame(uint32_t frame_idx);
 
-    inline float *getOutputPointer(uint32_t frame_idx);
+    inline half *getOutputPointer(uint32_t frame_idx);
 
 private:
     DestroyType destroy_ptr_;
