@@ -131,8 +131,9 @@ extern "C" __global__ void __miss__ms()
 extern "C" __global__ void __closesthit__ch()
 {
     float3 scaled_dir = optixGetWorldRayDirection() * optixGetRayTmax();
-
     float depth = length(scaled_dir);
 
-    setPayload(0, depth, 0);
+    float3 barys = computeBarycentrics();
+
+    setPayload(barys.y, barys.z, depth);
 }
