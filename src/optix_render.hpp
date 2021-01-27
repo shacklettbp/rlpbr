@@ -21,7 +21,7 @@ struct SBT {
 };
 
 struct RenderState {
-    float *output;
+    half *output;
     void *paramBuffer;
     ShaderParams *deviceParams;
     std::array<ShaderParams, 2> hostParams;
@@ -38,7 +38,7 @@ public:
 
     void waitForFrame(uint32_t frame_idx);
 
-    float *getOutputPointer(uint32_t frame_idx);
+    half *getOutputPointer(uint32_t frame_idx);
 
 private:
     const uint32_t batch_size_;

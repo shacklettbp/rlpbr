@@ -3,7 +3,13 @@
 #include "optix_shader.hpp"
 #include "optix_device.cuh"
 
+struct HalfVec2 {
+    half a;
+    half b;
+};
+
 using namespace RLpbr::optix;
+using namespace std;
 
 extern "C" {
 __constant__ ShaderParams params;
@@ -44,11 +50,51 @@ __device__ __forceinline__ float3 computeBarycentrics()
     return make_float3(1.f - attrs.x - attrs.y, attrs.x, attrs.y);
 }
 
+__device__ __forceinline__ unsigned int packHalfs(half a, half b)
+{
+    return (((unsigned int)__half_as_ushort(a)) << 16) + __half_as_ushort(b);
+}
+
+__device__ __forceinline__ HalfVec2 unpackHalfs(unsigned int v)
+{
+    uint16_t a = v >> 16;
+    uint16_t b = v;
+
+    return {
+        __ushort_as_half(a),
+        __ushort_as_half(b),
+    };
+}
+
+__device__ __forceinline__ void setPayload(float r, float g, float b)
+{
+    half hr = __float2half(r);
+    half hg = __float2half(g);
+    half hb = __float2half(b);
+
+    optixSetPayload_0(packHalfs(hr, hg));
+    optixSetPayload_1(packHalfs(0, hb));
+}
+
+__device__ __forceinline__ void setOutput(half *base_output, 
+                                          unsigned int payload_0,
+                                          unsigned int payload_1)
+{
+    auto [r, g] = unpackHalfs(payload_0);
+    auto [unused, b] = unpackHalfs(payload_1);
+
+    base_output[0] = r;
+    base_output[1] = g;
+    base_output[2] = b;
+}
+
 extern "C" __global__ void __raygen__rg()
 {
     // Lookup our location within the launch grid
     uint3 idx = optixGetLaunchIndex();
     uint3 dim = optixGetLaunchDimensions();
+    size_t base_out_offset = 
+        3 * (idx.z * dim.y * dim.x + idx.y * dim.x + idx.x);
 
     uint batch_idx = idx.z;
 
@@ -58,6 +104,7 @@ extern "C" __global__ void __raygen__rg()
 
     // Trace the ray against our scene hierarchy
     unsigned int payload_0;
+    unsigned int payload_1;
     optixTrace(
             params.accelStructs[batch_idx],
             ray_origin,
@@ -70,17 +117,15 @@ extern "C" __global__ void __raygen__rg()
             0,                   // SBT offset   -- See SBT discussion
             1,                   // SBT stride   -- See SBT discussion
             0,                   // missSBTIndex -- See SBT discussion
-            payload_0);
+            payload_0,
+            payload_1);
 
-    float depth = int_as_float(payload_0);
-
-    // Record results in our output raster
-    params.outputBuffer[idx.z * dim.y * dim.x + idx.y * dim.x + idx.x] = depth;
+    setOutput(params.outputBuffer + base_out_offset, payload_0, payload_1);
 }
 
 extern "C" __global__ void __miss__ms()
 {
-    optixSetPayload_0(float_as_int(0.f));
+    setPayload(0, 0, 0);
 }
 
 extern "C" __global__ void __closesthit__ch()
@@ -89,5 +134,5 @@ extern "C" __global__ void __closesthit__ch()
 
     float depth = length(scaled_dir);
 
-    optixSetPayload_0(float_as_int(depth));
+    setPayload(0, depth, 0);
 }

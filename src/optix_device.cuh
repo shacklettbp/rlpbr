@@ -10,6 +10,15 @@ namespace RLpbr {
 namespace optix {
 
 using uint = unsigned int;
+using ushort = unsigned short;
+using uchar = unsigned char;
+using uint32_t = uint;
+using uint16_t = ushort;
+using uint8_t = uchar;
+using int32_t = int;
+using int16_t = short;
+using int8_t = char;
+
 using ::make_float2;
 using ::make_float3;
 using ::make_float4;
