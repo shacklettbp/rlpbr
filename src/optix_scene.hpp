@@ -15,6 +15,7 @@ struct TLAS {
     OptixTraversableHandle hdl;
     CUdeviceptr storage;
     size_t numBytes;
+    OptixTraversableHandle *instanceBLASes;
 };
 
 struct OptixScene : public Scene {
@@ -24,7 +25,7 @@ struct OptixScene : public Scene {
 
     CUdeviceptr sceneStorage;
     std::vector<CUdeviceptr> blasStorage;
-    OptixTraversableHandle *blases;
+    std::vector<OptixTraversableHandle> blases;
 
     TLAS defaultTLAS;
 };

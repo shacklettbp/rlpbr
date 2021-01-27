@@ -14,9 +14,9 @@ namespace optix {
 
 OptixScene::~OptixScene()
 {
-    cudaFree((void *)defaultTLAS.storage);
+    cudaFreeHost(defaultTLAS.instanceBLASes);
 
-    cudaFreeHost(blases);
+    cudaFree((void *)defaultTLAS.storage);
 
     for (auto blas_ptr : blasStorage) {
         cudaFree((void *)blas_ptr);
@@ -50,8 +50,9 @@ OptixEnvironment OptixEnvironment::make(OptixDeviceContext ctx,
 
     OptixTraversableHandle new_tlas;
     REQ_OPTIX(optixAccelRelocate(ctx, build_stream, &tlas_reloc_info,
-        (CUdeviceptr)scene.blases, scene.meshInfo.size(),
-        (CUdeviceptr)tlas_storage, scene.defaultTLAS.numBytes, &new_tlas));
+        (CUdeviceptr)scene.defaultTLAS.instanceBLASes,
+        scene.envInit.indexMap.size(), (CUdeviceptr)tlas_storage,
+        scene.defaultTLAS.numBytes, &new_tlas));
 
     REQ_CUDA(cudaStreamSynchronize(build_stream));
 
@@ -103,18 +104,18 @@ static void freeTLASIntermediate(TLASIntermediate &&inter)
 static pair<TLAS, TLASIntermediate> buildTLAS(
     OptixDeviceContext ctx,
     const vector<vector<glm::mat4x3>> &instance_transforms,
+    uint32_t num_instances,
     const vector<MeshInfo> &mesh_infos,
     OptixTraversableHandle *blases,
     cudaStream_t build_stream)
 {
-    // Build default TLAS
-    uint32_t num_instances = 0;
-    for (const auto &model_instances : instance_transforms) {
-        num_instances += model_instances.size();
-    }
-
     OptixInstance *instance_ptr;
     REQ_CUDA(cudaHostAlloc(&instance_ptr, sizeof(OptixInstance) * num_instances,
+                           cudaHostAllocMapped));
+
+    OptixTraversableHandle *instance_blases;
+    REQ_CUDA(cudaHostAlloc(&instance_blases,
+                           sizeof(OptixTraversableHandle) * num_instances,
                            cudaHostAllocMapped));
 
     uint32_t cur_instance_idx = 0;
@@ -130,6 +131,8 @@ static pair<TLAS, TLASIntermediate> buildTLAS(
             cur_inst.visibilityMask = 0xff;
             cur_inst.flags = 0;
             cur_inst.traversableHandle = blases[model_idx];
+
+            instance_blases[cur_instance_idx] = blases[model_idx];
 
             cur_instance_idx++;
         }
@@ -166,6 +169,7 @@ static pair<TLAS, TLASIntermediate> buildTLAS(
             tlas,
             (CUdeviceptr)tlas_storage,
             tlas_buffer_sizes.outputSizeInBytes,
+            instance_blases,
         },
         TLASIntermediate {
             instance_ptr,
@@ -201,10 +205,8 @@ shared_ptr<Scene> OptixLoader::loadScene(SceneLoadData &&load_info)
     vector<CUdeviceptr> blas_storage;
     blas_storage.reserve(num_meshes);
 
-    OptixTraversableHandle *blases;
-    REQ_CUDA(cudaHostAlloc(&blases,
-        sizeof(OptixTraversableHandle) * num_meshes,
-        cudaHostAllocMapped));
+    vector<OptixTraversableHandle> blases;
+    blases.reserve(num_meshes);
 
     // Improves performance slightly
     unsigned int tri_build_flag = OPTIX_GEOMETRY_FLAG_DISABLE_ANYHIT;
@@ -266,8 +268,9 @@ shared_ptr<Scene> OptixLoader::loadScene(SceneLoadData &&load_info)
         blas_storage.push_back(accel_storage);
     }
 
-    auto [tlas, tlas_inter] = buildTLAS(ctx_,
-        load_info.envInit.transforms, load_info.meshInfo, blases, stream_);
+    auto [tlas, tlas_inter] = buildTLAS(ctx_, load_info.envInit.transforms,
+        load_info.envInit.indexMap.size(), load_info.meshInfo,
+        blases.data(), stream_);
 
     REQ_CUDA(cudaStreamSynchronize(stream_));
     freeTLASIntermediate(move(tlas_inter));
@@ -283,7 +286,7 @@ shared_ptr<Scene> OptixLoader::loadScene(SceneLoadData &&load_info)
         },
         scene_storage,
         move(blas_storage),
-        blases,
+        move(blases),
         move(tlas),
     });
 }
