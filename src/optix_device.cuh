@@ -1191,5 +1191,23 @@ inline __device__ float length(float4 v)
     return sqrtf(dot(v, v));
 }
 
+inline __device__ float2 normalize(float2 v)
+{
+    float invLen = rsqrtf(dot(v, v));
+    return v * invLen;
+}
+
+inline __device__ float3 normalize(float3 v)
+{
+    float invLen = rsqrtf(dot(v, v));
+    return v * invLen;
+}
+
+inline __device__ float4 normalize(float4 v)
+{
+    float invLen = rsqrtf(dot(v, v));
+    return v * invLen;
+}
+
 }
 }

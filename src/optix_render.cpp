@@ -279,6 +279,9 @@ static RenderState makeRenderState(const RenderConfig &cfg, cudaStream_t strm,
     uint64_t total_param_bytes = sizeof(OptixTraversableHandle) * cfg.batchSize;
     uint64_t camera_offset = alignOffset(total_param_bytes, 16);
     total_param_bytes = camera_offset + sizeof(CameraParams) * cfg.batchSize;
+    uint64_t closest_hit_offset = alignOffset(total_param_bytes, 16);
+    total_param_bytes = 
+        closest_hit_offset + sizeof(ClosestHitEnv) * cfg.batchSize;
     total_param_bytes = alignOffset(total_param_bytes, 16);
 
     void *param_buffer;
@@ -307,10 +310,14 @@ static RenderState makeRenderState(const RenderConfig &cfg, cudaStream_t strm,
         CameraParams *cam_ptr =
             (CameraParams *)(frame_param_buffer + camera_offset);
 
+        ClosestHitEnv *ch_env_ptr =
+            (ClosestHitEnv *)(frame_param_buffer + closest_hit_offset);
+
         ShaderParams stage_params {
             output_ptr,
             accel_ptr,
             cam_ptr,
+            ch_env_ptr,
         };
 
         cudaMemcpyAsync(state.deviceParams + frame_idx, &stage_params,
@@ -386,18 +393,36 @@ static CameraParams packCamera(const Camera &cam)
     return params;
 }
 
+static ClosestHitEnv packCHEnv(const Environment &env,
+                               const OptixScene &scene)
+{
+    (void)env;
+
+    ClosestHitEnv ch;
+
+    ch.vertexBuffer = scene.vertexPtr;
+    ch.indexBuffer = scene.indexPtr;
+
+    return ch;
+}
+
+
 uint32_t OptixBackend::render(const Environment *envs)
 {
     const ShaderParams &host_params = render_state_.hostParams[cur_frame_];
 
     for (uint32_t batch_idx = 0; batch_idx < batch_size_; batch_idx++) {
         const Environment &env = envs[batch_idx];
+        const OptixScene &scene = 
+            *static_cast<const OptixScene *>(env.getScene().get());
         const OptixEnvironment &env_backend =
             *static_cast<const OptixEnvironment *>(env.getBackend());
 
         host_params.accelStructs[batch_idx] = env_backend.tlas;
 
         host_params.cameras[batch_idx] = packCamera(env.getCamera());
+
+        host_params.envs[batch_idx] = packCHEnv(env, scene);
     }
 
     const ShaderParams &dev_params = render_state_.deviceParams[cur_frame_];
