@@ -3,7 +3,10 @@
 
 #include "optix_shader.hpp"
 
-static constexpr int spp = (16);
+struct RTParams {
+    static constexpr int spp = (SPP);
+    static constexpr int maxDepth = (MAX_DEPTH);
+};
 
 struct HalfVec2 {
     half a;
@@ -35,7 +38,7 @@ struct Triangle {
 };
 
 __device__ __forceinline__ CameraRay computeCameraRay(
-    const CameraParams &camera, uint3 idx, uint3 dim)
+    const CameraParams &camera, uint3 idx, uint3 dim, uint sample_idx)
 {
     float4 data0 = camera.data[0];
     float4 data1 = camera.data[1];
@@ -96,16 +99,16 @@ __device__ __forceinline__ void setPayload(float r, float g, float b)
     optixSetPayload_1(packHalfs(0, hb));
 }
 
-__device__ __forceinline__ void setOutput(half *base_output, 
-                                          unsigned int payload_0,
-                                          unsigned int payload_1)
+__device__ __forceinline__ void setOutput(half *base_output, float3 rgb)
 {
-    auto [r, g] = unpackHalfs(payload_0);
-    auto [unused, b] = unpackHalfs(payload_1);
+    base_output[0] = __float2half(rgb.x);
+    base_output[1] = __float2half(rgb.y);
+    base_output[2] = __float2half(rgb.z);
+}
 
-    base_output[0] = r;
-    base_output[1] = g;
-    base_output[2] = b;
+__device__ __forceinline__ uint32_t computeSeed(uint3 idx, int32_t sample_idx)
+{
+    return 0;
 }
 
 __device__ __forceinline__ DeviceVertex unpackVertex(
@@ -159,28 +162,54 @@ extern "C" __global__ void __raygen__rg()
     uint batch_idx = idx.z;
 
     const CameraParams &cam = params.cameras[batch_idx];
+    
+    float3 pixel_radiance = make_float3(0.f);
 
-    auto [ray_origin, ray_dir] = computeCameraRay(cam, idx, dim);
+#if SPP != 1
+#pragma unroll 1
+#endif
+    for (int32_t sample_idx = 0; sample_idx < RTParams::spp; sample_idx++) {
+        auto [ray_origin, ray_dir] =
+            computeCameraRay(cam, idx, dim, sample_idx);
 
-    // Trace the ray against our scene hierarchy
-    unsigned int payload_0;
-    unsigned int payload_1;
-    optixTrace(
-            params.accelStructs[batch_idx],
-            ray_origin,
-            ray_dir,
-            0.0f,                // Min intersection distance
-            1e16f,               // Max intersection distance
-            0.0f,                // rayTime -- used for motion blur
-            OptixVisibilityMask(0xff), // Specify always visible
-            OPTIX_RAY_FLAG_NONE,
-            0,                   // SBT offset   -- See SBT discussion
-            0,                   // SBT stride   -- See SBT discussion
-            0,                   // missSBTIndex -- See SBT discussion
-            payload_0,
-            payload_1);
+        float3 sample_radiance = make_float3(0.f);
 
-    setOutput(params.outputBuffer + base_out_offset, payload_0, payload_1);
+#if MAX_DEPTH != 1
+#pragma unroll 1
+#endif
+        for (int32_t path_depth = 0; path_depth < RTParams::maxDepth;
+             path_depth++) {
+
+            // Trace the ray against our scene hierarchy
+            unsigned int payload_0;
+            unsigned int payload_1;
+            optixTrace(
+                    params.accelStructs[batch_idx],
+                    ray_origin,
+                    ray_dir,
+                    0.0f,                // Min intersection distance
+                    1e16f,               // Max intersection distance
+                    0.0f,                // rayTime -- used for motion blur
+                    OptixVisibilityMask(0xff), // Specify always visible
+                    OPTIX_RAY_FLAG_NONE,
+                    0,                   // SBT offset   -- See SBT discussion
+                    0,                   // SBT stride   -- See SBT discussion
+                    0,                   // missSBTIndex -- See SBT discussion
+                    payload_0,
+                    payload_1);
+
+            auto [r, g] = unpackHalfs(payload_0);
+            auto [unused, b] = unpackHalfs(payload_1);
+
+            sample_radiance.x += __half2float(r);
+            sample_radiance.y += __half2float(g);
+            sample_radiance.z += __half2float(b);
+        }
+
+        pixel_radiance += sample_radiance / RTParams::spp;
+    }
+
+    setOutput(params.outputBuffer + base_out_offset, pixel_radiance);
 }
 
 extern "C" __global__ void __miss__ms()

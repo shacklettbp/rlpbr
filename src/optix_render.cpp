@@ -52,7 +52,10 @@ static OptixDeviceContext initializeOptix(uint32_t gpu_id, bool validate)
     return optix_ctx;
 }
 
-static vector<char> compileToPTX(const char *cu_path, bool validate)
+template <size_t N>
+static vector<char> compileToPTX(const char *cu_path,
+                                 const array<string, N> &extra_options,
+                                 bool validate)
 {
     ifstream cu_file(cu_path, ios::binary | ios::ate);
     size_t num_cu_bytes = cu_file.tellg();
@@ -65,27 +68,23 @@ static vector<char> compileToPTX(const char *cu_path, bool validate)
     nvrtcProgram prog;
     REQ_NVRTC(nvrtcCreateProgram(&prog, cu_src.data(), cu_path, 0,
                                  nullptr, nullptr));
-
-    static const char *nvrtc_options[] = {
+    
+    vector<const char *> nvrtc_options = {
         NVRTC_OPTIONS
-        "--extra-device-vectorization",
     };
 
-    static constexpr const char *debug_nvrtc_options[] = {
-        NVRTC_OPTIONS
-        "--device-debug",
-    };
-
-    nvrtcResult res;
-    if (validate) {
-        res = nvrtcCompileProgram(prog,
-            sizeof(debug_nvrtc_options) / sizeof(debug_nvrtc_options[0]),
-            debug_nvrtc_options);
-    } else {
-        res = nvrtcCompileProgram(prog,
-            sizeof(nvrtc_options) / sizeof(nvrtc_options[0]),
-            nvrtc_options);
+    for (const string &extra : extra_options) {
+        nvrtc_options.push_back(extra.c_str());
     }
+
+    if (validate) {
+        nvrtc_options.push_back("--device-debug");
+    } else {
+        nvrtc_options.push_back("--extra-device-vectorization");
+    }
+
+    nvrtcResult res = nvrtcCompileProgram(prog, nvrtc_options.size(),
+        nvrtc_options.data());
 
     auto print_compile_log = [&prog]() {
         // Retrieve log output
@@ -120,7 +119,8 @@ static vector<char> compileToPTX(const char *cu_path, bool validate)
     return ptx_data;
 }
 
-static Pipeline buildPipeline(OptixDeviceContext ctx, bool validate)
+static Pipeline buildPipeline(OptixDeviceContext ctx, const RenderConfig &cfg,
+                              bool validate)
 {
     OptixModuleCompileOptions module_compile_options {};
     if (validate) {
@@ -138,8 +138,14 @@ static Pipeline buildPipeline(OptixDeviceContext ctx, bool validate)
     pipeline_compile_options.numAttributeValues = 2;
     pipeline_compile_options.numPayloadValues = 2;
     pipeline_compile_options.pipelineLaunchParamsVariableName = "params";
+
+    array extra_compile_options {
+        string("-DSPP=") + to_string(cfg.spp),
+        string("-DMAX_DEPTH=") + to_string(cfg.maxDepth),
+    };
     
-    vector<char> ptx = compileToPTX(STRINGIFY(OPTIX_SHADER), validate);
+    vector<char> ptx = compileToPTX(STRINGIFY(OPTIX_SHADER),
+        extra_compile_options, validate);
 
     static constexpr size_t log_bytes = 2048;
     static char log_str[log_bytes];
@@ -356,7 +362,7 @@ OptixBackend::OptixBackend(const RenderConfig &cfg, bool validate)
       }()),
       tlas_strm_(makeStream()),
       ctx_(initializeOptix(cfg.gpuID, validate)),
-      pipeline_(buildPipeline(ctx_, validate)),
+      pipeline_(buildPipeline(ctx_, cfg, validate)),
       sbt_(buildSBT(streams_[0], pipeline_)),
       render_state_(makeRenderState(cfg, streams_[0], num_frames_))
 {
