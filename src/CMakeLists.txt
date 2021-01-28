@@ -40,6 +40,8 @@ foreach(f ${NVRTC_COMPILE_FLAGS})
 endforeach()
 set(NVRTC_OPTIONS "${NVRTC_OPTIONS}")
 
+message(STATUS "${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES}")
+
 target_compile_definitions(rlpbr PRIVATE "-DNVRTC_OPTIONS=${NVRTC_OPTIONS}")
 target_compile_definitions(rlpbr PRIVATE
     "-DOPTIX_SHADER=${CMAKE_CURRENT_SOURCE_DIR}/optix_shader.cu")

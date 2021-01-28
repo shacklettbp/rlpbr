@@ -3,26 +3,18 @@
 
 #include "optix_shader.hpp"
 
-struct RTParams {
-    static constexpr int spp = (SPP);
-    static constexpr int maxDepth = (MAX_DEPTH);
-};
-
-struct HalfVec2 {
-    half a;
-    half b;
-};
+#include <cuda/std/tuple>
 
 using namespace RLpbr::optix;
-using namespace std;
+using namespace cuda::std;
 
 extern "C" {
 __constant__ ShaderParams params;
 }
 
-struct CameraRay {
-    float3 origin;
-    float3 direction;
+struct RTParams {
+    static constexpr int spp = (SPP);
+    static constexpr int maxDepth = (MAX_DEPTH);
 };
 
 struct DeviceVertex {
@@ -37,8 +29,54 @@ struct Triangle {
     DeviceVertex c;
 };
 
-__device__ __forceinline__ CameraRay computeCameraRay(
-    const CameraParams &camera, uint3 idx, uint3 dim, uint sample_idx)
+class RNG {
+public:
+    __inline__ RNG(uint seed, uint frame_idx)
+        : v_(seed)
+    {
+        uint v1 = frame_idx;
+        uint s0 = 0;
+
+        for (int n = 0; n < 4; n++) {
+            s0 += 0x9e3779b9;
+            v_ += ((v1<<4)+0xa341316c)^(v1+s0)^((v1>>5)+0xc8013ea4);
+            v1 += ((v_<<4)+0xad90777d)^(v_+s0)^((v_>>5)+0x7e95761e);
+        }
+    }
+
+    __inline__ float sample1D()
+    {
+        return (float)next() / (float)0x01000000;
+    }
+
+    __inline__ float2 sample2D()
+    {
+        return make_float2(sample1D(), sample1D());
+    }
+
+private:
+    __inline__ uint next()
+    {
+        const uint32_t LCG_A = 1664525u;
+        const uint32_t LCG_C = 1013904223u;
+        v_ = (LCG_A * v_ + LCG_C);
+        return v_ & 0x00FFFFFF;
+    }
+
+    uint v_;
+};
+
+static RNG initRNG(uint3 idx, uint3 dim, uint sample_idx, uint path_idx,
+                   uint frame_idx)
+{
+    uint seed = ((idx.z * dim.y + (idx.y * dim.x + dim.x)) * 
+        RTParams::spp + sample_idx) * RTParams::maxDepth + path_idx;
+
+    return RNG(seed, frame_idx);
+}
+
+__forceinline__ pair<float3, float3> computeCameraRay(
+    const CameraParams &camera, uint3 idx, uint3 dim, RNG &rng)
 {
     float4 data0 = camera.data[0];
     float4 data1 = camera.data[1];
@@ -49,36 +87,38 @@ __device__ __forceinline__ CameraRay computeCameraRay(
     float3 up = make_float3(data1.z, data1.w, data2.x);
     float3 right = make_float3(data2.y, data2.z, data2.w);
 
-    float2 screen = make_float2((2.f * idx.x + 1) / dim.x - 1,
-                                (2.f * idx.y + 1) / dim.y - 1);
+    float2 jittered_raster = make_float2(idx.x, idx.y) + rng.sample2D();
+
+    float2 screen = make_float2((2.f * jittered_raster.x) / dim.x - 1,
+                                (2.f * jittered_raster.y) / dim.y - 1);
 
     float3 direction = right * screen.x + up * screen.y + view;
 
-    return CameraRay {
+    return {
         origin,
         direction,
     };
 }
 
-__device__ __forceinline__ float computeDepth()
+__forceinline__ float computeDepth()
 {
     float3 scaled_dir = optixGetWorldRayDirection() * optixGetRayTmax();
     return length(scaled_dir);
 }
 
-__device__ __forceinline__ float3 computeBarycentrics()
+__forceinline__ float3 computeBarycentrics()
 {
     float2 attrs  = optixGetTriangleBarycentrics();
 
     return make_float3(1.f - attrs.x - attrs.y, attrs.x, attrs.y);
 }
 
-__device__ __forceinline__ unsigned int packHalfs(half a, half b)
+__forceinline__ unsigned int packHalfs(half a, half b)
 {
     return (((unsigned int)__half_as_ushort(a)) << 16) + __half_as_ushort(b);
 }
 
-__device__ __forceinline__ HalfVec2 unpackHalfs(unsigned int v)
+__forceinline__ pair<half, half> unpackHalfs(unsigned int v)
 {
     uint16_t a = v >> 16;
     uint16_t b = v;
@@ -89,7 +129,7 @@ __device__ __forceinline__ HalfVec2 unpackHalfs(unsigned int v)
     };
 }
 
-__device__ __forceinline__ void setPayload(float r, float g, float b)
+__forceinline__ void setPayload(float r, float g, float b)
 {
     half hr = __float2half(r);
     half hg = __float2half(g);
@@ -99,19 +139,14 @@ __device__ __forceinline__ void setPayload(float r, float g, float b)
     optixSetPayload_1(packHalfs(0, hb));
 }
 
-__device__ __forceinline__ void setOutput(half *base_output, float3 rgb)
+__forceinline__ void setOutput(half *base_output, float3 rgb)
 {
     base_output[0] = __float2half(rgb.x);
     base_output[1] = __float2half(rgb.y);
     base_output[2] = __float2half(rgb.z);
 }
 
-__device__ __forceinline__ uint32_t computeSeed(uint3 idx, int32_t sample_idx)
-{
-    return 0;
-}
-
-__device__ __forceinline__ DeviceVertex unpackVertex(
+__forceinline__ DeviceVertex unpackVertex(
     const PackedVertex &packed)
 {
     float4 a = packed.data[0];
@@ -124,7 +159,7 @@ __device__ __forceinline__ DeviceVertex unpackVertex(
     };
 }
 
-__device__ __forceinline__ Triangle fetchTriangle(
+__forceinline__ Triangle fetchTriangle(
     const PackedVertex *vertex_buffer,
     const uint32_t *index_start)
 {
@@ -135,7 +170,7 @@ __device__ __forceinline__ Triangle fetchTriangle(
     };
 }
 
-__device__ __forceinline__ DeviceVertex interpolateTriangle(
+__forceinline__ DeviceVertex interpolateTriangle(
     const Triangle &tri, float3 barys)
 {
     return DeviceVertex {
@@ -156,6 +191,7 @@ extern "C" __global__ void __raygen__rg()
     // Lookup our location within the launch grid
     uint3 idx = optixGetLaunchIndex();
     uint3 dim = optixGetLaunchDimensions();
+
     size_t base_out_offset = 
         3 * (idx.z * dim.y * dim.x + idx.y * dim.x + idx.x);
 
@@ -169,9 +205,6 @@ extern "C" __global__ void __raygen__rg()
 #pragma unroll 1
 #endif
     for (int32_t sample_idx = 0; sample_idx < RTParams::spp; sample_idx++) {
-        auto [ray_origin, ray_dir] =
-            computeCameraRay(cam, idx, dim, sample_idx);
-
         float3 sample_radiance = make_float3(0.f);
 
 #if MAX_DEPTH != 1
@@ -179,6 +212,15 @@ extern "C" __global__ void __raygen__rg()
 #endif
         for (int32_t path_depth = 0; path_depth < RTParams::maxDepth;
              path_depth++) {
+            RNG rng = initRNG(idx, dim, sample_idx, path_depth, 0);
+
+            float3 ray_origin;
+            float3 ray_dir;
+            if (path_depth == 0) {
+                tie(ray_origin, ray_dir) = computeCameraRay(cam, idx, dim, rng);
+            } else {
+                // Compute bounce
+            }
 
             // Trace the ray against our scene hierarchy
             unsigned int payload_0;
