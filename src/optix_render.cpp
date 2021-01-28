@@ -135,6 +135,7 @@ static Pipeline buildPipeline(OptixDeviceContext ctx, bool validate)
     pipeline_compile_options.traversableGraphFlags =
         OPTIX_TRAVERSABLE_GRAPH_FLAG_ALLOW_SINGLE_LEVEL_INSTANCING;
 
+    pipeline_compile_options.numAttributeValues = 2;
     pipeline_compile_options.numPayloadValues = 2;
     pipeline_compile_options.pipelineLaunchParamsVariableName = "params";
     

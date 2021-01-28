@@ -51,7 +51,7 @@ int main(int argc, char *argv[]) {
 
     glm::u32vec2 out_dim(256, 256);
 
-    Renderer renderer({0, 1, batch_size, out_dim.x, out_dim.y, false,
+    Renderer renderer({0, 1, batch_size, out_dim.x, out_dim.y, 1, 1, false,
                        BackendSelect::Optix});
 
     auto loader = renderer.makeLoader();

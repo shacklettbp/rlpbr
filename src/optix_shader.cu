@@ -3,6 +3,8 @@
 
 #include "optix_shader.hpp"
 
+static constexpr int spp = (16);
+
 struct HalfVec2 {
     half a;
     half b;
