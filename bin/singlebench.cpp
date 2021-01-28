@@ -50,7 +50,7 @@ int main(int argc, char *argv[]) {
         };
     }
 
-    Renderer renderer({0, 1, batch_size, res, res, false,
+    Renderer renderer({0, 1, batch_size, res, res, 1, 1, false,
                        BackendSelect::Optix});
 
     auto loader = renderer.makeLoader();

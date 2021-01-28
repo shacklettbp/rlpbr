@@ -134,7 +134,7 @@ int main(int argc, char *argv[]) {
     array<GLuint, 2> render_textures;
     glCreateTextures(GL_TEXTURE_2D, 2, render_textures.data());
 
-    Renderer renderer({0, 1, 1, img_dims.x, img_dims.y, true,
+    Renderer renderer({0, 1, 1, img_dims.x, img_dims.y, 1, 1, true,
                        BackendSelect::Optix});
 
     array<cudaStream_t, 2> copy_streams;
