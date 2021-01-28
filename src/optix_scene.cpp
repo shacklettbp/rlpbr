@@ -180,7 +180,7 @@ static pair<TLAS, TLASIntermediate> buildTLAS(
 
 shared_ptr<Scene> OptixLoader::loadScene(SceneLoadData &&load_info)
 {
-    CUdeviceptr scene_storage = (CUdeviceptr)allocCU(load_info.hdr.totalBytes);
+    char *scene_storage = (char *)allocCU(load_info.hdr.totalBytes);
 
     char *data_src = nullptr;
     bool cuda_staging = false;
@@ -196,7 +196,7 @@ shared_ptr<Scene> OptixLoader::loadScene(SceneLoadData &&load_info)
         data_src = get_if<vector<char>>(&load_info.data)->data();
     }
 
-    cudaMemcpyAsync((void *)scene_storage, data_src, load_info.hdr.totalBytes,
+    cudaMemcpyAsync(scene_storage, data_src, load_info.hdr.totalBytes,
                     cudaMemcpyHostToDevice, stream_);
 
     // Build BLASes
@@ -217,17 +217,24 @@ shared_ptr<Scene> OptixLoader::loadScene(SceneLoadData &&load_info)
         {},
     };
 
+    CUdeviceptr scene_storage_dev = (CUdeviceptr)scene_storage;
+    const PackedVertex *base_vertex_ptr = (const PackedVertex *)scene_storage;
+    const uint32_t *base_index_ptr = 
+        (const uint32_t *)(scene_storage + load_info.hdr.indexOffset);
+
+    static_assert(sizeof(PackedVertex) == sizeof(Vertex));
+
     for (uint32_t mesh_idx = 0; mesh_idx < num_meshes; mesh_idx++) {
         const MeshInfo &mesh_info = load_info.meshInfo[mesh_idx];
 
         OptixBuildInput geometry_info {};
         geometry_info.type = OPTIX_BUILD_INPUT_TYPE_TRIANGLES;
 
-        CUdeviceptr index_ptr = scene_storage + load_info.hdr.indexOffset +
-            mesh_info.indexOffset * sizeof(uint32_t);
+        CUdeviceptr index_ptr =
+            (CUdeviceptr)(base_index_ptr + mesh_info.indexOffset);
 
         auto &tri_info = geometry_info.triangleArray;
-        tri_info.vertexBuffers = &scene_storage;
+        tri_info.vertexBuffers = &scene_storage_dev;
         tri_info.numVertices = load_info.hdr.numVertices;
         tri_info.vertexFormat = OPTIX_VERTEX_FORMAT_FLOAT3;
         tri_info.vertexStrideInBytes = sizeof(Vertex);
@@ -284,7 +291,9 @@ shared_ptr<Scene> OptixLoader::loadScene(SceneLoadData &&load_info)
             move(load_info.meshInfo),
             move(load_info.envInit),
         },
-        scene_storage,
+        scene_storage_dev,
+        base_vertex_ptr,
+        base_index_ptr,
         move(blas_storage),
         move(blases),
         move(tlas),

@@ -1,7 +1,7 @@
 #include <optix.h>
+#include "optix_device.cuh"
 
 #include "optix_shader.hpp"
-#include "optix_device.cuh"
 
 struct HalfVec2 {
     half a;
@@ -18,6 +18,18 @@ __constant__ ShaderParams params;
 struct CameraRay {
     float3 origin;
     float3 direction;
+};
+
+struct DeviceVertex {
+    float3 position;
+    float3 normal;
+    float2 uv;
+};
+
+struct Triangle {
+    DeviceVertex a;
+    DeviceVertex b;
+    DeviceVertex c;
 };
 
 __device__ __forceinline__ CameraRay computeCameraRay(
@@ -94,6 +106,46 @@ __device__ __forceinline__ void setOutput(half *base_output,
     base_output[2] = b;
 }
 
+__device__ __forceinline__ DeviceVertex unpackVertex(
+    const PackedVertex &packed)
+{
+    float4 a = packed.data[0];
+    float4 b = packed.data[1];
+
+    return DeviceVertex {
+        make_float3(a.x, a.y, a.z),
+        make_float3(a.w, b.x, b.y),
+        make_float2(b.z, b.w),
+    };
+}
+
+__device__ __forceinline__ Triangle fetchTriangle(
+    const PackedVertex *vertex_buffer,
+    const uint32_t *index_start)
+{
+    return Triangle {
+        unpackVertex(vertex_buffer[index_start[0]]),
+        unpackVertex(vertex_buffer[index_start[1]]),
+        unpackVertex(vertex_buffer[index_start[2]]),
+    };
+}
+
+__device__ __forceinline__ DeviceVertex interpolateTriangle(
+    const Triangle &tri, float3 barys)
+{
+    return DeviceVertex {
+        tri.a.position * barys.x +
+            tri.b.position * barys.y + 
+            tri.c.position * barys.z,
+        tri.a.normal * barys.x +
+            tri.b.normal * barys.y +
+            tri.c.normal * barys.z,
+        tri.a.uv * barys.x +
+            tri.b.uv * barys.y +
+            tri.c.uv * barys.z,
+    };
+}
+
 extern "C" __global__ void __raygen__rg()
 {
     // Lookup our location within the launch grid
@@ -121,7 +173,7 @@ extern "C" __global__ void __raygen__rg()
             OptixVisibilityMask(0xff), // Specify always visible
             OPTIX_RAY_FLAG_NONE,
             0,                   // SBT offset   -- See SBT discussion
-            1,                   // SBT stride   -- See SBT discussion
+            0,                   // SBT stride   -- See SBT discussion
             0,                   // missSBTIndex -- See SBT discussion
             payload_0,
             payload_1);
@@ -136,7 +188,18 @@ extern "C" __global__ void __miss__ms()
 
 extern "C" __global__ void __closesthit__ch()
 {
+    const ClosestHitEnv &ch_env = params.envs[optixGetLaunchIndex().z];
+    uint32_t index_offset =
+        optixGetInstanceId() + 3 * optixGetPrimitiveIndex();
+    Triangle hit_tri = fetchTriangle(ch_env.vertexBuffer,
+                                     ch_env.indexBuffer + index_offset);
     float3 barys = computeBarycentrics();
+    DeviceVertex interpolated = interpolateTriangle(hit_tri, barys);
 
-    setPayload(barys.y, barys.z, computeDepth());
+    float3 world_normal = 
+        optixTransformNormalFromObjectToWorldSpace(interpolated.normal);
+
+    setPayload(world_normal.x,
+               world_normal.y,
+               world_normal.z);
 }

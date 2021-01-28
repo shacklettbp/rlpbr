@@ -3,6 +3,8 @@
 #include "common.hpp"
 #include "scene.hpp"
 #include "utils.hpp"
+#include "shader.hpp"
+#include "optix_shader.hpp"
 
 #include <cuda.h>
 #include <cuda_runtime.h>
@@ -24,9 +26,11 @@ struct OptixScene : public Scene {
     ~OptixScene();
 
     CUdeviceptr sceneStorage;
+    const PackedVertex *vertexPtr;
+    const uint32_t *indexPtr;
+
     std::vector<CUdeviceptr> blasStorage;
     std::vector<OptixTraversableHandle> blases;
-
     TLAS defaultTLAS;
 };
 
