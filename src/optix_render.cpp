@@ -136,7 +136,7 @@ static Pipeline buildPipeline(OptixDeviceContext ctx, const RenderConfig &cfg,
         OPTIX_TRAVERSABLE_GRAPH_FLAG_ALLOW_SINGLE_LEVEL_INSTANCING;
 
     pipeline_compile_options.numAttributeValues = 2;
-    pipeline_compile_options.numPayloadValues = 2;
+    pipeline_compile_options.numPayloadValues = 4;
     pipeline_compile_options.pipelineLaunchParamsVariableName = "params";
 
     array extra_compile_options {

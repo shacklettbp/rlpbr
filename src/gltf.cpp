@@ -145,57 +145,63 @@ GLTFScene gltfLoad(const string_view gltf_path) noexcept
 
         cout << "accessors" << endl;
 
-        for (const auto &json_image : scene.root["images"]) {
-            GLTFImage img {};
-            string_view uri {};
-            auto uri_err = json_image["uri"].get(uri);
-            if (!uri_err) {
-                img.type = GLTFImageType::EXTERNAL;
-                img.filePath = uri;
-            } else {
-                uint64_t view_idx = json_image["bufferView"];
-                string_view mime = json_image["mimeType"];
-                if (mime == "image/jpeg") {
-                    img.type = GLTFImageType::JPEG;
-                } else if (mime == "image/png") {
-                    img.type = GLTFImageType::PNG;
-                } else if (mime == "image/x-basis") {
-                    img.type = GLTFImageType::BASIS;
+        auto images_elem = scene.root.at_key("images");
+        if (images_elem.error() != simdjson::NO_SUCH_FIELD) {
+            for (const auto &json_image : images_elem.get_array()) {
+                GLTFImage img {};
+                string_view uri {};
+                auto uri_err = json_image["uri"].get(uri);
+                if (!uri_err) {
+                    img.type = GLTFImageType::EXTERNAL;
+                    img.filePath = uri;
+                } else {
+                    uint64_t view_idx = json_image["bufferView"];
+                    string_view mime = json_image["mimeType"];
+                    if (mime == "image/jpeg") {
+                        img.type = GLTFImageType::JPEG;
+                    } else if (mime == "image/png") {
+                        img.type = GLTFImageType::PNG;
+                    } else if (mime == "image/x-basis") {
+                        img.type = GLTFImageType::BASIS;
+                    }
+
+                    img.viewIdx = view_idx;
                 }
 
-                img.viewIdx = view_idx;
+                scene.images.push_back(img);
             }
-
-            scene.images.push_back(img);
         }
 
         cout << "images" << endl;
 
-        for (const auto &texture : scene.root["textures"]) {
-            uint64_t source_idx;
-            auto src_err = texture["source"].get(source_idx);
-            if (src_err) {
-                auto ext_err =
-                    texture["extensions"]["GOOGLE_texture_basis"]["source"]
-                        .get(source_idx);
-                if (ext_err) {
-                    cerr << "GLTF loading '" << gltf_path
-                              << "' failed: texture without source"
-                              << endl;
-                    abort();
+        auto textures_elem = scene.root.at_key("textures");
+        if (textures_elem.error() != simdjson::NO_SUCH_FIELD) {
+            for (const auto &texture : textures_elem.get_array()) {
+                uint64_t source_idx;
+                auto src_err = texture["source"].get(source_idx);
+                if (src_err) {
+                    auto ext_err =
+                        texture["extensions"]["GOOGLE_texture_basis"]["source"]
+                            .get(source_idx);
+                    if (ext_err) {
+                        cerr << "GLTF loading '" << gltf_path
+                                  << "' failed: texture without source"
+                                  << endl;
+                        abort();
+                    }
                 }
-            }
 
-            uint64_t sampler_idx;
-            auto sampler_error = texture["sampler"].get(sampler_idx);
-            if (sampler_error) {
-                sampler_idx = 0;
-            }
+                uint64_t sampler_idx;
+                auto sampler_error = texture["sampler"].get(sampler_idx);
+                if (sampler_error) {
+                    sampler_idx = 0;
+                }
 
-            scene.textures.push_back(GLTFTexture {
-                static_cast<uint32_t>(source_idx),
-                static_cast<uint32_t>(sampler_idx),
-            });
+                scene.textures.push_back(GLTFTexture {
+                    static_cast<uint32_t>(source_idx),
+                    static_cast<uint32_t>(sampler_idx),
+                });
+            }
         }
 
         cout << "textures" << endl;
