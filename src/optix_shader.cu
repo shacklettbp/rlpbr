@@ -4,6 +4,8 @@
 #include "optix_shader.hpp"
 
 #include <cuda/std/tuple>
+#include <math_constants.h>
+
 
 using namespace RLpbr::optix;
 using namespace cuda::std;
@@ -21,6 +23,13 @@ struct DeviceVertex {
     float3 position;
     float3 normal;
     float2 uv;
+};
+
+struct Camera {
+    float3 origin;
+    float3 view;
+    float3 up;
+    float3 right;
 };
 
 struct Triangle {
@@ -69,33 +78,44 @@ private:
 static RNG initRNG(uint3 idx, uint3 dim, uint sample_idx, uint path_idx,
                    uint frame_idx)
 {
-    uint seed = ((idx.z * dim.y + (idx.y * dim.x + dim.x)) * 
+    uint seed = ((idx.z * dim.y + (idx.y * dim.x + idx.x)) * 
         RTParams::spp + sample_idx) * RTParams::maxDepth + path_idx;
 
     return RNG(seed, frame_idx);
 }
 
-__forceinline__ pair<float3, float3> computeCameraRay(
-    const CameraParams &camera, uint3 idx, uint3 dim, RNG &rng)
+__forceinline__ Camera unpackCamera(const CameraParams &packed)
 {
-    float4 data0 = camera.data[0];
-    float4 data1 = camera.data[1];
-    float4 data2 = camera.data[2];
+    float4 data0 = packed.data[0];
+    float4 data1 = packed.data[1];
+    float4 data2 = packed.data[2];
 
     float3 origin = make_float3(data0.x, data0.y, data0.z);
     float3 view = make_float3(data0.w, data1.x, data1.y);
     float3 up = make_float3(data1.z, data1.w, data2.x);
     float3 right = make_float3(data2.y, data2.z, data2.w);
 
+    return Camera {
+        origin,
+        view,
+        up,
+        right,
+    };
+}
+
+__forceinline__ pair<float3, float3> computeCameraRay(
+    const Camera &camera, uint3 idx, uint3 dim, RNG &rng)
+{
     float2 jittered_raster = make_float2(idx.x, idx.y) + rng.sample2D();
 
     float2 screen = make_float2((2.f * jittered_raster.x) / dim.x - 1,
                                 (2.f * jittered_raster.y) / dim.y - 1);
 
-    float3 direction = right * screen.x + up * screen.y + view;
+    float3 direction = camera.right * screen.x + camera.up * screen.y +
+        camera.view;
 
     return {
-        origin,
+        camera.origin,
         direction,
     };
 }
@@ -106,37 +126,31 @@ __forceinline__ float computeDepth()
     return length(scaled_dir);
 }
 
-__forceinline__ float3 computeBarycentrics()
+__forceinline__ float3 computeBarycentrics(float2 raw)
 {
-    float2 attrs  = optixGetTriangleBarycentrics();
-
-    return make_float3(1.f - attrs.x - attrs.y, attrs.x, attrs.y);
+    return make_float3(1.f - raw.x - raw.y, raw.x, raw.y);
 }
 
-__forceinline__ unsigned int packHalfs(half a, half b)
+__forceinline__ uint32_t unormFloat2To32(float2 a)
 {
-    return (((unsigned int)__half_as_ushort(a)) << 16) + __half_as_ushort(b);
+    auto conv = [](float v) { return (uint32_t)trunc(v * 65535.f + 0.5f); };
+
+    return conv(a.x) << 16 | conv(a.y);
 }
 
-__forceinline__ pair<half, half> unpackHalfs(unsigned int v)
+__forceinline__ float2 unormFloat2From32(uint32_t a)
 {
-    uint16_t a = v >> 16;
-    uint16_t b = v;
-
-    return {
-        __ushort_as_half(a),
-        __ushort_as_half(b),
-    };
+     return make_float2(a >> 16, a & 0xffff) * (1.f / 65535.f);
 }
 
-__forceinline__ void setPayload(float r, float g, float b)
+__forceinline__ void setHitPayload(float2 barycentrics,
+                                   uint triangle_index,
+                                   OptixTraversableHandle inst_hdl)
 {
-    half hr = __float2half(r);
-    half hg = __float2half(g);
-    half hb = __float2half(b);
-
-    optixSetPayload_0(packHalfs(hr, hg));
-    optixSetPayload_1(packHalfs(0, hb));
+    optixSetPayload_0(unormFloat2To32(barycentrics));
+    optixSetPayload_1(triangle_index);
+    optixSetPayload_2(inst_hdl >> 32);
+    optixSetPayload_3(inst_hdl & 0xFFFFFFFF);
 }
 
 __forceinline__ void setOutput(half *base_output, float3 rgb)
@@ -186,6 +200,36 @@ __forceinline__ DeviceVertex interpolateTriangle(
     };
 }
 
+__forceinline__ float3 transformNormal(const float4 *w2o, float3 n)
+{
+    float4 r1 = w2o[0];
+    float4 r2 = w2o[1];
+    float4 r3 = w2o[2];
+
+    return make_float3(
+        r1.x * n.x + r2.x * n.y + r3.x * n.z,
+        r1.y * n.x + r2.y * n.y + r3.y * n.z,
+        r1.z * n.x + r2.z * n.y + r3.z * n.z);
+
+}
+
+__forceinline__ float3 transformPosition(const float4 *o2w, float3 p)
+{
+    float4 r1 = o2w[0];
+    float4 r2 = o2w[1];
+    float4 r3 = o2w[2];
+
+    return make_float3(
+        r1.x * p.x + r1.y * p.y * r1.z * p.z + r1.w,
+        r2.x * p.x + r2.y * p.y * r2.z * p.z + r2.w,
+        r3.x * p.x + r3.y * p.y * r3.z * p.z + r3.w);
+}
+
+inline float3 faceforward(const float3& n, const float3& i, const float3& nref)
+{
+  return n * copysignf( 1.0f, dot(i, nref) );
+}
+
 extern "C" __global__ void __raygen__rg()
 {
     // Lookup our location within the launch grid
@@ -197,15 +241,22 @@ extern "C" __global__ void __raygen__rg()
 
     uint batch_idx = idx.z;
 
-    const CameraParams &cam = params.cameras[batch_idx];
+    const Camera cam = unpackCamera(params.cameras[batch_idx]);
+    const ClosestHitEnv &ch_env = params.envs[batch_idx];
     
     float3 pixel_radiance = make_float3(0.f);
+
+    const float intensity = 1.f;
 
 #if SPP != 1
 #pragma unroll 1
 #endif
     for (int32_t sample_idx = 0; sample_idx < RTParams::spp; sample_idx++) {
         float3 sample_radiance = make_float3(0.f);
+        float path_prob = 1.f;
+
+        float3 next_origin;
+        float3 next_direction;
 
 #if MAX_DEPTH != 1
 #pragma unroll 1
@@ -214,21 +265,28 @@ extern "C" __global__ void __raygen__rg()
              path_depth++) {
             RNG rng = initRNG(idx, dim, sample_idx, path_depth, 0);
 
-            float3 ray_origin;
-            float3 ray_dir;
+            float3 shade_origin;
+            float3 shade_dir;
             if (path_depth == 0) {
-                tie(ray_origin, ray_dir) = computeCameraRay(cam, idx, dim, rng);
+                tie(shade_origin, shade_dir) =
+                    computeCameraRay(cam, idx, dim, rng);
             } else {
-                // Compute bounce
+                shade_origin = next_origin;
+                shade_dir = next_direction;
             }
 
-            // Trace the ray against our scene hierarchy
+            // Trace shade ray
             unsigned int payload_0;
             unsigned int payload_1;
+            unsigned int payload_2;
+
+            // Need to overwrite the register so miss detection works
+            unsigned int payload_3 = 0;
+
             optixTrace(
                     params.accelStructs[batch_idx],
-                    ray_origin,
-                    ray_dir,
+                    shade_origin,
+                    shade_dir,
                     0.0f,                // Min intersection distance
                     1e16f,               // Max intersection distance
                     0.0f,                // rayTime -- used for motion blur
@@ -238,14 +296,101 @@ extern "C" __global__ void __raygen__rg()
                     0,                   // SBT stride   -- See SBT discussion
                     0,                   // missSBTIndex -- See SBT discussion
                     payload_0,
-                    payload_1);
+                    payload_1,
+                    payload_2,
+                    payload_3);
 
-            auto [r, g] = unpackHalfs(payload_0);
-            auto [unused, b] = unpackHalfs(payload_1);
+            // Miss, hit env map
+            if (payload_3 == 0) {
+                sample_radiance += intensity * path_prob;
+                break;
+            }
 
-            sample_radiance.x += __half2float(r);
-            sample_radiance.y += __half2float(g);
-            sample_radiance.z += __half2float(b);
+            float2 raw_barys = unormFloat2From32(payload_0);
+            uint index_offset = payload_1;
+            OptixTraversableHandle inst_hdl = (OptixTraversableHandle)(
+                (uint64_t)payload_2 << 32 | (uint64_t)payload_3);
+
+            const float4 *o2w =
+                optixGetInstanceTransformFromHandle(inst_hdl);
+            const float4 *w2o =
+                optixGetInstanceInverseTransformFromHandle(inst_hdl);
+
+            float3 barys = computeBarycentrics(raw_barys);
+
+            Triangle hit_tri = fetchTriangle(ch_env.vertexBuffer,
+                                             ch_env.indexBuffer + index_offset);
+            DeviceVertex interpolated = interpolateTriangle(hit_tri, barys);
+
+            float3 world_position =
+                transformPosition(o2w, interpolated.position);
+            float3 world_normal =
+                transformNormal(w2o, interpolated.normal);
+
+            world_normal = faceforward(world_normal, -shade_dir, world_normal);
+            world_normal = normalize(world_normal);
+
+            float3 up = make_float3(0, 0, 1);
+            float3 up_alt = make_float3(0, 1, 0);
+
+            float3 binormal = cross(world_normal, up);
+            if (length(binormal) < 1e-3f) {
+                binormal = cross(world_normal, up_alt);
+            }
+            binormal = normalize(binormal);
+
+            float3 tangent = normalize(cross(binormal, world_normal));
+
+            auto randomDirection = [&rng] (const float3 &tangent,
+                                           const float3 &binormal,
+                                           const float3 &normal) {
+                const float r   = sqrtf(rng.sample1D());
+                const float phi = 2.0f* (CUDART_PI_F) * rng.sample1D();
+                float2 disk = r * make_float2(cosf(phi), sinf(phi));
+                float3 hemisphere = make_float3(disk.x, disk.y,
+                    sqrtf(fmaxf(0.0f, 1.0f - disk.x*disk.x - disk.y * disk.y)));
+
+                return hemisphere.x * tangent +
+                    hemisphere.y * binormal +
+                    hemisphere.z * normal;
+            };
+
+            float3 shadow_origin = world_position;
+            float3 shadow_direction =
+                normalize(randomDirection(tangent, binormal, world_normal));
+
+            payload_0 = 1;
+            optixTrace(
+                    params.accelStructs[batch_idx],
+                    shadow_origin,
+                    shadow_direction,
+                    2.5f,                // Min intersection distance
+                    1e16f,               // Max intersection distance
+                    0.0f,                // rayTime -- used for motion blur
+                    OptixVisibilityMask(0xff), // Specify always visible
+                    OPTIX_RAY_FLAG_DISABLE_CLOSESTHIT |
+                        OPTIX_RAY_FLAG_TERMINATE_ON_FIRST_HIT |
+                        OPTIX_RAY_FLAG_DISABLE_ANYHIT,
+                    0,                   // SBT offset   -- See SBT discussion
+                    0,                   // SBT stride   -- See SBT discussion
+                    0,                   // missSBTIndex -- See SBT discussion
+                    payload_0,
+                    payload_1,
+                    payload_2,
+                    payload_3);
+
+            if (payload_0 == 0) {
+                // "Shade"
+                sample_radiance += intensity * path_prob;
+            }
+
+            //sample_radiance += make_float3(fabsf(shadow_direction.x), fabs(shadow_direction.y), fabs(shadow_direction.z)) * fabsf(dot(shadow_direction, cam.up));
+
+            // Start setup for next bounce
+            next_origin = shadow_origin;
+            next_direction = randomDirection(tangent, binormal, world_normal);
+
+            path_prob *= 1.f / (CUDART_PI_F) * fabsf(dot(next_direction, world_normal));
         }
 
         pixel_radiance += sample_radiance / RTParams::spp;
@@ -256,23 +401,12 @@ extern "C" __global__ void __raygen__rg()
 
 extern "C" __global__ void __miss__ms()
 {
-    setPayload(0, 0, 0);
+    optixSetPayload_0(0);
 }
 
 extern "C" __global__ void __closesthit__ch()
 {
-    const ClosestHitEnv &ch_env = params.envs[optixGetLaunchIndex().z];
-    uint32_t index_offset =
-        optixGetInstanceId() + 3 * optixGetPrimitiveIndex();
-    Triangle hit_tri = fetchTriangle(ch_env.vertexBuffer,
-                                     ch_env.indexBuffer + index_offset);
-    float3 barys = computeBarycentrics();
-    DeviceVertex interpolated = interpolateTriangle(hit_tri, barys);
-
-    float3 world_normal = 
-        optixTransformNormalFromObjectToWorldSpace(interpolated.normal);
-
-    setPayload(world_normal.x,
-               world_normal.y,
-               world_normal.z);
+    uint32_t base_index = optixGetInstanceId() + 3 * optixGetPrimitiveIndex();
+    setHitPayload(optixGetTriangleBarycentrics(), base_index,
+                  optixGetTransformListHandle(0));
 }

@@ -50,7 +50,7 @@ int main(int argc, char *argv[]) {
         };
     }
 
-    Renderer renderer({0, 1, batch_size, res, res, 1, 1, false,
+    Renderer renderer({0, 1, batch_size, res, res, 4, 4, false,
                        BackendSelect::Optix});
 
     auto loader = renderer.makeLoader();
@@ -65,6 +65,8 @@ int main(int argc, char *argv[]) {
                 0, 1, 0, 0,
                 -1, 0, -1.19209e-07, 0,
                 -3.38921, 1.62114, -3.34509, 1));
+        envs[batch_idx].setCameraView(
+            glm::vec3(-5.263870, -3.536304, -1.417777), glm::vec3(-6.002662, -2.881322, -1.259074), glm::vec3(0.126979, -0.095984, 0.987252));
     }
 
     auto start = chrono::steady_clock::now();
@@ -74,9 +76,6 @@ int main(int argc, char *argv[]) {
     uint32_t cur_view = 0;
 
     for (uint32_t i = 0; i < num_iters; i++) {
-        for (uint32_t j = 0; j < batch_size; j++) {
-            envs[j].setCameraView(init_views[(cur_view++) % init_views.size()]);
-        }
         renderer.render(envs.data());
         renderer.waitForFrame();
     }
