@@ -1,7 +1,7 @@
-#include "optix_scene.hpp"
-#include "optix_utils.hpp"
-#include "shader.hpp"
+#include "scene.hpp"
+#include "utils.hpp"
 
+#include <rlpbr_backend/shader.hpp>
 #include <optix_stubs.h>
 #include <iostream>
 

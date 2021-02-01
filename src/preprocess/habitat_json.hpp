@@ -1,6 +1,6 @@
 #pragma once
 
-#include "scene.hpp"
+#include <rlpbr_backend/scene.hpp>
 
 #include <glm/glm.hpp>
 #include <simdjson.h>

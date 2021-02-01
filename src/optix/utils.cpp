@@ -1,4 +1,4 @@
-#include "optix_utils.hpp"
+#include "utils.hpp"
 
 #include <optix_stubs.h>
 

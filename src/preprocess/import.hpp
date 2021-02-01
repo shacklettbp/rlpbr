@@ -1,7 +1,7 @@
 #pragma once
 
-#include "shader.hpp"
-#include "scene.hpp"
+#include <rlpbr_backend/shader.hpp>
+#include <rlpbr_backend/scene.hpp>
 
 #include <vector>
 

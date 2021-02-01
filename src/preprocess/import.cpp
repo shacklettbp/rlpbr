@@ -1,5 +1,4 @@
 #include "import.hpp"
-#include "scene.hpp"
 #include "gltf.hpp"
 #include "habitat_json.hpp"
 
