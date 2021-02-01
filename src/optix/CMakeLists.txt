@@ -1,3 +1,11 @@
+if (DEFINED ENV{OPTIX_ROOT})
+    set(OPTIX_ROOT ENV{OPTIX_ROOT})
+endif()
+
+if (NOT DEFINED OPTIX_ROOT)
+    message(FATAL_ERROR "Need to specify path to optix")
+endif()
+
 add_library(rlpbr_optix SHARED
     render.hpp render.cpp
     scene.hpp scene.cpp
@@ -8,7 +16,7 @@ target_link_libraries(rlpbr_optix rlpbr_backend CUDA::nvrtc)
 
 target_include_directories(rlpbr_optix SYSTEM
     PUBLIC
-        /home/bps/rendering/optix/cur/include
+        "${OPTIX_ROOT}/include"
 )
 
 set(NVRTC_COMPILE_FLAGS -std=c++17 -default-device -rdc true -arch compute_86

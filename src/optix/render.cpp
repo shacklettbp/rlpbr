@@ -48,6 +48,7 @@ static OptixDeviceContext initializeOptix(uint32_t gpu_id, bool validate)
 
     OptixDeviceContext optix_ctx;
     REQ_OPTIX(optixDeviceContextCreate(cuda_ctx, &optix_opts, &optix_ctx));
+    REQ_OPTIX(optixDeviceContextSetCacheEnabled(optix_ctx, false));
 
     return optix_ctx;
 }
