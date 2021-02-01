@@ -1,10 +1,10 @@
 #pragma once
 
 #include <rlpbr/config.hpp>
+#include <rlpbr_backend/common.hpp>
 
-#include "common.hpp"
-#include "optix_scene.hpp"
-#include "optix_shader.hpp"
+#include "scene.hpp"
+#include "shader.hpp"
 
 namespace RLpbr {
 namespace optix {

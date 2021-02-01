@@ -1,11 +1,10 @@
 #include <optix.h>
-#include "optix_device.cuh"
-
-#include "optix_shader.hpp"
 
 #include <cuda/std/tuple>
 #include <math_constants.h>
 
+#include "device.cuh"
+#include "shader.hpp"
 
 using namespace RLpbr::optix;
 using namespace cuda::std;

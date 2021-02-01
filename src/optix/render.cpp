@@ -1,6 +1,6 @@
-#include "optix_render.hpp"
-#include "optix_utils.hpp"
+#include "render.hpp"
 #include "utils.hpp"
+#include <rlpbr_backend/utils.hpp>
 
 #include <cuda_runtime.h>
 #include <nvrtc.h>

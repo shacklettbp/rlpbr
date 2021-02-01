@@ -1,7 +1,7 @@
 #include "gltf.hpp"
-#include "utils.hpp"
 #include "import.hpp"
 
+#include <rlpbr_backend/utils.hpp>
 #include <glm/glm.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #include <glm/gtx/transform.hpp>

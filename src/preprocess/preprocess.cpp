@@ -1,5 +1,5 @@
 #include <rlpbr/preprocess.hpp>
-#include <meshoptimizer.h>
+#include <rlpbr_backend/utils.hpp>
 
 #include <cstring>
 #include <iostream>
@@ -9,10 +9,9 @@
 #include <glm/gtc/type_precision.hpp>
 #include <glm/gtx/string_cast.hpp>
 #include <glm/gtx/norm.hpp>
+#include <meshoptimizer.h>
 
 #include "import.hpp"
-#include "scene.hpp"
-#include "utils.hpp"
 
 using namespace std;
 

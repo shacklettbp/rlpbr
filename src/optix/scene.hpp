@@ -1,10 +1,11 @@
 #pragma once
 
-#include "common.hpp"
-#include "scene.hpp"
-#include "utils.hpp"
+#include <rlpbr_backend/common.hpp>
+#include <rlpbr_backend/scene.hpp>
+#include <rlpbr_backend/utils.hpp>
+#include <rlpbr_backend/shader.hpp>
+
 #include "shader.hpp"
-#include "optix_shader.hpp"
 
 #include <cuda.h>
 #include <cuda_runtime.h>

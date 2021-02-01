@@ -1,8 +1,9 @@
 #include <rlpbr.hpp>
-#include "common.hpp"
-#include "scene.hpp"
-#include "utils.hpp"
-#include "optix_render.hpp"
+#include <rlpbr_backend/common.hpp>
+#include <rlpbr_backend/scene.hpp>
+#include <rlpbr_backend/utils.hpp>
+
+#include "optix/render.hpp"
 
 #include <functional>
 #include <iostream>
