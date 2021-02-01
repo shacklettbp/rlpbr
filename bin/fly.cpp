@@ -110,8 +110,8 @@ static glm::vec2 cursorPosition(GLFWwindow *window)
 }
 
 int main(int argc, char *argv[]) {
-    if (argc != 2) {
-        cerr << argv[0] << " scene" << endl;
+    if (argc < 2) {
+        cerr << argv[0] << " scene [spp] [depth]" << endl;
         exit(EXIT_FAILURE);
     }
 
@@ -134,7 +134,18 @@ int main(int argc, char *argv[]) {
     array<GLuint, 2> render_textures;
     glCreateTextures(GL_TEXTURE_2D, 2, render_textures.data());
 
-    Renderer renderer({0, 1, 1, img_dims.x, img_dims.y, 32, 5, true,
+    uint32_t spp = 1;
+    uint32_t depth = 1;
+
+    if (argc > 2) {
+        spp = atoi(argv[2]);
+    }
+
+    if (argc > 3) {
+        depth = atoi(argv[3]);
+    }
+
+    Renderer renderer({0, 1, 1, img_dims.x, img_dims.y, spp, depth, true,
                        BackendSelect::Optix});
 
     array<cudaStream_t, 2> copy_streams;
