@@ -219,9 +219,9 @@ __forceinline__ float3 transformPosition(const float4 *o2w, float3 p)
     float4 r3 = o2w[2];
 
     return make_float3(
-        r1.x * p.x + r1.y * p.y * r1.z * p.z + r1.w,
-        r2.x * p.x + r2.y * p.y * r2.z * p.z + r2.w,
-        r3.x * p.x + r3.y * p.y * r3.z * p.z + r3.w);
+        r1.x * p.x + r1.y * p.y + r1.z * p.z + r1.w,
+        r2.x * p.x + r2.y * p.y + r2.z * p.z + r2.w,
+        r3.x * p.x + r3.y * p.y + r3.z * p.z + r3.w);
 }
 
 inline float3 faceforward(const float3& n, const float3& i, const float3& nref)
@@ -245,7 +245,7 @@ extern "C" __global__ void __raygen__rg()
     
     float3 pixel_radiance = make_float3(0.f);
 
-    const float intensity = 1.f;
+    const float intensity = 3.f;
 
 #if SPP != 1
 #pragma unroll 1
@@ -282,11 +282,12 @@ extern "C" __global__ void __raygen__rg()
             // Need to overwrite the register so miss detection works
             unsigned int payload_3 = 0;
 
+            // FIXME Min T for both shadow and this ray
             optixTrace(
                     params.accelStructs[batch_idx],
                     shade_origin,
                     shade_dir,
-                    0.0f,                // Min intersection distance
+                    path_depth == 0 ? 0.f : 1e-5f, // Min intersection distance
                     1e16f,               // Max intersection distance
                     0.0f,                // rayTime -- used for motion blur
                     OptixVisibilityMask(0xff), // Specify always visible
@@ -363,7 +364,7 @@ extern "C" __global__ void __raygen__rg()
                     params.accelStructs[batch_idx],
                     shadow_origin,
                     shadow_direction,
-                    2.5f,                // Min intersection distance
+                    1e-5f,                // Min intersection distance
                     1e16f,               // Max intersection distance
                     0.0f,                // rayTime -- used for motion blur
                     OptixVisibilityMask(0xff), // Specify always visible
@@ -383,13 +384,13 @@ extern "C" __global__ void __raygen__rg()
                 sample_radiance += intensity * path_prob;
             }
 
-            //sample_radiance += make_float3(fabsf(shadow_direction.x), fabs(shadow_direction.y), fabs(shadow_direction.z)) * fabsf(dot(shadow_direction, cam.up));
-
             // Start setup for next bounce
             next_origin = shadow_origin;
             next_direction = randomDirection(tangent, binormal, world_normal);
 
-            path_prob *= 1.f / (CUDART_PI_F) * fabsf(dot(next_direction, world_normal));
+            // FIXME definitely wrong (light intensity?)
+            path_prob *=
+                1.f / (CUDART_PI_F) * fabsf(dot(next_direction, world_normal));
         }
 
         pixel_radiance += sample_radiance / RTParams::spp;
