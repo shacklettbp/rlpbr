@@ -4,6 +4,8 @@
 
 #include <cuda_runtime.h>
 
+#include <glm/gtx/transform.hpp>
+
 // FIXME
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "stb_image_write.h"
@@ -43,30 +45,40 @@ void saveFrame(const char *fname, const half *dev_ptr,
 
 int main(int argc, char *argv[]) {
     if (argc < 3) {
-        cerr << argv[0] << "scene batch_size" << endl;
+        cerr << argv[0] << "scene batch_size [spp] [depth]" << endl;
         exit(EXIT_FAILURE);
     }
 
-    uint32_t batch_size = stoul(argv[2]);
+    uint32_t batch_size = atoi(argv[2]);
 
-    glm::u32vec2 out_dim(256, 256);
+    glm::u32vec2 out_dim(1024, 1024);
 
-    Renderer renderer({0, 1, batch_size, out_dim.x, out_dim.y, 1, 1, false,
-                       BackendSelect::Optix});
+    uint32_t spp = 1;
+
+    if (argc > 3) {
+        spp = atoi(argv[3]);
+    }
+
+    uint32_t depth = 1;
+    if (argc > 4) {
+        depth = atoi(argv[4]);
+    }
+
+    Renderer renderer({0, 1, batch_size, out_dim.x, out_dim.y, spp, depth,
+                       false, BackendSelect::Optix});
 
     auto loader = renderer.makeLoader();
     auto scene = loader.loadScene(argv[1]);
     vector<Environment> envs;
 
-    glm::mat4 base(-1.19209e-07, 0, 1, 0,
-                   0, 1, 0, 0,
-                   -1, 0, -1.19209e-07, 0,
-                   -3.38921, 1.62114, -3.34509, 1);
+    glm::vec3 eye(6.237920, -1.447695, -1.560374);
+    glm::vec3 look(7.230427, -1.390451, -1.452407);
+    glm::vec3 up(0.061091, -0.997598, -0.032675);
     
     for (uint32_t batch_idx = 0; batch_idx < batch_size; batch_idx++) {
+        glm::mat3 r = glm::rotate(glm::radians(10.f * batch_idx), up);
         envs.emplace_back(renderer.makeEnvironment(scene, 
-            glm::rotate(base, glm::radians(10.f * batch_idx),
-                            glm::vec3(0.f, 0.f, 1.f))));
+            eye, r * look, up));
     }
 
     renderer.render(envs.data());
