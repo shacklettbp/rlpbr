@@ -199,6 +199,14 @@ __forceinline__ DeviceVertex interpolateTriangle(
     };
 }
 
+inline float3 computeGeometricNormal(const Triangle &tri)
+{
+    float3 v1 = tri.b.position - tri.a.position;
+    float3 v2 = tri.c.position - tri.a.position;
+
+    return normalize(cross(v1, v2));
+}
+
 __forceinline__ float3 transformNormal(const float4 *w2o, float3 n)
 {
     float4 r1 = w2o[0];
@@ -227,6 +235,33 @@ __forceinline__ float3 transformPosition(const float4 *o2w, float3 p)
 inline float3 faceforward(const float3& n, const float3& i, const float3& nref)
 {
   return n * copysignf( 1.0f, dot(i, nref) );
+}
+
+inline float3 offsetRayOrigin(const float3 &o, const float3 &geo_normal)
+{
+    constexpr float global_origin = 1.f / 32.f;
+    constexpr float float_scale = 1.f / 65536.f;
+    constexpr float int_scale = 256.f;
+
+    int3 int_offset = make_int3(
+        geo_normal.x * int_scale, geo_normal.y * int_scale,
+        geo_normal.z * int_scale);
+
+    float3 o_integer = make_float3(
+        __int_as_float(
+            __float_as_int(o.x) + ((o.x < 0) ? -int_offset.x : int_offset.x)),
+        __int_as_float(
+            __float_as_int(o.y) + ((o.y < 0) ? -int_offset.y : int_offset.y)),
+        __int_as_float(
+            __float_as_int(o.z) + ((o.z < 0) ? -int_offset.z : int_offset.z)));
+
+    return make_float3(
+        fabsf(o.x) < global_origin ?
+            o.x + float_scale * geo_normal.x : o_integer.x,
+        fabsf(o.y) < global_origin ?
+            o.y + float_scale * geo_normal.y : o_integer.y,
+        fabsf(o.z) < global_origin ?
+            o.z + float_scale * geo_normal.z : o_integer.z);
 }
 
 extern "C" __global__ void __raygen__rg()
@@ -287,7 +322,7 @@ extern "C" __global__ void __raygen__rg()
                     params.accelStructs[batch_idx],
                     shade_origin,
                     shade_dir,
-                    path_depth == 0 ? 0.f : 1e-5f, // Min intersection distance
+                    0.f, // Min intersection distance
                     1e16f,               // Max intersection distance
                     0.0f,                // rayTime -- used for motion blur
                     OptixVisibilityMask(0xff), // Specify always visible
@@ -321,11 +356,14 @@ extern "C" __global__ void __raygen__rg()
             Triangle hit_tri = fetchTriangle(ch_env.vertexBuffer,
                                              ch_env.indexBuffer + index_offset);
             DeviceVertex interpolated = interpolateTriangle(hit_tri, barys);
+            float3 obj_geo_normal = computeGeometricNormal(hit_tri);
 
             float3 world_position =
                 transformPosition(o2w, interpolated.position);
             float3 world_normal =
                 transformNormal(w2o, interpolated.normal);
+            float3 world_geo_normal =
+                transformNormal(w2o, obj_geo_normal);
 
             world_normal = faceforward(world_normal, -shade_dir, world_normal);
             world_normal = normalize(world_normal);
@@ -355,7 +393,8 @@ extern "C" __global__ void __raygen__rg()
                     hemisphere.z * normal;
             };
 
-            float3 shadow_origin = world_position;
+            float3 shadow_origin =
+                offsetRayOrigin(world_position, world_geo_normal);
             float3 shadow_direction =
                 normalize(randomDirection(tangent, binormal, world_normal));
 
@@ -364,7 +403,7 @@ extern "C" __global__ void __raygen__rg()
                     params.accelStructs[batch_idx],
                     shadow_origin,
                     shadow_direction,
-                    1e-5f,                // Min intersection distance
+                    0.f,                // Min intersection distance
                     1e16f,               // Max intersection distance
                     0.0f,                // rayTime -- used for motion blur
                     OptixVisibilityMask(0xff), // Specify always visible
