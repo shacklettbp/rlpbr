@@ -245,7 +245,7 @@ extern "C" __global__ void __raygen__rg()
     
     float3 pixel_radiance = make_float3(0.f);
 
-    const float intensity = 3.f;
+    const float intensity = 10.f;
 
 #if SPP != 1
 #pragma unroll 1
