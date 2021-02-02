@@ -71,9 +71,9 @@ int main(int argc, char *argv[]) {
     auto scene = loader.loadScene(argv[1]);
     vector<Environment> envs;
 
-    glm::vec3 eye(6.237920, -1.447695, -1.560374);
-    glm::vec3 look(7.230427, -1.390451, -1.452407);
-    glm::vec3 up(0.061091, -0.997598, -0.032675);
+    glm::vec3 eye(6.986622, 1.689715, -0.781423);
+    glm::vec3 look(7.950317, 1.431094, -0.847776);
+    glm::vec3 up(0.264730, 0.957853, 0.111514);
     
     for (uint32_t batch_idx = 0; batch_idx < batch_size; batch_idx++) {
         glm::mat3 r = glm::rotate(glm::radians(10.f * batch_idx), up);
