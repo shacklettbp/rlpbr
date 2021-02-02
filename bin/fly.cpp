@@ -15,7 +15,7 @@
 using namespace std;
 using namespace RLpbr;
 
-const float mouse_speed = 2e-4;
+const float mouse_speed = 6e-4;
 const float movement_speed = 1.5;
 const float rotate_speed = 1.25;
 
@@ -85,11 +85,11 @@ void windowKeyHandler(GLFWwindow *window, int key, int, int action, int)
             break;
         }
         case GLFW_KEY_Q: {
-            cur_movement.z += 1;
+            cur_movement.z -= 1;
             break;
         }
         case GLFW_KEY_E: {
-            cur_movement.z -= 1;
+            cur_movement.z += 1;
             break;
         }
     }
@@ -106,7 +106,7 @@ static glm::vec2 cursorPosition(GLFWwindow *window)
     double mouse_x, mouse_y;
     glfwGetCursorPos(window, &mouse_x, &mouse_y);
 
-    return glm::vec2(mouse_x, mouse_y);
+    return glm::vec2(mouse_x, -mouse_y);
 }
 
 int main(int argc, char *argv[]) {
@@ -196,9 +196,6 @@ int main(int argc, char *argv[]) {
     vector<Environment> envs;
     envs.emplace_back(
         renderer.makeEnvironment(scene, cam.eye, cam.look, cam.up));
-
-    envs[0].addLight(glm::vec3(5, 6, 0), glm::vec3(1, 2, 2));
-    envs[0].addLight(glm::vec3(4, 6, -4), glm::vec3(2, 2, 1));
 
     glfwSetKeyCallback(window, windowKeyHandler);
 
@@ -313,7 +310,7 @@ int main(int argc, char *argv[]) {
                                   render_textures[prev_frame], 0);
 
         glBlitNamedFramebuffer(read_fbos[prev_frame], 0,
-                               0, 0, img_dims.x, img_dims.y,
+                               0, img_dims.y, img_dims.x, 0,
                                0, 0, img_dims.x, img_dims.y,
                                GL_COLOR_BUFFER_BIT, GL_NEAREST);
 
