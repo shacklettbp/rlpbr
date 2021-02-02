@@ -237,6 +237,7 @@ inline float3 faceforward(const float3& n, const float3& i, const float3& nref)
   return n * copysignf( 1.0f, dot(i, nref) );
 }
 
+// Ray Tracing Gems Chapter 6 (avoid self intersections)
 inline float3 offsetRayOrigin(const float3 &o, const float3 &geo_normal)
 {
     constexpr float global_origin = 1.f / 32.f;
@@ -382,7 +383,7 @@ extern "C" __global__ void __raygen__rg()
             auto randomDirection = [&rng] (const float3 &tangent,
                                            const float3 &binormal,
                                            const float3 &normal) {
-                const float r   = sqrtf(rng.sample1D());
+                const float r = sqrtf(rng.sample1D());
                 const float phi = 2.0f* (CUDART_PI_F) * rng.sample1D();
                 float2 disk = r * make_float2(cosf(phi), sinf(phi));
                 float3 hemisphere = make_float3(disk.x, disk.y,

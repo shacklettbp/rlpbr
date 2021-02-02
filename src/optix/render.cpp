@@ -346,16 +346,21 @@ static cudaStream_t makeStream()
     return strm;
 }
 
+static inline uint32_t getNumFrames(const RenderConfig &cfg)
+{
+    return cfg.doubleBuffered ? 2 : 1;
+}
+
 OptixBackend::OptixBackend(const RenderConfig &cfg, bool validate)
     : batch_size_(cfg.batchSize),
       img_dims_(cfg.imgWidth, cfg.imgHeight),
       cur_frame_(0),
-      num_frames_(cfg.doubleBuffered ? 2 : 1),
-      streams_([this]() {
+      frame_mask_(getNumFrames(cfg) == 2 ? 1 : 0),
+      streams_([&cfg]() {
           cudaStream_t strm = makeStream();
 
           cudaStream_t strm2 = nullptr;
-          if (num_frames_ > 1) {
+          if (getNumFrames(cfg) > 1) {
               strm2 = makeStream();
           }
 
@@ -365,7 +370,7 @@ OptixBackend::OptixBackend(const RenderConfig &cfg, bool validate)
       ctx_(initializeOptix(cfg.gpuID, validate)),
       pipeline_(buildPipeline(ctx_, cfg, validate)),
       sbt_(buildSBT(streams_[0], pipeline_)),
-      render_state_(makeRenderState(cfg, streams_[0], num_frames_))
+      render_state_(makeRenderState(cfg, streams_[0], getNumFrames(cfg)))
 {
     REQ_CUDA(cudaStreamSynchronize(streams_[0]));
 }
@@ -417,7 +422,8 @@ static ClosestHitEnv packCHEnv(const Environment &env,
 
 uint32_t OptixBackend::render(const Environment *envs)
 {
-    const ShaderParams &host_params = render_state_.hostParams[cur_frame_];
+    uint32_t frame_idx = cur_frame_++ & frame_mask_;
+    const ShaderParams &host_params = render_state_.hostParams[frame_idx];
 
     for (uint32_t batch_idx = 0; batch_idx < batch_size_; batch_idx++) {
         const Environment &env = envs[batch_idx];
@@ -433,16 +439,13 @@ uint32_t OptixBackend::render(const Environment *envs)
         host_params.envs[batch_idx] = packCHEnv(env, scene);
     }
 
-    const ShaderParams &dev_params = render_state_.deviceParams[cur_frame_];
+    const ShaderParams &dev_params = render_state_.deviceParams[frame_idx];
 
-    REQ_OPTIX(optixLaunch(pipeline_.hdl, streams_[cur_frame_],
+    REQ_OPTIX(optixLaunch(pipeline_.hdl, streams_[frame_idx],
         (CUdeviceptr)&dev_params, sizeof(ShaderParams),
         &sbt_.hdl, img_dims_.x, img_dims_.y, batch_size_));
 
-    uint32_t rendered_idx = cur_frame_;
-    cur_frame_ = (cur_frame_ + 1) % num_frames_;
-
-    return rendered_idx;
+    return frame_idx;
 }
 
 void OptixBackend::waitForFrame(uint32_t frame_idx)
