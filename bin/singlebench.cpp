@@ -59,21 +59,17 @@ int main(int argc, char *argv[]) {
     vector<Environment> envs;
 
     for (uint32_t batch_idx = 0; batch_idx < batch_size; batch_idx++) {
-        envs.emplace_back(renderer.makeEnvironment(scene)); 
-        envs[batch_idx].setCameraView(glm::mat4(
-                -1.19209e-07, 0, 1, 0,
-                0, 1, 0, 0,
-                -1, 0, -1.19209e-07, 0,
-                -3.38921, 1.62114, -3.34509, 1));
-        envs[batch_idx].setCameraView(
-            glm::vec3(-5.263870, -3.536304, -1.417777), glm::vec3(-6.002662, -2.881322, -1.259074), glm::vec3(0.126979, -0.095984, 0.987252));
+        envs.emplace_back(renderer.makeEnvironment(scene,
+            glm::vec3(6.986622, 1.689715, -0.781423),
+            glm::vec3(7.950317, 1.431094, -0.847776),
+            glm::vec3(0.264730, 0.957853, 0.111514)));
     }
 
     auto start = chrono::steady_clock::now();
 
     uint32_t num_iters = num_frames / batch_size;
 
-    uint32_t cur_view = 0;
+    //uint32_t cur_view = 0;
 
     for (uint32_t i = 0; i < num_iters; i++) {
         renderer.render(envs.data());
