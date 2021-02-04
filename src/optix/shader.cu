@@ -1,10 +1,10 @@
-#include <optix.h>
+#include "device.cuh"
+#include "sampler.cuh"
+#include "shader.hpp"
 
+#include <optix.h>
 #include <cuda/std/tuple>
 #include <math_constants.h>
-
-#include "device.cuh"
-#include "shader.hpp"
 
 using namespace RLpbr::optix;
 using namespace cuda::std;
@@ -12,11 +12,6 @@ using namespace cuda::std;
 extern "C" {
 __constant__ ShaderParams params;
 }
-
-struct RTParams {
-    static constexpr int spp = (SPP);
-    static constexpr int maxDepth = (MAX_DEPTH);
-};
 
 struct DeviceVertex {
     float3 position;
@@ -36,52 +31,6 @@ struct Triangle {
     DeviceVertex b;
     DeviceVertex c;
 };
-
-class RNG {
-public:
-    __inline__ RNG(uint seed, uint frame_idx)
-        : v_(seed)
-    {
-        uint v1 = frame_idx;
-        uint s0 = 0;
-
-        for (int n = 0; n < 4; n++) {
-            s0 += 0x9e3779b9;
-            v_ += ((v1<<4)+0xa341316c)^(v1+s0)^((v1>>5)+0xc8013ea4);
-            v1 += ((v_<<4)+0xad90777d)^(v_+s0)^((v_>>5)+0x7e95761e);
-        }
-    }
-
-    __inline__ float sample1D()
-    {
-        return (float)next() / (float)0x01000000;
-    }
-
-    __inline__ float2 sample2D()
-    {
-        return make_float2(sample1D(), sample1D());
-    }
-
-private:
-    __inline__ uint next()
-    {
-        const uint32_t LCG_A = 1664525u;
-        const uint32_t LCG_C = 1013904223u;
-        v_ = (LCG_A * v_ + LCG_C);
-        return v_ & 0x00FFFFFF;
-    }
-
-    uint v_;
-};
-
-static RNG initRNG(uint3 idx, uint3 dim, uint sample_idx, uint path_idx,
-                   uint frame_idx)
-{
-    uint seed = ((idx.z * dim.y + (idx.y * dim.x + idx.x)) * 
-        RTParams::spp + sample_idx) * RTParams::maxDepth + path_idx;
-
-    return RNG(seed, frame_idx);
-}
 
 __forceinline__ Camera unpackCamera(const CameraParams &packed)
 {
@@ -103,9 +52,9 @@ __forceinline__ Camera unpackCamera(const CameraParams &packed)
 }
 
 __forceinline__ pair<float3, float3> computeCameraRay(
-    const Camera &camera, uint3 idx, uint3 dim, RNG &rng)
+    const Camera &camera, uint3 idx, uint3 dim, Sampler &sampler)
 {
-    float2 jittered_raster = make_float2(idx.x, idx.y) + rng.sample2D();
+    float2 jittered_raster = make_float2(idx.x, idx.y) + sampler.get2D();
 
     float2 screen = make_float2((2.f * jittered_raster.x) / dim.x - 1,
                                 (2.f * jittered_raster.y) / dim.y - 1);
@@ -199,12 +148,13 @@ __forceinline__ DeviceVertex interpolateTriangle(
     };
 }
 
+// Returns *unnormalized vector*
 inline float3 computeGeometricNormal(const Triangle &tri)
 {
     float3 v1 = tri.b.position - tri.a.position;
     float3 v2 = tri.c.position - tri.a.position;
 
-    return normalize(cross(v1, v2));
+    return cross(v1, v2);
 }
 
 __forceinline__ float3 transformNormal(const float4 *w2o, float3 n)
@@ -283,28 +233,28 @@ extern "C" __global__ void __raygen__rg()
 
     const float intensity = 10.f;
 
-#if SPP != 1
+#if SPP != (1u)
 #pragma unroll 1
 #endif
-    for (int32_t sample_idx = 0; sample_idx < RTParams::spp; sample_idx++) {
+    for (int32_t sample_idx = 0; sample_idx < SPP; sample_idx++) {
+        Sampler sampler(idx, sample_idx, 0);
+
         float3 sample_radiance = make_float3(0.f);
         float path_prob = 1.f;
 
         float3 next_origin;
         float3 next_direction;
 
-#if MAX_DEPTH != 1
+#if MAX_DEPTH != (1u)
 #pragma unroll 1
 #endif
-        for (int32_t path_depth = 0; path_depth < RTParams::maxDepth;
+        for (int32_t path_depth = 0; path_depth < MAX_DEPTH;
              path_depth++) {
-            RNG rng = initRNG(idx, dim, sample_idx, path_depth, 0);
-
             float3 shade_origin;
             float3 shade_dir;
             if (path_depth == 0) {
                 tie(shade_origin, shade_dir) =
-                    computeCameraRay(cam, idx, dim, rng);
+                    computeCameraRay(cam, idx, dim, sampler);
             } else {
                 shade_origin = next_origin;
                 shade_dir = next_direction;
@@ -369,6 +319,8 @@ extern "C" __global__ void __raygen__rg()
             world_normal = faceforward(world_normal, -shade_dir, world_normal);
             world_normal = normalize(world_normal);
 
+            world_geo_normal = normalize(world_geo_normal);
+
             float3 up = make_float3(0, 0, 1);
             float3 up_alt = make_float3(0, 1, 0);
 
@@ -380,14 +332,15 @@ extern "C" __global__ void __raygen__rg()
 
             float3 tangent = normalize(cross(binormal, world_normal));
 
-            auto randomDirection = [&rng] (const float3 &tangent,
+            auto randomDirection = [&sampler] (const float3 &tangent,
                                            const float3 &binormal,
                                            const float3 &normal) {
-                const float r = sqrtf(rng.sample1D());
-                const float phi = 2.0f* (CUDART_PI_F) * rng.sample1D();
+                float2 uv = sampler.get2D();
+                const float r = sqrtf(uv.x);
+                const float phi = 2.0f * (CUDART_PI_F) * uv.y;
                 float2 disk = r * make_float2(cosf(phi), sinf(phi));
                 float3 hemisphere = make_float3(disk.x, disk.y,
-                    sqrtf(fmaxf(0.0f, 1.0f - disk.x*disk.x - disk.y * disk.y)));
+                    sqrtf(fmaxf(0.0f, 1.0f - dot(disk, disk))));
 
                 return hemisphere.x * tangent +
                     hemisphere.y * binormal +
@@ -433,7 +386,7 @@ extern "C" __global__ void __raygen__rg()
                 1.f / (CUDART_PI_F) * fabsf(dot(next_direction, world_normal));
         }
 
-        pixel_radiance += sample_radiance / RTParams::spp;
+        pixel_radiance += sample_radiance / SPP;
     }
 
     setOutput(params.outputBuffer + base_out_offset, pixel_radiance);

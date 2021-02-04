@@ -141,10 +141,13 @@ static Pipeline buildPipeline(OptixDeviceContext ctx, const RenderConfig &cfg,
     pipeline_compile_options.pipelineLaunchParamsVariableName = "params";
 
     array extra_compile_options {
-        string("-DSPP=") + to_string(cfg.spp),
-        string("-DMAX_DEPTH=") + to_string(cfg.maxDepth),
+        string("-DSPP=(") + to_string(cfg.spp) + "u)",
+        string("-DMAX_DEPTH=(") + to_string(cfg.maxDepth) + "u)",
+        string("-DRES_X=(") + to_string(cfg.imgWidth) + "u)",
+        string("-DRES_Y=(") + to_string(cfg.imgHeight) + "u)",
+        string("-DZSOBOL_SAMPLING"),
     };
-    
+
     vector<char> ptx = compileToPTX(STRINGIFY(OPTIX_SHADER),
         extra_compile_options, validate);
 
@@ -373,6 +376,16 @@ OptixBackend::OptixBackend(const RenderConfig &cfg, bool validate)
       render_state_(makeRenderState(cfg, streams_[0], getNumFrames(cfg)))
 {
     REQ_CUDA(cudaStreamSynchronize(streams_[0]));
+
+    if (cfg.imgHeight > 65535 || cfg.imgWidth > 65535) {
+        cerr << "Max resolution is 65535 in either dimension" << endl;
+        abort();
+    }
+
+    if (cfg.spp == 0 || (cfg.spp & (cfg.spp - 1)) != 0) {
+        cerr << "Only power of 2 samples per pixel are supported" << endl;
+        abort();
+    }
 }
 
 LoaderImpl OptixBackend::makeLoader()

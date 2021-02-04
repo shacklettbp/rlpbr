@@ -1,23 +1,23 @@
 #pragma once
 
-#ifndef __CUDACC__
-#include <cmath>
-#include <vector_types.h>
-#include <vector_functions.h>
-#endif
+#include <cuda/std/cstdint>
 
 namespace RLpbr {
 namespace optix {
 
+using ulong = unsigned long;
 using uint = unsigned int;
 using ushort = unsigned short;
 using uchar = unsigned char;
-using uint32_t = uint;
-using uint16_t = ushort;
-using uint8_t = uchar;
-using int32_t = int;
-using int16_t = short;
-using int8_t = char;
+
+using cuda::std::int8_t;
+using cuda::std::int16_t;
+using cuda::std::int32_t;
+using cuda::std::int64_t;
+using cuda::std::uint8_t;
+using cuda::std::uint16_t;
+using cuda::std::uint32_t;
+using cuda::std::uint64_t;
 
 using ::make_float2;
 using ::make_float3;
