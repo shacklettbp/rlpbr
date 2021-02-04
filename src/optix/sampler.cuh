@@ -164,14 +164,14 @@ public:
         }
     }
 
-    inline float get1D(uint32_t)
+    inline float get1D()
     {
         return (float)next() / (float)0x01000000;
     }
 
-    inline float2 get2D(uint32_t)
+    inline float2 get2D()
     {
-        return make_float2(sample1D(), sample1D());
+        return make_float2(get1D(), get1D());
     }
 
 private:
