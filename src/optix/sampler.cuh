@@ -57,7 +57,17 @@ private:
     inline uint32_t curSampleIndex() const
     {
         auto hashPermute = [this](uint32_t idx) {
-            return (mix32(idx ^ (0x55555555 * dim_)) >> 24) % 24;
+            // PBRT version
+             return (mix32(idx ^ (0x55555555 * dim_)) >> 24) % 24;
+
+            // ZSampler paper version
+            //constexpr int BITS = 24;
+            //constexpr uint32_t MASK = (1 << BITS) - 1;
+            //constexpr uint32_t Z = 0x9e377A;
+
+            //idx ^= dim_ * 0x555555;
+            //uint32_t x = (idx * Z) & MASK;
+            //return (x * 24) >> BITS;
         };
 
         static const uint8_t permutations[24][4] = {
