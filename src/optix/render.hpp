@@ -20,11 +20,18 @@ struct SBT {
     OptixShaderBindingTable hdl;
 };
 
+struct ShaderBuffers {
+    half *outputBuffer;
+    OptixTraversableHandle *accelStructs;
+    CameraParams *cameras;
+    ClosestHitEnv *envs;
+    LaunchInput *launchInput;
+};
+
 struct RenderState {
     half *output;
     void *paramBuffer;
-    ShaderParams *deviceParams;
-    std::array<ShaderParams, 2> hostParams;
+    std::array<ShaderBuffers, 2> shaderBuffers;
 };
 
 class OptixBackend : public RenderBackend {
@@ -43,14 +50,15 @@ public:
 private:
     const uint32_t batch_size_;
     const glm::u32vec2 img_dims_;
-    uint32_t cur_frame_;
+    uint32_t active_idx_;
+    uint32_t frame_counter_;
     const uint32_t frame_mask_;
     std::array<cudaStream_t, 2> streams_;
     cudaStream_t tlas_strm_;
     OptixDeviceContext ctx_;
+    RenderState render_state_;
     Pipeline pipeline_;
     SBT sbt_;
-    RenderState render_state_;
 
 };
 

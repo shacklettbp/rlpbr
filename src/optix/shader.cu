@@ -10,8 +10,18 @@ using namespace RLpbr::optix;
 using namespace cuda::std;
 
 extern "C" {
-__constant__ ShaderParams params;
+__constant__ LaunchInput launchInput;
 }
+
+namespace ShaderConstants {
+    static half *outputBuffer = (half *)OUTPUT_PTR;
+    static const OptixTraversableHandle *accelStructs =
+        (OptixTraversableHandle *)ACCEL_PTR;
+    static const CameraParams *cameras =
+        (CameraParams *)CAMERA_PTR;
+    static const ClosestHitEnv *envs =
+        (ClosestHitEnv *)ENV_PTR;
+};
 
 struct DeviceVertex {
     float3 position;
@@ -49,6 +59,11 @@ __forceinline__ Camera unpackCamera(const CameraParams &packed)
         up,
         right,
     };
+}
+
+__forceinline__ ClosestHitEnv unpackEnv(const ClosestHitEnv &env)
+{
+    return env;
 }
 
 __forceinline__ pair<float3, float3> computeCameraRay(
@@ -221,13 +236,15 @@ extern "C" __global__ void __raygen__rg()
     uint3 idx = optixGetLaunchIndex();
     uint3 dim = optixGetLaunchDimensions();
 
+    uint batch_idx = launchInput.baseBatchOffset + idx.z;
+
     size_t base_out_offset = 
-        3 * (idx.z * dim.y * dim.x + idx.y * dim.x + idx.x);
+        3 * (batch_idx * dim.y * dim.x + idx.y * dim.x + idx.x);
 
-    uint batch_idx = idx.z;
-
-    const Camera cam = unpackCamera(params.cameras[batch_idx]);
-    const ClosestHitEnv &ch_env = params.envs[batch_idx];
+    const Camera cam = unpackCamera(ShaderConstants::cameras[batch_idx]);
+    const ClosestHitEnv ch_env = unpackEnv(ShaderConstants::envs[batch_idx]);
+    const OptixTraversableHandle tlas =
+        ShaderConstants::accelStructs[batch_idx];
     
     float3 pixel_radiance = make_float3(0.f);
 
@@ -237,7 +254,7 @@ extern "C" __global__ void __raygen__rg()
 #pragma unroll 1
 #endif
     for (int32_t sample_idx = 0; sample_idx < SPP; sample_idx++) {
-        Sampler sampler(idx, sample_idx, 0);
+        Sampler sampler(idx, sample_idx, launchInput.baseFrameCounter);
 
         float3 sample_radiance = make_float3(0.f);
         float path_prob = 1.f;
@@ -270,7 +287,7 @@ extern "C" __global__ void __raygen__rg()
 
             // FIXME Min T for both shadow and this ray
             optixTrace(
-                    params.accelStructs[batch_idx],
+                    tlas,
                     shade_origin,
                     shade_dir,
                     0.f, // Min intersection distance
@@ -354,7 +371,7 @@ extern "C" __global__ void __raygen__rg()
 
             payload_0 = 1;
             optixTrace(
-                    params.accelStructs[batch_idx],
+                    tlas,
                     shadow_origin,
                     shadow_direction,
                     0.f,                // Min intersection distance
@@ -389,7 +406,7 @@ extern "C" __global__ void __raygen__rg()
         pixel_radiance += sample_radiance / SPP;
     }
 
-    setOutput(params.outputBuffer + base_out_offset, pixel_radiance);
+    setOutput(ShaderConstants::outputBuffer + base_out_offset, pixel_radiance);
 }
 
 extern "C" __global__ void __miss__ms()

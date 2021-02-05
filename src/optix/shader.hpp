@@ -23,12 +23,16 @@ struct ClosestHitEnv {
     const uint32_t *indexBuffer;
 };
 
-struct ShaderParams {
-    half *outputBuffer;
-    OptixTraversableHandle *accelStructs;
-    CameraParams *cameras;
+struct PackedEnv {
+    float4 camData[3];
+    const PackedVertex *vertexBuffer;
+    const uint32_t *indexBuffer;
+    OptixTraversableHandle tlas;
+};
 
-    ClosestHitEnv *envs;
+struct alignas(16) LaunchInput {
+    uint32_t baseBatchOffset;
+    uint32_t baseFrameCounter;
 };
 
 }
