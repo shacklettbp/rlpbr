@@ -89,7 +89,7 @@ private:
 
     static __forceinline__ float finalize(uint32_t v, uint32_t hash_seed)
     {
-        v = __brev(v);
+        // Initial reverse not necessary because sobol numbers are flipped
 
         // https://psychopath.io/post/2021_01_30_building_a_better_lk_hash
         v += v << 2;
