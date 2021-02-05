@@ -121,7 +121,7 @@ static vector<char> compileToPTX(const char *cu_path,
 }
 
 static Pipeline buildPipeline(OptixDeviceContext ctx, const RenderConfig &cfg,
-                              bool validate)
+                              const ShaderBuffers &base_buffers, bool validate)
 {
     OptixModuleCompileOptions module_compile_options {};
     if (validate) {
@@ -138,13 +138,21 @@ static Pipeline buildPipeline(OptixDeviceContext ctx, const RenderConfig &cfg,
 
     pipeline_compile_options.numAttributeValues = 2;
     pipeline_compile_options.numPayloadValues = 4;
-    pipeline_compile_options.pipelineLaunchParamsVariableName = "params";
+    pipeline_compile_options.pipelineLaunchParamsVariableName = "launchInput";
 
     array extra_compile_options {
         string("-DSPP=(") + to_string(cfg.spp) + "u)",
         string("-DMAX_DEPTH=(") + to_string(cfg.maxDepth) + "u)",
         string("-DRES_X=(") + to_string(cfg.imgWidth) + "u)",
         string("-DRES_Y=(") + to_string(cfg.imgHeight) + "u)",
+        string("-DOUTPUT_PTR=(") +
+               to_string((uintptr_t)base_buffers.outputBuffer) + "ul)",
+        string("-DACCEL_PTR=(") +
+               to_string((uintptr_t)base_buffers.accelStructs) + "ul)",
+        string("-DCAMERA_PTR=(") +
+               to_string((uintptr_t)base_buffers.cameras) + "ul)",
+        string("-DENV_PTR=(") +
+               to_string((uintptr_t)base_buffers.envs) + "ul)",
         string("-DZSOBOL_SAMPLING"),
     };
 
@@ -284,58 +292,59 @@ static SBT buildSBT(cudaStream_t strm, const Pipeline &pipeline)
     };
 }
 
-static RenderState makeRenderState(const RenderConfig &cfg, cudaStream_t strm,
+static RenderState makeRenderState(const RenderConfig &cfg,
                                    uint32_t num_frames)
 {
-    uint64_t total_param_bytes = sizeof(OptixTraversableHandle) * cfg.batchSize;
+    uint64_t tlas_batch_bytes = sizeof(OptixTraversableHandle) * cfg.batchSize;
+    uint64_t total_param_bytes = tlas_batch_bytes * num_frames;
+
+    uint64_t cam_batch_bytes = sizeof(CameraParams) * cfg.batchSize;
     uint64_t camera_offset = alignOffset(total_param_bytes, 16);
-    total_param_bytes = camera_offset + sizeof(CameraParams) * cfg.batchSize;
-    uint64_t closest_hit_offset = alignOffset(total_param_bytes, 16);
-    total_param_bytes = 
-        closest_hit_offset + sizeof(ClosestHitEnv) * cfg.batchSize;
-    total_param_bytes = alignOffset(total_param_bytes, 16);
+    total_param_bytes = camera_offset + cam_batch_bytes * num_frames;
+
+    uint64_t chenv_batch_bytes = sizeof(ClosestHitEnv) * cfg.batchSize;
+    uint64_t chenv_offset = alignOffset(total_param_bytes, 16);
+    total_param_bytes = chenv_offset + chenv_batch_bytes * num_frames;
+
+    uint64_t launch_input_offset = alignOffset(total_param_bytes, 16);
+    total_param_bytes = launch_input_offset + sizeof(LaunchInput) * num_frames;
 
     void *param_buffer;
-    REQ_CUDA(cudaHostAlloc(&param_buffer, total_param_bytes * num_frames,
+    REQ_CUDA(cudaHostAlloc(&param_buffer, total_param_bytes,
         cudaHostAllocMapped | cudaHostAllocWriteCombined));
 
     RenderState state {
         (half *)allocCU(sizeof(half) * 3 * cfg.batchSize * cfg.imgHeight *
                          cfg.imgWidth * num_frames),
         param_buffer,
-        (ShaderParams *)allocCU(
-            alignOffset(sizeof(ShaderParams), 16) * num_frames),
         {},
     };
 
     for (uint32_t frame_idx = 0; frame_idx < num_frames; frame_idx++) {
-        char *frame_param_buffer = 
-            (char *)param_buffer + total_param_bytes * frame_idx;
+        char *param_base = (char *)param_buffer;
 
         half *output_ptr = state.output + 3 * frame_idx * cfg.batchSize *
                 cfg.imgHeight * cfg.imgWidth;
 
-        OptixTraversableHandle *accel_ptr =
-            (OptixTraversableHandle *)(frame_param_buffer);
+        OptixTraversableHandle *accel_ptr = (OptixTraversableHandle *)(
+            param_base + tlas_batch_bytes * frame_idx);
 
-        CameraParams *cam_ptr =
-            (CameraParams *)(frame_param_buffer + camera_offset);
+        CameraParams *cam_ptr = (CameraParams *)(
+            param_base + camera_offset + cam_batch_bytes * frame_idx);
 
-        ClosestHitEnv *ch_env_ptr =
-            (ClosestHitEnv *)(frame_param_buffer + closest_hit_offset);
+        ClosestHitEnv *chenv_ptr = (ClosestHitEnv *)(
+            param_base + chenv_offset + chenv_batch_bytes * frame_idx);
 
-        ShaderParams stage_params {
+        LaunchInput *launch_input_ptr = (LaunchInput *)(param_base +
+            launch_input_offset + sizeof(LaunchInput) * frame_idx);
+
+        state.shaderBuffers[frame_idx] = {
             output_ptr,
             accel_ptr,
             cam_ptr,
-            ch_env_ptr,
+            chenv_ptr,
+            launch_input_ptr,
         };
-
-        cudaMemcpyAsync(state.deviceParams + frame_idx, &stage_params,
-                        sizeof(ShaderParams), cudaMemcpyHostToDevice,
-                        strm);
-
-        state.hostParams[frame_idx] = stage_params;
     }
 
     return state;
@@ -357,7 +366,8 @@ static inline uint32_t getNumFrames(const RenderConfig &cfg)
 OptixBackend::OptixBackend(const RenderConfig &cfg, bool validate)
     : batch_size_(cfg.batchSize),
       img_dims_(cfg.imgWidth, cfg.imgHeight),
-      cur_frame_(0),
+      active_idx_(0),
+      frame_counter_(0),
       frame_mask_(getNumFrames(cfg) == 2 ? 1 : 0),
       streams_([&cfg]() {
           cudaStream_t strm = makeStream();
@@ -371,9 +381,10 @@ OptixBackend::OptixBackend(const RenderConfig &cfg, bool validate)
       }()),
       tlas_strm_(makeStream()),
       ctx_(initializeOptix(cfg.gpuID, validate)),
-      pipeline_(buildPipeline(ctx_, cfg, validate)),
-      sbt_(buildSBT(streams_[0], pipeline_)),
-      render_state_(makeRenderState(cfg, streams_[0], getNumFrames(cfg)))
+      render_state_(makeRenderState(cfg, getNumFrames(cfg))),
+      pipeline_(
+          buildPipeline(ctx_, cfg, render_state_.shaderBuffers[0], validate)),
+      sbt_(buildSBT(streams_[0], pipeline_))
 {
     REQ_CUDA(cudaStreamSynchronize(streams_[0]));
 
@@ -435,8 +446,7 @@ static ClosestHitEnv packCHEnv(const Environment &env,
 
 uint32_t OptixBackend::render(const Environment *envs)
 {
-    uint32_t frame_idx = cur_frame_++ & frame_mask_;
-    const ShaderParams &host_params = render_state_.hostParams[frame_idx];
+    const ShaderBuffers &buffers = render_state_.shaderBuffers[active_idx_];
 
     for (uint32_t batch_idx = 0; batch_idx < batch_size_; batch_idx++) {
         const Environment &env = envs[batch_idx];
@@ -445,20 +455,23 @@ uint32_t OptixBackend::render(const Environment *envs)
         const OptixEnvironment &env_backend =
             *static_cast<const OptixEnvironment *>(env.getBackend());
 
-        host_params.accelStructs[batch_idx] = env_backend.tlas;
-
-        host_params.cameras[batch_idx] = packCamera(env.getCamera());
-
-        host_params.envs[batch_idx] = packCHEnv(env, scene);
+        buffers.accelStructs[batch_idx] = env_backend.tlas;
+        buffers.cameras[batch_idx] = packCamera(env.getCamera());
+        buffers.envs[batch_idx] = packCHEnv(env, scene);
     }
 
-    const ShaderParams &dev_params = render_state_.deviceParams[frame_idx];
+    buffers.launchInput->baseBatchOffset = batch_size_ * active_idx_;
+    buffers.launchInput->baseFrameCounter = frame_counter_;
 
-    REQ_OPTIX(optixLaunch(pipeline_.hdl, streams_[frame_idx],
-        (CUdeviceptr)&dev_params, sizeof(ShaderParams),
+    REQ_OPTIX(optixLaunch(pipeline_.hdl, streams_[active_idx_],
+        (CUdeviceptr)buffers.launchInput, sizeof(LaunchInput),
         &sbt_.hdl, img_dims_.x, img_dims_.y, batch_size_));
 
-    return frame_idx;
+    frame_counter_ += batch_size_;
+
+    uint32_t cur_idx = active_idx_;
+    active_idx_ = (active_idx_ + 1) & frame_mask_;
+    return cur_idx;
 }
 
 void OptixBackend::waitForFrame(uint32_t frame_idx)
@@ -468,7 +481,7 @@ void OptixBackend::waitForFrame(uint32_t frame_idx)
 
 half *OptixBackend::getOutputPointer(uint32_t frame_idx)
 {
-    return render_state_.hostParams[frame_idx].outputBuffer;
+    return render_state_.shaderBuffers[frame_idx].outputBuffer;
 }
 
 }

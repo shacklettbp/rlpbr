@@ -153,6 +153,16 @@ private:
 
 #endif
 
+#ifdef OWEN_IDX_SAMPLING
+
+namespace RLpbr {
+namespace optix {
+}
+}
+
+
+#endif
+
 #ifdef UNIFORM_SAMPLING
 
 namespace RLpbr {
