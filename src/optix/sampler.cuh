@@ -79,10 +79,8 @@ private:
             {3, 2, 1, 0}, {3, 2, 0, 1}, {3, 0, 2, 1}, {3, 0, 1, 2},
         };
 
-        constexpr int final_digit = isOddPower2 ? 1 : 0;
-
         uint32_t sample_idx = 0;
-        for (int i = numIndexDigitsBase4 - 1; i >= final_digit; --i) {
+        for (int i = numIndexDigitsBase4 - 1; i >= 0; --i) {
             int digit_shift = 2 * i;
             int digit = (morton_idx_ >> digit_shift) & 3;
             int p = hashPermute(morton_idx_ >> (digit_shift + 2));
@@ -91,7 +89,6 @@ private:
         }
 
         if constexpr (isOddPower2) {
-            sample_idx |= (morton_idx_ & 3);
             sample_idx >>= 1;
         }
         return sample_idx;
@@ -121,7 +118,11 @@ private:
 
     static inline uint32_t computeMortonIdx(uint32_t x, uint32_t y, uint32_t s)
     {
-        constexpr uint32_t index_shift = (log2SPP + 1) & ~1;
+        // Add extra bit for odd powers of 2 to round sample index up
+        constexpr uint32_t index_shift = isOddPower2 ? (log2SPP + 1) : log2SPP;
+        if constexpr (isOddPower2) {
+            s <<= 1;
+        }
 
         // Space out bottom 16 bits with 0s
         auto space16 = [](uint32_t v) {
@@ -136,9 +137,6 @@ private:
         // to 3D and got low discrepancy across the batch?
         uint32_t morton_2d = (space16(y) << 1) | space16(x);
 
-        if constexpr (isOddPower2) {
-            s <<= 1;
-        }
         return (morton_2d << index_shift) | s;
     }
 
@@ -147,8 +145,13 @@ private:
     static constexpr bool isOddPower2 = log2SPP & 1;
 
     // Number of base 4 digits for x, y coords + samples
+    // Equals # base 2 digits for max dimension * 2 [X + Y] / 2 [base 4]
+    // Plus the rounded up log base 4 of the SPP
     static constexpr uint32_t numIndexDigitsBase4 = 
         log2DownConst(maxConst(RES_X, RES_Y) - 1) + 1 + (log2SPP + 1) / 2;
+
+    static_assert(numIndexDigitsBase4 * 2 <= 32,
+                  "Not enough bits for morton code");
 
     const uint32_t seed_;
     const uint32_t morton_idx_;
