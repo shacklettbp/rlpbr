@@ -73,12 +73,13 @@ int main(int argc, char *argv[]) {
 
     glm::vec3 eye(6.986622, 1.689715, -0.781423);
     glm::vec3 look(7.950317, 1.431094, -0.847776);
-    glm::vec3 up(0.264730, 0.957853, 0.111514);
+    glm::vec3 up(0, 1, 0);
+    glm::vec3 to_look = look - eye;
     
     for (uint32_t batch_idx = 0; batch_idx < batch_size; batch_idx++) {
         glm::mat3 r = glm::rotate(glm::radians(10.f * batch_idx), up);
         envs.emplace_back(renderer.makeEnvironment(scene, 
-            eye, r * look, up));
+            eye, eye + r * to_look, up));
     }
 
     renderer.render(envs.data());

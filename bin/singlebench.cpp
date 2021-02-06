@@ -62,7 +62,7 @@ int main(int argc, char *argv[]) {
         envs.emplace_back(renderer.makeEnvironment(scene,
             glm::vec3(6.986622, 1.689715, -0.781423),
             glm::vec3(7.950317, 1.431094, -0.847776),
-            glm::vec3(0.264730, 0.957853, 0.111514)));
+            glm::vec3(0, 1, 0)));
     }
 
     auto start = chrono::steady_clock::now();
