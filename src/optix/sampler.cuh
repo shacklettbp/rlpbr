@@ -26,12 +26,12 @@ namespace optix {
 
 class Sampler {
 public:
-    inline Sampler(const uint3 &pixel_coords, uint32_t sample_idx,
-                   uint32_t base_frame_idx)
-        : seed_(seedHash(base_frame_idx + pixel_coords.z)),
+    inline Sampler(uint32_t pixel_x, uint32_t pixel_y,
+                   uint32_t sample_idx, uint32_t base_frame_idx)
+        : seed_(seedHash(base_frame_idx)),
           dim_(0),
           morton_idx_(
-              computeMortonIdx(pixel_coords.x, pixel_coords.y, sample_idx))
+              computeMortonIdx(pixel_x, pixel_y, sample_idx))
     {}
 
     inline float get1D()
@@ -58,7 +58,7 @@ private:
     {
         auto hashPermute = [this](uint32_t idx) {
             // PBRT version
-             return (mix32(idx ^ (0x55555555 * dim_)) >> 24) % 24;
+            return (mix32(idx ^ (0x55555555 * dim_)) >> 24) % 24;
 
             // ZSampler paper version
             //constexpr int BITS = 24;
@@ -106,6 +106,13 @@ private:
         v ^= v * 0xfe9b5742;
         v += hash_seed;
         v *= hash_seed | 1;
+
+        // Laine - Karras hash
+        //v += hash_seed;
+        //v ^= v * 0x6c50b47cu;
+        //v ^= v * 0xb82f1e52u;
+        //v ^= v * 0xc7afe638u;
+        //v ^= v * 0x8d22f6e6u;
 
         v = __brev(v);
 
@@ -157,9 +164,47 @@ private:
 
 namespace RLpbr {
 namespace optix {
-}
-}
 
+class Sampler {
+public:
+    inline Sampler(const uint3 &pixel_coords, uint32_t sample_idx,
+                   uint32_t base_frame_idx)
+        : v_((pixel_coords.y * RES_X + pixel_coords.x) * SPP + sample_idx)
+    {
+        uint v1 = seedHash(base_frame_idx + pixel_coords.z);
+        uint s0 = 0;
+
+        for (int n = 0; n < 4; n++) {
+            s0 += 0x9e3779b9;
+            v_ += ((v1<<4)+0xa341316c)^(v1+s0)^((v1>>5)+0xc8013ea4);
+            v1 += ((v_<<4)+0xad90777d)^(v_+s0)^((v_>>5)+0x7e95761e);
+        }
+    }
+
+    inline float get1D()
+    {
+        return (float)next() / (float)0x01000000;
+    }
+
+    inline float2 get2D()
+    {
+        return make_float2(get1D(), get1D());
+    }
+
+private:
+    inline uint next()
+    {
+        const uint32_t LCG_A = 1664525u;
+        const uint32_t LCG_C = 1013904223u;
+        v_ = (LCG_A * v_ + LCG_C);
+        return v_ & 0x00FFFFFF;
+    }
+
+    uint v_;
+};
+
+}
+}
 
 #endif
 
@@ -170,11 +215,11 @@ namespace optix {
 
 class Sampler {
 public:
-    inline Sampler(const uint3 &pixel_coords, uint32_t sample_idx,
-                   uint32_t base_frame_idx)
-        : v_((pixel_coords.y * RES_X + pixel_coords.x) * SPP + sample_idx)
+    inline Sampler(uint32_t pixel_x, uint32_t pixel_y,
+                   uint32_t sample_idx, uint32_t base_frame_idx)
+        : v_((pixel_y * RES_X + pixel_x) * SPP + sample_idx)
     {
-        uint v1 = seedHash(base_frame_idx + pixel_coords.z);
+        uint v1 = seedHash(base_frame_idx);
         uint s0 = 0;
 
         for (int n = 0; n < 4; n++) {

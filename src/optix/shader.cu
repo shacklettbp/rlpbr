@@ -288,7 +288,8 @@ extern "C" __global__ void __raygen__rg()
 #pragma unroll 1
 #endif
     for (int32_t sample_idx = 0; sample_idx < SPP; sample_idx++) {
-        Sampler sampler(idx, sample_idx, launchInput.baseFrameCounter);
+        Sampler sampler(idx.x, idx.y, sample_idx,
+                        launchInput.baseFrameCounter + idx.z);
 
         float3 sample_radiance = make_float3(0.f);
         float path_prob = 1.f;
