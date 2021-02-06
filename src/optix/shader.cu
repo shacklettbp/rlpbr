@@ -114,7 +114,9 @@ __forceinline__ void setOutput(uint32_t base_offset, float3 rgb)
 __forceinline__ pair<float3, float3> computeCameraRay(
     const Camera &camera, uint3 idx, uint3 dim, Sampler &sampler)
 {
-    float2 jittered_raster = make_float2(idx.x, idx.y) + sampler.get2D();
+    float2 jitter = sampler.get2D();
+
+    float2 jittered_raster = make_float2(idx.x, idx.y) + jitter;
 
     float2 screen = make_float2((2.f * jittered_raster.x) / dim.x - 1,
                                 (2.f * jittered_raster.y) / dim.y - 1);
