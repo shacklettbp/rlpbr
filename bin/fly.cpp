@@ -15,7 +15,7 @@
 using namespace std;
 using namespace RLpbr;
 
-const float mouse_speed = 6e-4;
+const float mouse_speed = 2e-4;
 const float movement_speed = 1.5;
 const float rotate_speed = 1.25;
 
