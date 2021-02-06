@@ -13,16 +13,6 @@ extern "C" {
 __constant__ LaunchInput launchInput;
 }
 
-namespace ShaderConstants {
-    static half *outputBuffer = (half *)OUTPUT_PTR;
-    static const OptixTraversableHandle *accelStructs =
-        (OptixTraversableHandle *)ACCEL_PTR;
-    static const CameraParams *cameras =
-        (CameraParams *)CAMERA_PTR;
-    static const ClosestHitEnv *envs =
-        (ClosestHitEnv *)ENV_PTR;
-};
-
 struct DeviceVertex {
     float3 position;
     float3 normal;
@@ -36,22 +26,24 @@ struct Camera {
     float3 right;
 };
 
+struct Environment {
+    OptixTraversableHandle tlas;
+    const PackedVertex *vertexBuffer;
+    const uint32_t *indexBuffer;
+};
+
 struct Triangle {
     DeviceVertex a;
     DeviceVertex b;
     DeviceVertex c;
 };
 
-__forceinline__ Camera unpackCamera(const CameraParams &packed)
+__forceinline__ Camera unpackCamera(const float4 *packed)
 {
-    float4 data0 = packed.data[0];
-    float4 data1 = packed.data[1];
-    float4 data2 = packed.data[2];
-
-    float3 origin = make_float3(data0.x, data0.y, data0.z);
-    float3 view = make_float3(data0.w, data1.x, data1.y);
-    float3 up = make_float3(data1.z, data1.w, data2.x);
-    float3 right = make_float3(data2.y, data2.z, data2.w);
+    float3 origin = make_float3(packed[0].x, packed[0].y, packed[0].z);
+    float3 view = make_float3(packed[0].w, packed[1].x, packed[1].y);
+    float3 up = make_float3(packed[1].z, packed[1].w, packed[2].x);
+    float3 right = make_float3(packed[2].y, packed[2].z, packed[2].w);
 
     return Camera {
         origin,
@@ -61,9 +53,62 @@ __forceinline__ Camera unpackCamera(const CameraParams &packed)
     };
 }
 
-__forceinline__ ClosestHitEnv unpackEnv(const ClosestHitEnv &env)
+// The CUDA compiler incorrectly tries to fit a 64bit immediate offset
+// into the 32 bits allowed by the ISA. Use PTX to force the address
+// computation into the t1 register rather than a huge immediate
+// offset from batch_idx
+__forceinline__ pair<Camera, Environment> unpackEnv(uint32_t batch_idx)
 {
-    return env;
+    PackedEnv packed;
+    asm ("{\n\t"
+        ".reg .u64 t1;\n\t"
+        "mad.wide.u32 t1, %15, %16, %17;\n\t"
+        "ld.global.v4.f32 {%0, %1, %2, %3}, [t1];\n\t"
+        "ld.global.v4.f32 {%4, %5, %6, %7}, [t1 + 16];\n\t"
+        "ld.global.v4.f32 {%8, %9, %10, %11}, [t1 + 32];\n\t"
+        "ld.global.v2.u64 {%12, %13}, [t1 + 48];\n\t"
+        "ld.global.u64 %14, [t1 + 64];\n\t"
+        "}\n\t"
+        : "=f" (packed.camData[0].x), "=f" (packed.camData[0].y),
+          "=f" (packed.camData[0].z), "=f" (packed.camData[0].w),
+          "=f" (packed.camData[1].x), "=f" (packed.camData[1].y),
+          "=f" (packed.camData[1].z), "=f" (packed.camData[1].w),
+          "=f" (packed.camData[2].x), "=f" (packed.camData[2].y),
+          "=f" (packed.camData[2].z), "=f" (packed.camData[2].w),
+          "=l" (packed.tlas), "=l" (packed.vertexBuffer),
+          "=l" (packed.indexBuffer)
+        : "r" (batch_idx), "n" (sizeof(PackedEnv)), "n" (ENV_PTR)
+    );
+
+    return {
+        unpackCamera(packed.camData),
+        Environment {
+            packed.tlas,
+            packed.vertexBuffer,
+            packed.indexBuffer,
+        },
+    };
+}
+
+// Similarly to unpackEnv, work around broken 64bit constant pointer support
+__forceinline__ void setOutput(uint32_t base_offset, float3 rgb)
+{
+    uint16_t r = __half_as_ushort(__float2half(rgb.x));
+    uint16_t g = __half_as_ushort(__float2half(rgb.y));
+    uint16_t b = __half_as_ushort(__float2half(rgb.z));
+
+    asm ("{\n\t"
+        ".reg .u64 t1;\n\t"
+        "mad.wide.u32 t1, %3, %4, %5;\n\t"
+        "st.global.u16 [t1], %0;\n\t"
+        "st.global.u16 [t1 + %4], %1;\n\t"
+        "st.global.u16 [t1 + 2 * %4], %2;\n\t"
+        "}\n\t"
+        :
+        : "h" (r), "h" (g), "h" (b),
+          "r" (base_offset), "n" (sizeof(half)), "n" (OUTPUT_PTR)
+        : "memory"
+    );
 }
 
 __forceinline__ pair<float3, float3> computeCameraRay(
@@ -114,13 +159,6 @@ __forceinline__ void setHitPayload(float2 barycentrics,
     optixSetPayload_1(triangle_index);
     optixSetPayload_2(inst_hdl >> 32);
     optixSetPayload_3(inst_hdl & 0xFFFFFFFF);
-}
-
-__forceinline__ void setOutput(half *base_output, float3 rgb)
-{
-    base_output[0] = __float2half(rgb.x);
-    base_output[1] = __float2half(rgb.y);
-    base_output[2] = __float2half(rgb.z);
 }
 
 __forceinline__ DeviceVertex unpackVertex(
@@ -197,9 +235,9 @@ __forceinline__ float3 transformPosition(const float4 *o2w, float3 p)
         r3.x * p.x + r3.y * p.y + r3.z * p.z + r3.w);
 }
 
-inline float3 faceforward(const float3& n, const float3& i, const float3& nref)
+inline float3 faceforward(const float3 &n, const float3 &i, const float3 &nref)
 {
-  return n * copysignf( 1.0f, dot(i, nref) );
+  return n * copysignf(1.0f, dot(i, nref));
 }
 
 // Ray Tracing Gems Chapter 6 (avoid self intersections)
@@ -209,9 +247,8 @@ inline float3 offsetRayOrigin(const float3 &o, const float3 &geo_normal)
     constexpr float float_scale = 1.f / 65536.f;
     constexpr float int_scale = 256.f;
 
-    int3 int_offset = make_int3(
-        geo_normal.x * int_scale, geo_normal.y * int_scale,
-        geo_normal.z * int_scale);
+    int3 int_offset = make_int3(geo_normal.x * int_scale,
+        geo_normal.y * int_scale, geo_normal.z * int_scale);
 
     float3 o_integer = make_float3(
         __int_as_float(
@@ -236,15 +273,12 @@ extern "C" __global__ void __raygen__rg()
     uint3 idx = optixGetLaunchIndex();
     uint3 dim = optixGetLaunchDimensions();
 
-    uint batch_idx = launchInput.baseBatchOffset + idx.z;
+    uint32_t batch_idx = launchInput.baseBatchOffset + idx.z;
 
-    size_t base_out_offset = 
+    uint32_t base_out_offset = 
         3 * (batch_idx * dim.y * dim.x + idx.y * dim.x + idx.x);
 
-    const Camera cam = unpackCamera(ShaderConstants::cameras[batch_idx]);
-    const ClosestHitEnv ch_env = unpackEnv(ShaderConstants::envs[batch_idx]);
-    const OptixTraversableHandle tlas =
-        ShaderConstants::accelStructs[batch_idx];
+    const auto [cam, env] = unpackEnv(batch_idx);
     
     float3 pixel_radiance = make_float3(0.f);
 
@@ -259,24 +293,14 @@ extern "C" __global__ void __raygen__rg()
         float3 sample_radiance = make_float3(0.f);
         float path_prob = 1.f;
 
-        float3 next_origin;
-        float3 next_direction;
+        auto [ray_origin, ray_dir] =
+            computeCameraRay(cam, idx, dim, sampler);
 
 #if MAX_DEPTH != (1u)
 #pragma unroll 1
 #endif
         for (int32_t path_depth = 0; path_depth < MAX_DEPTH;
              path_depth++) {
-            float3 shade_origin;
-            float3 shade_dir;
-            if (path_depth == 0) {
-                tie(shade_origin, shade_dir) =
-                    computeCameraRay(cam, idx, dim, sampler);
-            } else {
-                shade_origin = next_origin;
-                shade_dir = next_direction;
-            }
-
             // Trace shade ray
             unsigned int payload_0;
             unsigned int payload_1;
@@ -287,9 +311,9 @@ extern "C" __global__ void __raygen__rg()
 
             // FIXME Min T for both shadow and this ray
             optixTrace(
-                    tlas,
-                    shade_origin,
-                    shade_dir,
+                    env.tlas,
+                    ray_origin,
+                    ray_dir,
                     0.f, // Min intersection distance
                     1e16f,               // Max intersection distance
                     0.0f,                // rayTime -- used for motion blur
@@ -321,8 +345,8 @@ extern "C" __global__ void __raygen__rg()
 
             float3 barys = computeBarycentrics(raw_barys);
 
-            Triangle hit_tri = fetchTriangle(ch_env.vertexBuffer,
-                                             ch_env.indexBuffer + index_offset);
+            Triangle hit_tri = fetchTriangle(env.vertexBuffer,
+                                             env.indexBuffer + index_offset);
             DeviceVertex interpolated = interpolateTriangle(hit_tri, barys);
             float3 obj_geo_normal = computeGeometricNormal(hit_tri);
 
@@ -333,9 +357,9 @@ extern "C" __global__ void __raygen__rg()
             float3 world_geo_normal =
                 transformNormal(w2o, obj_geo_normal);
 
-            world_normal = faceforward(world_normal, -shade_dir, world_normal);
-            world_normal = normalize(world_normal);
+            world_normal = faceforward(world_normal, -ray_dir, world_normal);
 
+            world_normal = normalize(world_normal);
             world_geo_normal = normalize(world_geo_normal);
 
             float3 up = make_float3(0, 0, 1);
@@ -371,7 +395,7 @@ extern "C" __global__ void __raygen__rg()
 
             payload_0 = 1;
             optixTrace(
-                    tlas,
+                    env.tlas,
                     shadow_origin,
                     shadow_direction,
                     0.f,                // Min intersection distance
@@ -395,18 +419,18 @@ extern "C" __global__ void __raygen__rg()
             }
 
             // Start setup for next bounce
-            next_origin = shadow_origin;
-            next_direction = randomDirection(tangent, binormal, world_normal);
+            ray_origin = shadow_origin;
+            ray_dir = randomDirection(tangent, binormal, world_normal);
 
-            // FIXME definitely wrong (light intensity?)
+            // FIXME definitely wrong (cur path intensity?)
             path_prob *=
-                1.f / (CUDART_PI_F) * fabsf(dot(next_direction, world_normal));
+                1.f / (CUDART_PI_F) * fabsf(dot(ray_dir, world_normal));
         }
 
         pixel_radiance += sample_radiance / SPP;
     }
 
-    setOutput(ShaderConstants::outputBuffer + base_out_offset, pixel_radiance);
+    setOutput(base_out_offset, pixel_radiance);
 }
 
 extern "C" __global__ void __miss__ms()
