@@ -147,10 +147,6 @@ static Pipeline buildPipeline(OptixDeviceContext ctx, const RenderConfig &cfg,
         string("-DRES_Y=(") + to_string(cfg.imgHeight) + "u)",
         string("-DOUTPUT_PTR=(") +
                to_string((uintptr_t)base_buffers.outputBuffer) + "ul)",
-        string("-DACCEL_PTR=(") +
-               to_string((uintptr_t)base_buffers.accelStructs) + "ul)",
-        string("-DCAMERA_PTR=(") +
-               to_string((uintptr_t)base_buffers.cameras) + "ul)",
         string("-DENV_PTR=(") +
                to_string((uintptr_t)base_buffers.envs) + "ul)",
         string("-DZSOBOL_SAMPLING"),
@@ -295,19 +291,11 @@ static SBT buildSBT(cudaStream_t strm, const Pipeline &pipeline)
 static RenderState makeRenderState(const RenderConfig &cfg,
                                    uint32_t num_frames)
 {
-    uint64_t tlas_batch_bytes = sizeof(OptixTraversableHandle) * cfg.batchSize;
-    uint64_t total_param_bytes = tlas_batch_bytes * num_frames;
-
-    uint64_t cam_batch_bytes = sizeof(CameraParams) * cfg.batchSize;
-    uint64_t camera_offset = alignOffset(total_param_bytes, 16);
-    total_param_bytes = camera_offset + cam_batch_bytes * num_frames;
-
-    uint64_t chenv_batch_bytes = sizeof(ClosestHitEnv) * cfg.batchSize;
-    uint64_t chenv_offset = alignOffset(total_param_bytes, 16);
-    total_param_bytes = chenv_offset + chenv_batch_bytes * num_frames;
-
-    uint64_t launch_input_offset = alignOffset(total_param_bytes, 16);
-    total_param_bytes = launch_input_offset + sizeof(LaunchInput) * num_frames;
+    uint64_t env_batch_bytes = sizeof(PackedEnv) * cfg.batchSize;
+    uint64_t launch_input_offset =
+        alignOffset(env_batch_bytes * num_frames, 16);
+    uint64_t total_param_bytes =
+        launch_input_offset + sizeof(LaunchInput) * num_frames;
 
     void *param_buffer;
     REQ_CUDA(cudaHostAlloc(&param_buffer, total_param_bytes,
@@ -326,23 +314,15 @@ static RenderState makeRenderState(const RenderConfig &cfg,
         half *output_ptr = state.output + 3 * frame_idx * cfg.batchSize *
                 cfg.imgHeight * cfg.imgWidth;
 
-        OptixTraversableHandle *accel_ptr = (OptixTraversableHandle *)(
-            param_base + tlas_batch_bytes * frame_idx);
-
-        CameraParams *cam_ptr = (CameraParams *)(
-            param_base + camera_offset + cam_batch_bytes * frame_idx);
-
-        ClosestHitEnv *chenv_ptr = (ClosestHitEnv *)(
-            param_base + chenv_offset + chenv_batch_bytes * frame_idx);
+        PackedEnv *env_ptr = (PackedEnv *)(
+            param_base + env_batch_bytes * frame_idx);
 
         LaunchInput *launch_input_ptr = (LaunchInput *)(param_base +
             launch_input_offset + sizeof(LaunchInput) * frame_idx);
 
         state.shaderBuffers[frame_idx] = {
             output_ptr,
-            accel_ptr,
-            cam_ptr,
-            chenv_ptr,
+            env_ptr,
             launch_input_ptr,
         };
     }
@@ -413,51 +393,44 @@ EnvironmentImpl OptixBackend::makeEnvironment(const shared_ptr<Scene> &scene)
     return makeEnvironmentImpl<OptixEnvironment>(environment);
 }
 
-static CameraParams packCamera(const Camera &cam)
+static array<float4, 3> packCamera(const Camera &cam)
 {
-    CameraParams params;
+    array<float4, 3> packed;
 
     glm::vec3 scaled_up = -cam.tanFOV * cam.up;
     glm::vec3 scaled_right = cam.aspectRatio * cam.tanFOV * cam.right;
 
-    params.data[0] = make_float4(cam.position.x, cam.position.y,
-                                 cam.position.z, cam.view.x);
-    params.data[1] = make_float4(cam.view.y, cam.view.z,
-                                 scaled_up.x, scaled_up.y);
-    params.data[2] = make_float4(scaled_up.z, scaled_right.x,
-                                 scaled_right.y, scaled_right.z);
+    packed[0] = make_float4(cam.position.x, cam.position.y,
+        cam.position.z, cam.view.x);
+    packed[1] = make_float4(cam.view.y, cam.view.z,
+        scaled_up.x, scaled_up.y);
+    packed[2] = make_float4(scaled_up.z, scaled_right.x,
+        scaled_right.y, scaled_right.z);
 
-    return params;
+    return packed;
 }
 
-static ClosestHitEnv packCHEnv(const Environment &env,
-                               const OptixScene &scene)
+static PackedEnv packEnv(const Environment &env)
 {
-    (void)env;
+    const OptixEnvironment &env_backend =
+        *static_cast<const OptixEnvironment *>(env.getBackend());
+     const OptixScene &scene = 
+         *static_cast<const OptixScene *>(env.getScene().get());
 
-    ClosestHitEnv ch;
-
-    ch.vertexBuffer = scene.vertexPtr;
-    ch.indexBuffer = scene.indexPtr;
-
-    return ch;
+    return PackedEnv {
+        packCamera(env.getCamera()),
+        env_backend.tlas,
+        scene.vertexPtr,
+        scene.indexPtr,
+    };
 }
-
 
 uint32_t OptixBackend::render(const Environment *envs)
 {
     const ShaderBuffers &buffers = render_state_.shaderBuffers[active_idx_];
 
     for (uint32_t batch_idx = 0; batch_idx < batch_size_; batch_idx++) {
-        const Environment &env = envs[batch_idx];
-        const OptixScene &scene = 
-            *static_cast<const OptixScene *>(env.getScene().get());
-        const OptixEnvironment &env_backend =
-            *static_cast<const OptixEnvironment *>(env.getBackend());
-
-        buffers.accelStructs[batch_idx] = env_backend.tlas;
-        buffers.cameras[batch_idx] = packCamera(env.getCamera());
-        buffers.envs[batch_idx] = packCHEnv(env, scene);
+        buffers.envs[batch_idx] = packEnv(envs[batch_idx]);
     }
 
     buffers.launchInput->baseBatchOffset = batch_size_ * active_idx_;

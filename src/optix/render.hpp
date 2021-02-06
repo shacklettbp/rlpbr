@@ -22,9 +22,7 @@ struct SBT {
 
 struct ShaderBuffers {
     half *outputBuffer;
-    OptixTraversableHandle *accelStructs;
-    CameraParams *cameras;
-    ClosestHitEnv *envs;
+    PackedEnv *envs;
     LaunchInput *launchInput;
 };
 
