@@ -62,9 +62,10 @@ static vector<char> compileToPTX(const char *cu_path,
     size_t num_cu_bytes = cu_file.tellg();
     cu_file.seekg(ios::beg);
 
-    vector<char> cu_src(num_cu_bytes);
+    vector<char> cu_src(num_cu_bytes + 1);
     cu_file.read(cu_src.data(), num_cu_bytes);
     cu_file.close();
+    cu_src[num_cu_bytes] = '\0';
 
     nvrtcProgram prog;
     REQ_NVRTC(nvrtcCreateProgram(&prog, cu_src.data(), cu_path, 0,
