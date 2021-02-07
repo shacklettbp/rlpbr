@@ -1,7 +1,7 @@
 add_library(rlpbr_preprocess SHARED
+    gltf.hpp gltf.inl
+    habitat_json.hpp habitat_json.inl
     import.hpp import.cpp
-    gltf.hpp gltf.cpp
-    habitat_json.hpp habitat_json.cpp
     ../../include/rlpbr/preprocess.hpp preprocess.cpp
 )
 

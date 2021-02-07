@@ -1,5 +1,7 @@
 #pragma once
 
+#include "import.hpp"
+
 #include <rlpbr_backend/scene.hpp>
 
 #include <glm/glm.hpp>
@@ -109,6 +111,10 @@ gltfParseMesh(const GLTFScene &scene, uint32_t mesh_idx);
 
 std::vector<InstanceProperties> gltfParseInstances(
     const GLTFScene &scene, const glm::mat4 &coordinate_txfm);
+
+template <typename VertexType, typename MaterialType>
+SceneDescription<VertexType, MaterialType> parseGLTF(
+    std::string_view scene_path, const glm::mat4 &base_txfm);
 
 }
 }
