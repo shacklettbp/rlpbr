@@ -638,9 +638,38 @@ std::vector<InstanceProperties> gltfParseInstances(
     return instances;
 }
 
-template pair<vector<Vertex>, vector<uint32_t>> gltfParseMesh(
-    const GLTFScene &, uint32_t);
-template vector<Material> gltfParseMaterials(const GLTFScene &scene);
+template <typename VertexType, typename MaterialType>
+SceneDescription<VertexType, MaterialType> parseGLTF(
+    string_view scene_path, const glm::mat4 &base_txfm)
+{
+    auto raw_scene = gltfLoad(scene_path);
+
+    vector<MaterialType> materials =
+        gltfParseMaterials<MaterialType>(raw_scene);
+
+    vector<Mesh<VertexType>> geometry;
+
+    for (uint32_t mesh_idx = 0; mesh_idx < raw_scene.meshes.size();
+         mesh_idx++) {
+        auto [vertices, indices] =
+            gltfParseMesh<VertexType>(raw_scene, mesh_idx);
+
+        geometry.push_back({
+            move(vertices),
+            move(indices),
+        });
+    }
+
+    vector<InstanceProperties> instances =
+        gltfParseInstances(raw_scene, base_txfm);
+
+    return SceneDescription<VertexType, MaterialType> {
+        move(geometry),
+        move(materials),
+        move(instances),
+        {},
+    };
+}
 
 }
 }
