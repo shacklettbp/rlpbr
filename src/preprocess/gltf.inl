@@ -26,13 +26,13 @@ struct ChunkHeader {
     uint32_t chunkType;
 };
 
-GLTFScene gltfLoad(const string_view gltf_path) noexcept
+GLTFScene gltfLoad(filesystem::path gltf_path) noexcept
 {
     GLTFScene scene;
-    scene.sceneDirectory = filesystem::path(gltf_path).parent_path();
+    scene.sceneDirectory = gltf_path.parent_path();
 
-    auto suffix = gltf_path.substr(gltf_path.rfind('.') + 1);
-    bool binary = suffix == "glb";
+    auto suffix = gltf_path.extension();
+    bool binary = suffix == ".glb";
     if (binary) {
         ifstream binary_file(string(gltf_path),
                                   ios::in | ios::binary);
@@ -640,7 +640,7 @@ std::vector<InstanceProperties> gltfParseInstances(
 
 template <typename VertexType, typename MaterialType>
 SceneDescription<VertexType, MaterialType> parseGLTF(
-    string_view scene_path, const glm::mat4 &base_txfm)
+    filesystem::path scene_path, const glm::mat4 &base_txfm)
 {
     auto raw_scene = gltfLoad(scene_path);
 

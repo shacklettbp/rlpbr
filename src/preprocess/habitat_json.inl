@@ -120,17 +120,34 @@ HabitatJSON::Scene habitatJSONLoad(string_view scene_path_name)
 
 template <typename VertexType, typename MaterialType>
 SceneDescription<VertexType, MaterialType> parseHabitatJSON(
-    string_view scene_path, const glm::mat4 &)
+    string_view scene_path, const glm::mat4 &base_txfm)
 {
-    auto raw_scene = habitatJSONLoad(scene_path);
-    (void)raw_scene;
+    using namespace HabitatJSON;
 
-    return SceneDescription<VertexType, MaterialType> {
-        {},
-        {},
-        {},
-        {},
-    };
+    auto raw_scene = habitatJSONLoad(scene_path);
+
+    auto desc = parseGLTF<VertexType, MaterialType>(
+        raw_scene.stagePath, base_txfm);
+
+    for (const Instance &inst : raw_scene.additionalInstances) {
+        uint32_t mesh_offset = desc.meshes.size();
+        auto inst_desc = parseGLTF<VertexType, MaterialType>(
+            inst.gltfPath, base_txfm * glm::mat4(inst.transform));
+
+        for (const auto &mesh : inst_desc.meshes) {
+            desc.meshes.push_back(mesh);
+        }
+
+        for (const auto &nested_inst : inst_desc.defaultInstances) {
+            desc.defaultInstances.push_back({
+                nested_inst.meshIndex + mesh_offset,
+                nested_inst.materialIndex,
+                nested_inst.txfm,
+            });
+        }
+    }
+
+    return desc;
 }
 
 }

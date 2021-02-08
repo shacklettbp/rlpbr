@@ -71,13 +71,15 @@ int main(int argc, char *argv[]) {
     auto scene = loader.loadScene(argv[1]);
     vector<Environment> envs;
 
-    glm::vec3 eye(6.986622, 1.689715, -0.781423);
-    glm::vec3 look(7.950317, 1.431094, -0.847776);
-    glm::vec3 up(0, 1, 0);
+    glm::vec3 eye(-1.517531, 0.738855, 0.259125);
+    glm::vec3 look(-2.359261, 0.900512, -0.256005);
+    glm::vec3 up(0.068618, 0.978416, 0.194921);
     glm::vec3 to_look = look - eye;
+    
     
     for (uint32_t batch_idx = 0; batch_idx < batch_size; batch_idx++) {
         glm::mat3 r = glm::rotate(glm::radians(10.f * batch_idx), up);
+        r = glm::mat3(1.f);
         envs.emplace_back(renderer.makeEnvironment(scene, 
             eye, eye + r * to_look, up));
     }

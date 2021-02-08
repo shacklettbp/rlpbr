@@ -80,7 +80,10 @@ private:
         };
 
         uint32_t sample_idx = 0;
-        for (int i = numIndexDigitsBase4 - 1; i >= 0; --i) {
+
+        constexpr int last_digit = isOddPower2 ? 1 : 0;
+
+        for (int i = numIndexDigitsBase4 - 1; i >= last_digit; --i) {
             int digit_shift = 2 * i;
             int digit = (morton_idx_ >> digit_shift) & 3;
             int p = hashPermute(morton_idx_ >> (digit_shift + 2));
@@ -89,6 +92,9 @@ private:
         }
 
         if constexpr (isOddPower2) {
+            int final_digit = morton_idx_ & 3;
+            int p = hashPermute(morton_idx_ >> 2);
+            sample_idx |= p & 3;
             sample_idx >>= 1;
         }
         return sample_idx;
