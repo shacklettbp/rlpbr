@@ -114,7 +114,7 @@ std::vector<InstanceProperties> gltfParseInstances(
 
 template <typename VertexType, typename MaterialType>
 SceneDescription<VertexType, MaterialType> parseGLTF(
-    std::string_view scene_path, const glm::mat4 &base_txfm);
+    std::filesystem::path scene_path, const glm::mat4 &base_txfm);
 
 }
 }
