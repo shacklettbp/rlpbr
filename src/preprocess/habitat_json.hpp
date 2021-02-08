@@ -10,11 +10,34 @@
 namespace RLpbr {
 namespace SceneImport {
 
-struct HabitatJSONScene {
+namespace HabitatJSON {
 
+enum class LightType {
+    Point,
 };
 
-HabitatJSONScene habitatJSONLoad(std::string_view scene_path);
+struct Light {
+    LightType type;
+    glm::vec3 position;
+    float intensity;
+    glm::vec3 color;
+};
+
+struct Instance {
+    std::filesystem::path gltfPath;
+    bool dynamic;
+    glm::mat4x3 transform;
+};
+
+struct Scene {
+    std::filesystem::path stagePath;
+    std::vector<Instance> additionalInstances;
+    std::vector<Light> lights;
+};
+
+}
+
+HabitatJSON::Scene habitatJSONLoad(std::string_view scene_path);
 
 template <typename VertexType, typename MaterialType>
 SceneDescription<VertexType, MaterialType> parseHabitatJSON(
