@@ -1,6 +1,7 @@
 #pragma once
 
 #include "common.hpp"
+#include "shader.hpp"
 
 #include <glm/glm.hpp>
 
@@ -47,26 +48,31 @@ struct MeshInfo {
     uint32_t numVertices;
 };
 
+struct TextureInfo {
+    std::vector<std::string> albedo;
+};
+
 struct MaterialMetadata {
-    std::vector<std::string> albedoTextures;
-    std::vector<uint32_t> albedoIndices;
+    TextureInfo textureInfo;
+    std::vector<MaterialParams> params;
 };
 
 struct StagingHeader {
+    uint32_t numMeshes;
     uint32_t numVertices;
     uint32_t numIndices;
+    uint32_t numMaterials;
+
     uint64_t indexOffset;
     uint64_t materialOffset;
-    uint64_t materialBytes;
     
     uint64_t totalBytes;
-    uint32_t numMeshes;
 };
 
 struct SceneLoadData {
     StagingHeader hdr;
     std::vector<MeshInfo> meshInfo;
-    MaterialMetadata materialInfo;
+    TextureInfo textureInfo;
     EnvironmentInit envInit;
 
     std::variant<std::ifstream, std::vector<char>> data;

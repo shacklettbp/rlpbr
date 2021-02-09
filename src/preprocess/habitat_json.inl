@@ -147,6 +147,13 @@ SceneDescription<VertexType, MaterialType> parseHabitatJSON(
         }
     }
 
+    for (const Light &light : raw_scene.lights) {
+        desc.defaultLights.push_back({
+            light.position,
+            light.color * light.intensity,
+        });
+    }
+
     return desc;
 }
 

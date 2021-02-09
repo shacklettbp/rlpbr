@@ -41,7 +41,12 @@ SceneLoadData SceneLoadData::loadFromDisk(string_view scene_path_name)
     scene_file.read(reinterpret_cast<char *>(mesh_infos.data()),
                     sizeof(MeshInfo) * hdr.numMeshes);
 
-    MaterialMetadata materials;
+    uint32_t num_lights = read_uint();
+    vector<LightProperties> light_props(num_lights);
+    scene_file.read(reinterpret_cast<char *>(light_props.data()),
+                    sizeof(LightProperties) * num_lights);
+
+    TextureInfo textures;
     uint32_t num_textures = read_uint();
     vector<char> name_buffer;
     for (uint32_t tex_idx = 0; tex_idx < num_textures; tex_idx++) {
@@ -49,15 +54,9 @@ SceneLoadData SceneLoadData::loadFromDisk(string_view scene_path_name)
             name_buffer.push_back(scene_file.get());
         } while (name_buffer.back() != 0);
 
-        materials.albedoTextures.emplace_back(scene_dir / name_buffer.data());
+        textures.albedo.emplace_back(scene_dir / name_buffer.data());
         name_buffer.clear();
     }
-
-    uint32_t num_materials = read_uint();
-    materials.albedoIndices.resize(num_materials);
-
-    scene_file.read(reinterpret_cast<char *>(materials.albedoIndices.data()),
-                    sizeof(uint32_t) * materials.albedoIndices.size());
 
     uint32_t num_instances = read_uint();
 
@@ -86,8 +85,8 @@ SceneLoadData SceneLoadData::loadFromDisk(string_view scene_path_name)
     return SceneLoadData {
         hdr,
         move(mesh_infos),
-        move(materials),
-        EnvironmentInit(move(instances), {}, hdr.numMeshes),
+        move(textures),
+        EnvironmentInit(move(instances), move(light_props), hdr.numMeshes),
         variant<ifstream, vector<char>>(move(scene_file)),
     };
 }
