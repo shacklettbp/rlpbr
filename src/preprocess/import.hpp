@@ -32,7 +32,8 @@ struct SceneDescription {
     std::vector<LightProperties> defaultLights;
 
     static SceneDescription parseScene(std::string_view scene_path,
-                                       const glm::mat4 &base_txfm);
+        const glm::mat4 &base_txfm,
+        std::optional<std::string_view> texture_dir);
 };
 
 }

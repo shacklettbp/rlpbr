@@ -9,6 +9,7 @@
 #include <fstream>
 #include <iostream>
 #include <type_traits>
+#include <unordered_set>
 
 using namespace std;
 
@@ -29,6 +30,7 @@ struct ChunkHeader {
 GLTFScene gltfLoad(filesystem::path gltf_path) noexcept
 {
     GLTFScene scene;
+    scene.sceneName = gltf_path.stem();
     scene.sceneDirectory = gltf_path.parent_path();
 
     auto suffix = gltf_path.extension();
@@ -439,32 +441,66 @@ static StridedSpan<T> getGLTFAccessorView(const GLTFScene &scene,
                                 accessor.numElems);
 }
 
+static void dumpGLTFTexture(const GLTFScene &scene, const GLTFImage &img,
+                            string_view texture_dir, string_view texture_name)
+{
+    const GLTFBufferView &buffer_view = scene.bufferViews[img.viewIdx];
+    if (buffer_view.stride > 1) {
+        cerr << "GLTF import: cannot dump strided texture" << endl;
+        abort();
+    }
+
+    ofstream tex_dump(filesystem::path(texture_dir) / texture_name);
+
+    const uint8_t *tex_ptr = scene.internalData.data() + buffer_view.offset;
+
+    tex_dump.write(reinterpret_cast<const char *>(tex_ptr), buffer_view.numBytes);
+}
+
 template <typename MaterialType>
-vector<MaterialType> gltfParseMaterials(const GLTFScene &scene)
+vector<MaterialType> gltfParseMaterials(const GLTFScene &scene,
+    optional<string_view> texture_dir)
 {
     vector<MaterialType> materials;
     materials.reserve(scene.materials.size());
 
+    unordered_set<uint32_t> internal_tracker;
+
     for (const auto &gltf_mat : scene.materials) {
         uint32_t tex_idx = gltf_mat.textureIdx;
 
-        if (tex_idx >= scene.textures.size()) {
-            cerr << "GLTF import: skipping material with invalid texture"
-                 << endl;
-            continue;
-        }
+        string tex_name = "";
+        if (tex_idx < scene.textures.size()) {
+            const GLTFImage &img =
+                scene.images[scene.textures[tex_idx].sourceIdx];
 
-        const GLTFImage &img =
-            scene.images[scene.textures[tex_idx].sourceIdx];
+            if (img.type == GLTFImageType::EXTERNAL) {
+                tex_name = img.filePath;
+            } else {
+                const char *ext;
+                if (img.type == GLTFImageType::JPEG) {
+                    ext = ".jpg";
+                } else if (img.type == GLTFImageType::PNG) {
+                    ext = ".png";
+                } else {
+                    cerr << "GLTF: Unsupported internal image type"
+                         << endl;
+                    abort();
+                }
 
-        if (img.type != GLTFImageType::EXTERNAL) {
-            cerr << "GLTF import: only external ktx2 textures are supported"
-                 << endl;
-            continue;
+                tex_name = scene.sceneName + "_" + to_string(tex_idx) + ext;
+
+                if (texture_dir.has_value()) {
+                    auto inserted = internal_tracker.emplace(tex_idx);
+                    if (inserted.second) {
+                        dumpGLTFTexture(scene, img, texture_dir.value(), tex_name);
+                    }
+                }
+            }
         }
 
         materials.push_back(MaterialType::make(
-            img.filePath,
+            tex_name,
             gltf_mat.baseColor,
             gltf_mat.roughness
         ));
@@ -641,12 +677,13 @@ std::vector<InstanceProperties> gltfParseInstances(
 
 template <typename VertexType, typename MaterialType>
 SceneDescription<VertexType, MaterialType> parseGLTF(
-    filesystem::path scene_path, const glm::mat4 &base_txfm)
+    filesystem::path scene_path, const glm::mat4 &base_txfm,
+    optional<string_view> texture_dir)
 {
     auto raw_scene = gltfLoad(scene_path);
 
     vector<MaterialType> materials =
-        gltfParseMaterials<MaterialType>(raw_scene);
+        gltfParseMaterials<MaterialType>(raw_scene, texture_dir);
 
     vector<Mesh<VertexType>> geometry;
 

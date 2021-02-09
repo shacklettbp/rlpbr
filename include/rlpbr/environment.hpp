@@ -105,6 +105,12 @@ public:
     inline const EnvironmentBackend *getBackend() const;
     inline const Camera &getCamera() const;
 
+    inline const std::vector<std::vector<glm::mat4x3>> &
+        getTransforms() const;
+
+    inline const std::vector<std::vector<uint32_t>> &
+        getMaterials() const;
+
 private:
     Environment(EnvironmentImpl &&backend,
                 const std::shared_ptr<Scene> &scene,

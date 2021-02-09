@@ -173,4 +173,16 @@ const Camera &Environment::getCamera() const
     return camera_;
 }
 
+const std::vector<std::vector<glm::mat4x3>> &
+    Environment::getTransforms() const
+{
+    return transforms_;
+}
+
+const std::vector<std::vector<uint32_t>> &
+    Environment::getMaterials() const
+{
+    return materials_;
+}
+
 }

@@ -18,6 +18,18 @@ struct PackedVertex {
     float4 data[2];
 };
 
+struct PackedMaterial {
+    float4 data;
+};
+
+struct PackedInstance {
+    uint32_t materialIdx;
+};
+
+struct PackedLight {
+    float4 data[2];
+};
+
 struct alignas(16) PackedEnv {
 #ifdef __CUDACC__
     float4 camData[3];
@@ -27,6 +39,8 @@ struct alignas(16) PackedEnv {
     OptixTraversableHandle tlas;
     const PackedVertex *vertexBuffer;
     const uint32_t *indexBuffer;
+    const PackedMaterial *materialBuffer;
+    const PackedInstance *instances;
 };
 
 struct alignas(16) LaunchInput {
