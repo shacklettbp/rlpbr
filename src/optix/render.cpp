@@ -1,4 +1,5 @@
 #include "render.hpp"
+#include "config.hpp"
 #include "utils.hpp"
 #include <rlpbr_backend/utils.hpp>
 
@@ -138,7 +139,7 @@ static Pipeline buildPipeline(OptixDeviceContext ctx, const RenderConfig &cfg,
         OPTIX_TRAVERSABLE_GRAPH_FLAG_ALLOW_SINGLE_LEVEL_INSTANCING;
 
     pipeline_compile_options.numAttributeValues = 2;
-    pipeline_compile_options.numPayloadValues = 4;
+    pipeline_compile_options.numPayloadValues = 5;
     pipeline_compile_options.pipelineLaunchParamsVariableName = "launchInput";
 
     array extra_compile_options {
@@ -293,10 +294,13 @@ static RenderState makeRenderState(const RenderConfig &cfg,
                                    uint32_t num_frames)
 {
     uint64_t env_batch_bytes = sizeof(PackedEnv) * cfg.batchSize;
-    uint64_t launch_input_offset =
-        alignOffset(env_batch_bytes * num_frames, 16);
-    uint64_t total_param_bytes =
-        launch_input_offset + sizeof(LaunchInput) * num_frames;
+    uint64_t instance_bytes =
+        sizeof(PackedInstance) * Config::maxInstances * num_frames;
+    uint64_t launch_input_offset = alignOffset(
+        env_batch_bytes * num_frames, 16);
+    uint64_t instance_offset = alignOffset(
+        launch_input_offset + sizeof(LaunchInput) * num_frames, 16);
+    uint64_t total_param_bytes = instance_offset + instance_bytes;
 
     void *param_buffer;
     REQ_CUDA(cudaHostAlloc(&param_buffer, total_param_bytes,
@@ -321,10 +325,14 @@ static RenderState makeRenderState(const RenderConfig &cfg,
         LaunchInput *launch_input_ptr = (LaunchInput *)(param_base +
             launch_input_offset + sizeof(LaunchInput) * frame_idx);
 
+        PackedInstance *instance_ptr = (PackedInstance *)(param_base +
+            instance_offset + instance_bytes * frame_idx);
+
         state.shaderBuffers[frame_idx] = {
             output_ptr,
             env_ptr,
             launch_input_ptr,
+            instance_ptr,
         };
     }
 
@@ -411,27 +419,43 @@ static array<float4, 3> packCamera(const Camera &cam)
     return packed;
 }
 
-static PackedEnv packEnv(const Environment &env)
+static PackedEnv packEnv(const Environment &env,
+                         PackedInstance **instance_buffer)
 {
     const OptixEnvironment &env_backend =
         *static_cast<const OptixEnvironment *>(env.getBackend());
-     const OptixScene &scene = 
-         *static_cast<const OptixScene *>(env.getScene().get());
+    const OptixScene &scene = 
+        *static_cast<const OptixScene *>(env.getScene().get());
+    
+    PackedInstance *cur_instance = *instance_buffer;
+    PackedInstance *env_inst_start = cur_instance;
+    for (const auto &model_insts : env.getMaterials()) {
+        for (uint32_t mat_idx : model_insts) {
+            *cur_instance++ = PackedInstance {
+                mat_idx,
+            };
+        }
+    }
+
+    *instance_buffer = cur_instance;
 
     return PackedEnv {
         packCamera(env.getCamera()),
         env_backend.tlas,
         scene.vertexPtr,
         scene.indexPtr,
+        scene.materialPtr,
+        env_inst_start,
     };
 }
 
 uint32_t OptixBackend::render(const Environment *envs)
 {
     const ShaderBuffers &buffers = render_state_.shaderBuffers[active_idx_];
+    PackedInstance *instance_buffer = buffers.instanceBuffer;
 
     for (uint32_t batch_idx = 0; batch_idx < batch_size_; batch_idx++) {
-        buffers.envs[batch_idx] = packEnv(envs[batch_idx]);
+        buffers.envs[batch_idx] = packEnv(envs[batch_idx], &instance_buffer);
     }
 
     buffers.launchInput->baseBatchOffset = batch_size_ * active_idx_;

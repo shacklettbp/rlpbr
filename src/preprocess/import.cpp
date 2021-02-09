@@ -35,14 +35,17 @@ static bool isHabitatJSON(string_view habitat_path)
 template <typename VertexType, typename MaterialType>
 SceneDescription<VertexType, MaterialType>
 SceneDescription<VertexType, MaterialType>::parseScene(
-    string_view scene_path, const glm::mat4 &base_txfm)
+    string_view scene_path, const glm::mat4 &base_txfm,
+    optional<string_view> texture_dir)
 {
     if (isGLTF(scene_path)) {
-        return parseGLTF<VertexType, MaterialType>(scene_path, base_txfm);
+        return parseGLTF<VertexType, MaterialType>(scene_path,
+            base_txfm, texture_dir);
     }
 
     if (isHabitatJSON(scene_path)) {
-        return parseHabitatJSON<VertexType, MaterialType>(scene_path, base_txfm);
+        return parseHabitatJSON<VertexType, MaterialType>(scene_path,
+            base_txfm, texture_dir);
     }
 
     cerr << "Unsupported input format" << endl;

@@ -29,6 +29,7 @@ struct OptixScene : public Scene {
     CUdeviceptr sceneStorage;
     const PackedVertex *vertexPtr;
     const uint32_t *indexPtr;
+    const PackedMaterial *materialPtr;
 
     std::vector<CUdeviceptr> blasStorage;
     std::vector<OptixTraversableHandle> blases;

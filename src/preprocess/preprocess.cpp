@@ -24,17 +24,20 @@ struct PreprocessData {
 };
 
 static PreprocessData parseSceneData(string_view scene_path,
-                                     const glm::mat4 &base_txfm)
+                                     const glm::mat4 &base_txfm,
+                                     optional<string_view> texture_dir)
 {
     return PreprocessData {
-        SceneDescription<Vertex, Material>::parseScene(scene_path, base_txfm),
+        SceneDescription<Vertex, Material>::parseScene(scene_path, base_txfm,
+            texture_dir),
     };
 }
 
 ScenePreprocessor::ScenePreprocessor(string_view gltf_path,
-                                     const glm::mat4 &base_txfm)
+                                     const glm::mat4 &base_txfm,
+                                     optional<string_view> texture_dir)
     : scene_data_(new PreprocessData(parseSceneData(gltf_path,
-                                                    base_txfm)))
+        base_txfm, texture_dir)))
 {}
 
 template <typename VertexType>
@@ -208,16 +211,21 @@ static MaterialMetadata stageMaterials(const vector<Material> &materials)
     params.reserve(materials.size());
 
     for (const Material &material : materials) {
-        auto [iter, inserted] =
-            albedo_tracker.emplace(material.albedoName,
-                                   albedo_textures.size());
+        uint32_t albedo_idx = -1;
+        if (!material.albedoName.empty()) {
+            auto [iter, inserted] =
+                albedo_tracker.emplace(material.albedoName,
+                                       albedo_textures.size());
 
-        if (inserted) {
-            albedo_textures.emplace_back(material.albedoName);
+            if (inserted) {
+                albedo_textures.emplace_back(material.albedoName);
+            }
+
+            albedo_idx = iter->second;
         }
 
         params.push_back({
-            uint32_t(iter->second),
+            albedo_idx,
             material.baseAlbedo,
             material.roughness,
         });

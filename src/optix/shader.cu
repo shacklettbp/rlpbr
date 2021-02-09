@@ -30,6 +30,16 @@ struct Environment {
     OptixTraversableHandle tlas;
     const PackedVertex *vertexBuffer;
     const uint32_t *indexBuffer;
+    const PackedMaterial *materialBuffer;
+    const PackedInstance *instances;
+};
+
+struct Instance {
+    uint32_t materialIdx;
+};
+
+struct Material {
+    float3 albedoBase;
 };
 
 struct Triangle {
@@ -62,12 +72,13 @@ __forceinline__ pair<Camera, Environment> unpackEnv(uint32_t batch_idx)
     PackedEnv packed;
     asm ("{\n\t"
         ".reg .u64 t1;\n\t"
-        "mad.wide.u32 t1, %15, %16, %17;\n\t"
+        "mad.wide.u32 t1, %17, %18, %19;\n\t"
         "ld.global.v4.f32 {%0, %1, %2, %3}, [t1];\n\t"
         "ld.global.v4.f32 {%4, %5, %6, %7}, [t1 + 16];\n\t"
         "ld.global.v4.f32 {%8, %9, %10, %11}, [t1 + 32];\n\t"
         "ld.global.v2.u64 {%12, %13}, [t1 + 48];\n\t"
-        "ld.global.u64 %14, [t1 + 64];\n\t"
+        "ld.global.v2.u64 {%14, %15}, [t1 + 64];\n\t"
+        "ld.global.u64 %16, [t1 + 80];\n\t"
         "}\n\t"
         : "=f" (packed.camData[0].x), "=f" (packed.camData[0].y),
           "=f" (packed.camData[0].z), "=f" (packed.camData[0].w),
@@ -76,7 +87,8 @@ __forceinline__ pair<Camera, Environment> unpackEnv(uint32_t batch_idx)
           "=f" (packed.camData[2].x), "=f" (packed.camData[2].y),
           "=f" (packed.camData[2].z), "=f" (packed.camData[2].w),
           "=l" (packed.tlas), "=l" (packed.vertexBuffer),
-          "=l" (packed.indexBuffer)
+          "=l" (packed.indexBuffer), "=l" (packed.materialBuffer),
+          "=l" (packed.instances)
         : "r" (batch_idx), "n" (sizeof(PackedEnv)), "n" (ENV_PTR)
     );
 
@@ -86,6 +98,8 @@ __forceinline__ pair<Camera, Environment> unpackEnv(uint32_t batch_idx)
             packed.tlas,
             packed.vertexBuffer,
             packed.indexBuffer,
+            packed.materialBuffer,
+            packed.instances,
         },
     };
 }
@@ -109,6 +123,22 @@ __forceinline__ void setOutput(uint32_t base_offset, float3 rgb)
           "r" (base_offset), "n" (sizeof(half)), "n" (OUTPUT_PTR)
         : "memory"
     );
+}
+
+__forceinline__ Instance unpackInstance(const PackedInstance &packed)
+{
+    return Instance {
+        packed.materialIdx,
+    };
+}
+
+__forceinline__ Material unpackMaterial(const PackedMaterial &packed)
+{
+    float4 data = packed.data;
+
+    return Material {
+        make_float3(data.x, data.y, data.z),
+    };
 }
 
 __forceinline__ pair<float3, float3> computeCameraRay(
@@ -154,13 +184,15 @@ __forceinline__ float2 unormFloat2From32(uint32_t a)
 }
 
 __forceinline__ void setHitPayload(float2 barycentrics,
-                                   uint triangle_index,
-                                   OptixTraversableHandle inst_hdl)
+                                   uint32_t triangle_index,
+                                   OptixTraversableHandle inst_hdl,
+                                   uint32_t instance_index)
 {
     optixSetPayload_0(unormFloat2To32(barycentrics));
     optixSetPayload_1(triangle_index);
     optixSetPayload_2(inst_hdl >> 32);
     optixSetPayload_3(inst_hdl & 0xFFFFFFFF);
+    optixSetPayload_4(instance_index);
 }
 
 __forceinline__ DeviceVertex unpackVertex(
@@ -310,7 +342,9 @@ extern "C" __global__ void __raygen__rg()
             unsigned int payload_2;
 
             // Need to overwrite the register so miss detection works
+            // payload_3 is guaranteed to not be 0 on a hit
             unsigned int payload_3 = 0;
+            unsigned int payload_4;
 
             // FIXME Min T for both shadow and this ray
             optixTrace(
@@ -328,7 +362,8 @@ extern "C" __global__ void __raygen__rg()
                     payload_0,
                     payload_1,
                     payload_2,
-                    payload_3);
+                    payload_3,
+                    payload_4);
 
             // Miss, hit env map
             if (payload_3 == 0) {
@@ -337,9 +372,12 @@ extern "C" __global__ void __raygen__rg()
             }
 
             float2 raw_barys = unormFloat2From32(payload_0);
-            uint index_offset = payload_1;
+            uint32_t index_offset = payload_1;
             OptixTraversableHandle inst_hdl = (OptixTraversableHandle)(
                 (uint64_t)payload_2 << 32 | (uint64_t)payload_3);
+
+            uint32_t instance_idx = payload_4;
+            Instance inst = unpackInstance(env.instances[instance_idx]);
 
             const float4 *o2w =
                 optixGetInstanceTransformFromHandle(inst_hdl);
@@ -414,11 +452,15 @@ extern "C" __global__ void __raygen__rg()
                     payload_0,
                     payload_1,
                     payload_2,
-                    payload_3);
+                    payload_3,
+                    payload_4);
 
             if (payload_0 == 0) {
-                // "Shade"
-                sample_radiance += intensity * path_prob;
+                // Shade
+                Material mat =
+                    unpackMaterial(env.materialBuffer[inst.materialIdx]);
+
+                sample_radiance += intensity * path_prob * mat.albedoBase;
             }
 
             // Start setup for next bounce
@@ -445,5 +487,6 @@ extern "C" __global__ void __closesthit__ch()
 {
     uint32_t base_index = optixGetInstanceId() + 3 * optixGetPrimitiveIndex();
     setHitPayload(optixGetTriangleBarycentrics(), base_index,
-                  optixGetTransformListHandle(0));
+                  optixGetTransformListHandle(0),
+                  optixGetInstanceIndex());
 }

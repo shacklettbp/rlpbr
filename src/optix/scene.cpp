@@ -294,6 +294,8 @@ shared_ptr<Scene> OptixLoader::loadScene(SceneLoadData &&load_info)
         scene_storage_dev,
         base_vertex_ptr,
         base_index_ptr,
+        reinterpret_cast<const PackedMaterial *>(
+            scene_storage + load_info.hdr.materialOffset),
         move(blas_storage),
         move(blases),
         move(tlas),

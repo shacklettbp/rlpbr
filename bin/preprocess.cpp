@@ -9,14 +9,15 @@ using namespace std;
 
 int main(int argc, const char *argv[]) {
     if (argc < 3) {
-        cerr << argv[0] << " SRC DST [X_AXIS Y_AXIS Z_AXIS]" << endl;
+        cerr << argv[0] << " SRC DST [X_AXIS Y_AXIS Z_AXIS] [TEXTURE_DIR]"
+             << endl;
         exit(EXIT_FAILURE);
     }
 
     glm::mat4 base_txfm(1.f);
 
     if (argc > 3) {
-        if (argc != 6) {
+        if (argc < 6) {
             cerr << argv[0]
                  << ": Need to specify zero or all source axes" << endl;
             exit(EXIT_FAILURE);
@@ -53,9 +54,14 @@ int main(int argc, const char *argv[]) {
         base_txfm[2] = convertArg(z);
     }
 
+    optional<string_view> texture_dir;
+    if (argc > 6) {
+        texture_dir.emplace(argv[6]);
+    }
+
     cout << "Transform:\n" << glm::to_string(base_txfm) << endl;
 
-    RLpbr::ScenePreprocessor dumper(argv[1], base_txfm);
+    RLpbr::ScenePreprocessor dumper(argv[1], base_txfm, texture_dir);
 
     dumper.dump(argv[2]);
 

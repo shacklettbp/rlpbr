@@ -41,7 +41,8 @@ HabitatJSON::Scene habitatJSONLoad(std::string_view scene_path);
 
 template <typename VertexType, typename MaterialType>
 SceneDescription<VertexType, MaterialType> parseHabitatJSON(
-    std::string_view scene_path, const glm::mat4 &);
+    std::string_view scene_path, const glm::mat4 &base_txfm,
+    std::optional<std::string_view> texture_dir);
 
 }
 }

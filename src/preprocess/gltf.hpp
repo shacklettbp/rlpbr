@@ -84,6 +84,7 @@ struct GLTFNode {
 };
 
 struct GLTFScene {
+    std::string sceneName;
     std::filesystem::path sceneDirectory;
     simdjson::dom::parser jsonParser;
     simdjson::dom::element root;
@@ -114,7 +115,8 @@ std::vector<InstanceProperties> gltfParseInstances(
 
 template <typename VertexType, typename MaterialType>
 SceneDescription<VertexType, MaterialType> parseGLTF(
-    std::filesystem::path scene_path, const glm::mat4 &base_txfm);
+    std::filesystem::path scene_path, const glm::mat4 &base_txfm,
+    std::optional<std::string_view> texture_dir);
 
 }
 }
