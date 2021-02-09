@@ -49,6 +49,7 @@ struct MeshInfo {
 };
 
 struct TextureInfo {
+    std::string textureDir;
     std::vector<std::string> albedo;
 };
 

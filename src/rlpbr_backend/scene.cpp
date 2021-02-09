@@ -47,14 +47,20 @@ SceneLoadData SceneLoadData::loadFromDisk(string_view scene_path_name)
                     sizeof(LightProperties) * num_lights);
 
     TextureInfo textures;
-    uint32_t num_textures = read_uint();
     vector<char> name_buffer;
+    do {
+        name_buffer.push_back(scene_file.get());
+    } while (name_buffer.back() != 0);
+    textures.textureDir = scene_dir / name_buffer.data();
+    name_buffer.clear();
+
+    uint32_t num_textures = read_uint();
     for (uint32_t tex_idx = 0; tex_idx < num_textures; tex_idx++) {
         do {
             name_buffer.push_back(scene_file.get());
         } while (name_buffer.back() != 0);
 
-        textures.albedo.emplace_back(scene_dir / name_buffer.data());
+        textures.albedo.emplace_back(name_buffer.data());
         name_buffer.clear();
     }
 

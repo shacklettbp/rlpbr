@@ -21,6 +21,11 @@ struct TLAS {
     OptixTraversableHandle *instanceBLASes;
 };
 
+struct Texture {
+    cudaArray_t mem;
+    cudaTextureObject_t hdl;
+};
+
 struct OptixScene : public Scene {
     OptixScene(const OptixScene &) = delete;
     OptixScene(OptixScene &&) = delete;
@@ -34,6 +39,9 @@ struct OptixScene : public Scene {
     std::vector<CUdeviceptr> blasStorage;
     std::vector<OptixTraversableHandle> blases;
     TLAS defaultTLAS;
+
+    std::vector<Texture> textures;
+    const cudaTextureObject_t *texturePtr;
 };
 
 class OptixEnvironment : public EnvironmentBackend {

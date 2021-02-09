@@ -7,6 +7,9 @@
 
 #include <glm/gtc/type_ptr.hpp>
 
+#define STB_IMAGE_IMPLEMENTATION
+#include "stb_image.h"
+
 using namespace std;
 
 namespace RLpbr {
@@ -196,9 +199,69 @@ static pair<TLAS, TLASIntermediate> buildTLAS(
     };
 }
 
+static vector<Texture> loadTextures(const TextureInfo &tex_info,
+    cudaStream_t cpy_strm)
+{
+    vector<uint8_t *> host_tex_data;
+    host_tex_data.reserve(tex_info.albedo.size());
+
+    vector<Texture> gpu_textures;
+    gpu_textures.reserve(tex_info.albedo.size());
+
+    for (const auto &tex_name : tex_info.albedo) {
+        string full_path = tex_info.textureDir + tex_name;
+
+        int x, y, n;
+        uint8_t *img_data = stbi_load(full_path.c_str(), &x, &y, &n, 4);
+
+        cudaChannelFormatDesc channel_desc = cudaCreateChannelDesc<uchar4>();
+
+        cudaArray_t tex_mem;
+        REQ_CUDA(cudaMallocArray(&tex_mem, &channel_desc, x, y, cudaArrayDefault));
+
+        cudaMemcpy2DToArrayAsync(tex_mem, 0, 0, img_data, 4 * x, 4 * x, y,
+                                 cudaMemcpyHostToDevice, cpy_strm); 
+
+        cudaResourceDesc res_desc {};
+        res_desc.resType = cudaResourceTypeArray;
+        res_desc.res.array.array = tex_mem;
+
+        cudaTextureDesc tex_desc {};
+        tex_desc.addressMode[0] = cudaAddressModeWrap;
+        tex_desc.addressMode[1] = cudaAddressModeWrap;
+        tex_desc.filterMode = cudaFilterModeLinear;
+        tex_desc.readMode = cudaReadModeNormalizedFloat;
+        tex_desc.normalizedCoords = true;
+        tex_desc.sRGB = true;
+
+        cudaTextureObject_t tex_obj;
+        REQ_CUDA(cudaCreateTextureObject(&tex_obj, &res_desc, &tex_desc,
+                                         nullptr));
+
+        gpu_textures.push_back({
+            tex_mem,
+            tex_obj,
+        });
+    }
+
+    REQ_CUDA(cudaStreamSynchronize(cpy_strm));
+
+    for (uint8_t *ptr : host_tex_data) {
+        stbi_image_free(ptr);
+    }
+
+    return gpu_textures;
+}
+
 shared_ptr<Scene> OptixLoader::loadScene(SceneLoadData &&load_info)
 {
-    char *scene_storage = (char *)allocCU(load_info.hdr.totalBytes);
+    auto textures = loadTextures(load_info.textureInfo, stream_);
+
+    size_t texture_ptr_offset = alignOffset(load_info.hdr.totalBytes, 16);
+    size_t texture_ptr_bytes = textures.size() * sizeof(cudaTextureObject_t);
+    size_t total_device_bytes = texture_ptr_offset + texture_ptr_bytes;
+
+    char *scene_storage = (char *)allocCU(total_device_bytes);
 
     char *data_src = nullptr;
     bool cuda_staging = false;
@@ -297,6 +360,18 @@ shared_ptr<Scene> OptixLoader::loadScene(SceneLoadData &&load_info)
         load_info.envInit.indexMap.size(), load_info.meshInfo,
         blases.data(), stream_);
 
+    vector<cudaTextureObject_t> texture_hdls;
+    texture_hdls.reserve(textures.size());
+    for (uint32_t tex_idx = 0; tex_idx < textures.size(); tex_idx++) {
+        const auto &tex_hdl = textures[tex_idx].hdl;
+        texture_hdls[tex_idx] = tex_hdl;
+    }
+
+    cudaTextureObject_t *tex_gpu_ptr = (cudaTextureObject_t *)(
+        scene_storage + texture_ptr_offset);
+    cudaMemcpyAsync(tex_gpu_ptr, texture_hdls.data(), texture_ptr_bytes,
+                    cudaMemcpyHostToDevice, stream_);
+
     REQ_CUDA(cudaStreamSynchronize(stream_));
     freeTLASIntermediate(move(tlas_inter));
     
@@ -317,6 +392,8 @@ shared_ptr<Scene> OptixLoader::loadScene(SceneLoadData &&load_info)
         move(blas_storage),
         move(blases),
         move(tlas),
+        move(textures),
+        tex_gpu_ptr,
     });
 }
 

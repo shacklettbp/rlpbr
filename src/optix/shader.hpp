@@ -19,7 +19,8 @@ struct PackedVertex {
 };
 
 struct PackedMaterial {
-    float4 data;
+    float4 data0;
+    uint4 data1;
 };
 
 struct PackedInstance {
@@ -40,6 +41,7 @@ struct alignas(16) PackedEnv {
     const PackedVertex *vertexBuffer;
     const uint32_t *indexBuffer;
     const PackedMaterial *materialBuffer;
+    const cudaTextureObject_t *textureHandles;
 
     // FIXME Turn instance and light pointers
     // into uint32_t offsets into constant 64 bit
