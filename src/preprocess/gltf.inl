@@ -218,7 +218,7 @@ GLTFScene gltfLoad(filesystem::path gltf_path) noexcept
 
             glm::vec4 base_color(0.f);
             simdjson::dom::array base_color_json;
-            auto color_err = pbr["baseColorFa       ctor"].get(base_color_json);
+            auto color_err = pbr["baseColorFactor"].get(base_color_json);
             if (!color_err) {                       
                 float *base_color_data = glm::value_ptr(base_color);
                 for (double comp : base_color_json) {
@@ -464,7 +464,9 @@ vector<MaterialType> gltfParseMaterials(const GLTFScene &scene)
         }
 
         materials.push_back(MaterialType::make(
-            img.filePath
+            img.filePath,
+            gltf_mat.baseColor,
+            gltf_mat.roughness
         ));
     }
 

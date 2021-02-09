@@ -11,6 +11,9 @@ struct Vertex {
 };
 
 struct MaterialParams {
+    uint32_t albedoIdx;
+    glm::vec3 baseAlbedo;
+    float roughness;
 };
 
 }

@@ -9,11 +9,13 @@ using namespace std;
 namespace RLpbr {
 namespace SceneImport {
 
-Material Material::make(const std::string_view albedo_name)
+Material Material::make(const string_view albedo_name,
+    const glm::vec3 &base_albedo, float roughness)
 {
     return Material {
         string(albedo_name),
-        {},
+        base_albedo,
+        roughness,
     };
 }
 

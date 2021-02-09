@@ -16,9 +16,11 @@ struct Mesh {
 
 struct Material {
     std::string albedoName;
-    MaterialParams params;
+    glm::vec3 baseAlbedo;
+    float roughness;
 
-    static Material make(const std::string_view albedo_name);
+    static Material make(const std::string_view albedo_name,
+        const glm::vec3 &color, float roughness);
 };
 
 template <typename VertexType, typename MaterialType>

@@ -199,24 +199,15 @@ static ProcessedGeometry<VertexType> processGeometry(
     };
 }
 
-static pair<vector<uint8_t>, MaterialMetadata> stageMaterials(
-        const vector<Material> &materials)
+static MaterialMetadata stageMaterials(const vector<Material> &materials)
 {
-    uint64_t num_material_bytes = sizeof(MaterialParams) * materials.size();
-
-    vector<uint8_t> packed_params(num_material_bytes);
-    uint8_t *cur_param_ptr = packed_params.data();
-    for (const Material &mat : materials) {
-        memcpy(cur_param_ptr, &mat.params, sizeof(MaterialParams));
-    }
-
     vector<string> albedo_textures;
     unordered_map<string, size_t> albedo_tracker;
 
-    vector<uint32_t> albedo_indices;
-    albedo_indices.reserve(materials.size());
+    vector<MaterialParams> params;
+    params.reserve(materials.size());
 
-    for (const auto &material : materials) {
+    for (const Material &material : materials) {
         auto [iter, inserted] =
             albedo_tracker.emplace(material.albedoName,
                                    albedo_textures.size());
@@ -225,15 +216,18 @@ static pair<vector<uint8_t>, MaterialMetadata> stageMaterials(
             albedo_textures.emplace_back(material.albedoName);
         }
 
-        albedo_indices.push_back(iter->second);
+        params.push_back({
+            uint32_t(iter->second),
+            material.baseAlbedo,
+            material.roughness,
+        });
     }
 
     return {
-        move(packed_params),
         {
-            albedo_textures,
-            albedo_indices,
+            move(albedo_textures),
         },
+        move(params),
     };
 }
 
@@ -265,29 +259,30 @@ void ScenePreprocessor::dump(string_view out_path_name)
     };
 
     auto make_staging_header = [&](const auto &geometry,
-                                   const vector<uint8_t> &material_params) {
+                                   const MaterialMetadata &material_metadata) {
 
         constexpr uint64_t vertex_size =
             sizeof(typename decltype(geometry.meshes[0].vertices)::value_type);
         uint64_t vertex_bytes = vertex_size * geometry.totalVertices;
+        uint64_t index_bytes = sizeof(uint32_t) * geometry.totalIndices;
 
         StagingHeader hdr;
+        hdr.numMeshes = geometry.meshInfos.size();
         hdr.numVertices = geometry.totalVertices;
         hdr.numIndices = geometry.totalIndices;
+        hdr.numMaterials = material_metadata.params.size();
 
         hdr.indexOffset = align_offset(vertex_bytes);
-        hdr.materialOffset = align_offset(hdr.indexOffset +
-            sizeof(uint32_t) * geometry.totalIndices);
-        hdr.materialBytes = material_params.size();
+        hdr.materialOffset = align_offset(hdr.indexOffset + index_bytes);
 
-        hdr.totalBytes = hdr.materialOffset + hdr.materialBytes;
-        hdr.numMeshes = geometry.meshInfos.size();
+        hdr.totalBytes =
+            hdr.materialOffset + hdr.numMaterials * sizeof(MaterialParams);
 
         return hdr;
     };
 
     auto write_staging = [&](const auto &geometry,
-                             const vector<uint8_t> &material_params,
+                             const MaterialMetadata &materials,
                              const StagingHeader &hdr) {
         write_pad(256);
 
@@ -308,24 +303,25 @@ void ScenePreprocessor::dump(string_view out_path_name)
         }
 
         write_pad(256);
-        out.write(reinterpret_cast<const char *>(material_params.data()),
-                  hdr.materialBytes);
+        out.write(reinterpret_cast<const char *>(materials.params.data()),
+            materials.params.size() * sizeof(MaterialParams));
 
         assert(out.tellp() == int64_t(hdr.totalBytes + stage_beginning));
     };
 
-    auto write_materials = [&](const MaterialMetadata &metadata) {
-        write(uint32_t(metadata.albedoTextures.size()));
-        for (const auto &tex_name : metadata.albedoTextures) {
+    auto write_lights = [&](const auto &lights) {
+        write(uint32_t(lights.size()));
+        for (const auto &light : lights) {
+            write(light);
+        }
+    };
+
+    auto write_textures = [&](const MaterialMetadata &metadata) {
+        write(uint32_t(metadata.textureInfo.albedo.size()));
+        for (const auto &tex_name : metadata.textureInfo.albedo) {
             out.write(tex_name.data(), tex_name.size());
             out.put(0);
         }
-
-        write(uint32_t(metadata.albedoIndices.size()));
-        out.write(
-            reinterpret_cast<const char *>(metadata.albedoIndices.data()),
-            metadata.albedoIndices.size() * sizeof(uint32_t));
-
     };
 
     auto write_instances = [&](const auto &desc,
@@ -352,9 +348,9 @@ void ScenePreprocessor::dump(string_view out_path_name)
     auto write_scene = [&](const auto &geometry,
                            const auto &desc) {
         const auto &materials = desc.materials;
-        auto [material_params, material_metadata] = stageMaterials(materials);
+        auto material_metadata = stageMaterials(materials);
 
-        StagingHeader hdr = make_staging_header(geometry, material_params);
+        StagingHeader hdr = make_staging_header(geometry, material_metadata);
         write(hdr);
         write_pad();
 
@@ -362,11 +358,13 @@ void ScenePreprocessor::dump(string_view out_path_name)
         out.write(reinterpret_cast<const char *>(geometry.meshInfos.data()),
                   hdr.numMeshes * sizeof(MeshInfo));
 
-        write_materials(material_metadata);
+        write_lights(desc.defaultLights);
+
+        write_textures(material_metadata);
 
         write_instances(desc, geometry.meshIDRemap);
 
-        write_staging(geometry, material_params, hdr);
+        write_staging(geometry, material_metadata, hdr);
     };
 
     // Header: magic
