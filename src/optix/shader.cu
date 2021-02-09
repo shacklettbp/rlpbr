@@ -123,11 +123,9 @@ __forceinline__ pair<Camera, Environment> unpackEnv(uint32_t batch_idx)
 // Similarly to unpackEnv, work around broken 64bit constant pointer support
 __forceinline__ void setOutput(uint32_t base_offset, float3 rgb)
 {
-    float3 tonemapped = rgb / (1.f + rgb);
-
-    uint16_t r = __half_as_ushort(__float2half(tonemapped.x));
-    uint16_t g = __half_as_ushort(__float2half(tonemapped.y));
-    uint16_t b = __half_as_ushort(__float2half(tonemapped.z));
+    uint16_t r = __half_as_ushort(__float2half(rgb.x));
+    uint16_t g = __half_as_ushort(__float2half(rgb.y));
+    uint16_t b = __half_as_ushort(__float2half(rgb.z));
 
     asm ("{\n\t"
         ".reg .u64 t1;\n\t"

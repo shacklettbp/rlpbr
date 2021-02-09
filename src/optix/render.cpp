@@ -455,7 +455,7 @@ static PackedEnv packEnv(const Environment &env,
     PackedLight *light_ptr = *light_buffer;
     memcpy(light_ptr, env_backend.lights.data(),
            sizeof(PackedLight) * num_lights);
-    *light_buffer = light_ptr + num_lights;
+    *light_buffer += num_lights;
 
     return PackedEnv {
         packCamera(env.getCamera()),
