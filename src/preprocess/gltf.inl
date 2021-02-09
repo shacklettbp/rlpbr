@@ -255,7 +255,6 @@ GLTFScene gltfLoad(filesystem::path gltf_path) noexcept
                 cerr << "GLTF loading '" << gltf_path << "' failed: "
                           << "Only single primitive meshes supported"
                           << endl;
-                abort();
             }
 
             simdjson::dom::element prim = prims.at(0);
