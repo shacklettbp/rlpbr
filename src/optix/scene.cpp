@@ -56,10 +56,28 @@ OptixEnvironment OptixEnvironment::make(OptixDeviceContext ctx,
 
     REQ_CUDA(cudaStreamSynchronize(build_stream));
 
+    // FIXME, pre-pack this in envInit somehow... backend
+    // env init?
+    vector<PackedLight> lights;
+    lights.reserve(scene.envInit.lights.size());
+
+    for (const auto &light : scene.envInit.lights) {
+        PackedLight packed;
+        packed.data[0].x = light.color.r;
+        packed.data[0].y = light.color.g;
+        packed.data[0].z = light.color.b;
+        packed.data[0].w = light.position.x;
+        packed.data[1].x = light.position.y;
+        packed.data[1].y = light.position.z;
+
+        lights.push_back(packed);
+    }
+
     return OptixEnvironment {
         {},
         (CUdeviceptr)tlas_storage,
         new_tlas,
+        move(lights),
     };
 }
 

@@ -25,6 +25,7 @@ struct ShaderBuffers {
     PackedEnv *envs;
     LaunchInput *launchInput;
     PackedInstance *instanceBuffer;
+    PackedLight *lightBuffer;
 };
 
 struct RenderState {

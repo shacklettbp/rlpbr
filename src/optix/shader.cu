@@ -32,6 +32,8 @@ struct Environment {
     const uint32_t *indexBuffer;
     const PackedMaterial *materialBuffer;
     const PackedInstance *instances;
+    const PackedLight *lights;
+    uint32_t numLights;
 };
 
 struct Instance {
@@ -40,6 +42,11 @@ struct Instance {
 
 struct Material {
     float3 albedoBase;
+};
+
+struct Light {
+    float3 rgb;
+    float3 position;
 };
 
 struct Triangle {
@@ -72,13 +79,14 @@ __forceinline__ pair<Camera, Environment> unpackEnv(uint32_t batch_idx)
     PackedEnv packed;
     asm ("{\n\t"
         ".reg .u64 t1;\n\t"
-        "mad.wide.u32 t1, %17, %18, %19;\n\t"
+        "mad.wide.u32 t1, %19, %20, %21;\n\t"
         "ld.global.v4.f32 {%0, %1, %2, %3}, [t1];\n\t"
         "ld.global.v4.f32 {%4, %5, %6, %7}, [t1 + 16];\n\t"
         "ld.global.v4.f32 {%8, %9, %10, %11}, [t1 + 32];\n\t"
         "ld.global.v2.u64 {%12, %13}, [t1 + 48];\n\t"
         "ld.global.v2.u64 {%14, %15}, [t1 + 64];\n\t"
-        "ld.global.u64 %16, [t1 + 80];\n\t"
+        "ld.global.v2.u64 {%16, %17}, [t1 + 80];\n\t"
+        "ld.global.u32 %18, [t1 + 96];\n\t"
         "}\n\t"
         : "=f" (packed.camData[0].x), "=f" (packed.camData[0].y),
           "=f" (packed.camData[0].z), "=f" (packed.camData[0].w),
@@ -88,7 +96,8 @@ __forceinline__ pair<Camera, Environment> unpackEnv(uint32_t batch_idx)
           "=f" (packed.camData[2].z), "=f" (packed.camData[2].w),
           "=l" (packed.tlas), "=l" (packed.vertexBuffer),
           "=l" (packed.indexBuffer), "=l" (packed.materialBuffer),
-          "=l" (packed.instances)
+          "=l" (packed.instances), "=l" (packed.lights),
+          "=r" (packed.numLights)
         : "r" (batch_idx), "n" (sizeof(PackedEnv)), "n" (ENV_PTR)
     );
 
@@ -100,6 +109,8 @@ __forceinline__ pair<Camera, Environment> unpackEnv(uint32_t batch_idx)
             packed.indexBuffer,
             packed.materialBuffer,
             packed.instances,
+            packed.lights,
+            packed.numLights,
         },
     };
 }
@@ -107,9 +118,11 @@ __forceinline__ pair<Camera, Environment> unpackEnv(uint32_t batch_idx)
 // Similarly to unpackEnv, work around broken 64bit constant pointer support
 __forceinline__ void setOutput(uint32_t base_offset, float3 rgb)
 {
-    uint16_t r = __half_as_ushort(__float2half(rgb.x));
-    uint16_t g = __half_as_ushort(__float2half(rgb.y));
-    uint16_t b = __half_as_ushort(__float2half(rgb.z));
+    float3 tonemapped = rgb / (1.f + rgb);
+
+    uint16_t r = __half_as_ushort(__float2half(tonemapped.x));
+    uint16_t g = __half_as_ushort(__float2half(tonemapped.y));
+    uint16_t b = __half_as_ushort(__float2half(tonemapped.z));
 
     asm ("{\n\t"
         ".reg .u64 t1;\n\t"
@@ -138,6 +151,17 @@ __forceinline__ Material unpackMaterial(const PackedMaterial &packed)
 
     return Material {
         make_float3(data.x, data.y, data.z),
+    };
+}
+
+__forceinline__ Light unpackLight(const PackedLight &packed)
+{
+    float4 data0 = packed.data[0];
+    float4 data1 = packed.data[0];
+
+    return Light {
+        make_float3(data0.x, data0.y, data0.z),
+        make_float3(data0.w, data1.x, data1.y),
     };
 }
 
@@ -367,7 +391,7 @@ extern "C" __global__ void __raygen__rg()
 
             // Miss, hit env map
             if (payload_3 == 0) {
-                sample_radiance += intensity * path_prob;
+                //sample_radiance += intensity * path_prob;
                 break;
             }
 
@@ -424,15 +448,20 @@ extern "C" __global__ void __raygen__rg()
                 float3 hemisphere = make_float3(disk.x, disk.y,
                     sqrtf(fmaxf(0.0f, 1.0f - dot(disk, disk))));
 
-                return hemisphere.x * tangent +
+                return normalize(hemisphere.x * tangent +
                     hemisphere.y * binormal +
-                    hemisphere.z * normal;
+                    hemisphere.z * normal);
             };
 
             float3 shadow_origin =
                 offsetRayOrigin(world_position, world_geo_normal);
-            float3 shadow_direction =
-                normalize(randomDirection(tangent, binormal, world_normal));
+
+            uint32_t light_idx = sampler.get1D() * env.numLights;
+
+            Light light = unpackLight(env.lights[light_idx]);
+
+            float3 to_light = light.position - shadow_origin;
+            float3 shadow_direction = normalize(to_light);
 
             payload_0 = 1;
             optixTrace(
@@ -460,7 +489,13 @@ extern "C" __global__ void __raygen__rg()
                 Material mat =
                     unpackMaterial(env.materialBuffer[inst.materialIdx]);
 
-                sample_radiance += intensity * path_prob * mat.albedoBase;
+                float light_r2 = dot(to_light, to_light);
+                float3 irradiance = light.rgb / light_r2 * 5.f;
+
+                float3 albedo = make_float3(1.f);
+    
+                float dir_prob = dot(world_normal, shadow_direction);
+                sample_radiance += albedo * dir_prob * irradiance;
             }
 
             // Start setup for next bounce

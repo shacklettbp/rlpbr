@@ -40,7 +40,13 @@ struct alignas(16) PackedEnv {
     const PackedVertex *vertexBuffer;
     const uint32_t *indexBuffer;
     const PackedMaterial *materialBuffer;
+
+    // FIXME Turn instance and light pointers
+    // into uint32_t offsets into constant 64 bit
+    // pointer
     const PackedInstance *instances;
+    const PackedLight *lights;
+    uint32_t numLights;
 };
 
 struct alignas(16) LaunchInput {

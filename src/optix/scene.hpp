@@ -53,6 +53,8 @@ public:
 
     CUdeviceptr tlasStorage;
     OptixTraversableHandle tlas;
+
+    std::vector<PackedLight> lights;
 };
 
 class OptixLoader : public LoaderBackend {
