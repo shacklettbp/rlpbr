@@ -94,7 +94,7 @@ private:
         if constexpr (isOddPower2) {
             int final_digit = morton_idx_ & 3;
             int p = hashPermute(morton_idx_ >> 2);
-            sample_idx |= p & 3;
+            sample_idx |= final_digit ^ p & 3;
             sample_idx >>= 1;
         }
         return sample_idx;

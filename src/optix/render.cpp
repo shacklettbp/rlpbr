@@ -295,12 +295,19 @@ static RenderState makeRenderState(const RenderConfig &cfg,
 {
     uint64_t env_batch_bytes = sizeof(PackedEnv) * cfg.batchSize;
     uint64_t instance_bytes =
-        sizeof(PackedInstance) * Config::maxInstances * num_frames;
+        sizeof(PackedInstance) * Config::maxInstances;
+    uint64_t light_bytes =
+        sizeof(PackedLight) * Config::maxLights;
+
     uint64_t launch_input_offset = alignOffset(
         env_batch_bytes * num_frames, 16);
+
     uint64_t instance_offset = alignOffset(
         launch_input_offset + sizeof(LaunchInput) * num_frames, 16);
-    uint64_t total_param_bytes = instance_offset + instance_bytes;
+    uint64_t light_offset = alignOffset(
+        instance_offset + instance_bytes * num_frames, 16);
+
+    uint64_t total_param_bytes = light_offset + light_bytes * num_frames;
 
     void *param_buffer;
     REQ_CUDA(cudaHostAlloc(&param_buffer, total_param_bytes,
@@ -328,11 +335,15 @@ static RenderState makeRenderState(const RenderConfig &cfg,
         PackedInstance *instance_ptr = (PackedInstance *)(param_base +
             instance_offset + instance_bytes * frame_idx);
 
+        PackedLight *light_ptr = (PackedLight *)(param_base +
+            light_offset + light_bytes * frame_idx);
+
         state.shaderBuffers[frame_idx] = {
             output_ptr,
             env_ptr,
             launch_input_ptr,
             instance_ptr,
+            light_ptr,
         };
     }
 
@@ -420,7 +431,8 @@ static array<float4, 3> packCamera(const Camera &cam)
 }
 
 static PackedEnv packEnv(const Environment &env,
-                         PackedInstance **instance_buffer)
+                         PackedInstance **instance_buffer,
+                         PackedLight **light_buffer)
 {
     const OptixEnvironment &env_backend =
         *static_cast<const OptixEnvironment *>(env.getBackend());
@@ -439,6 +451,12 @@ static PackedEnv packEnv(const Environment &env,
 
     *instance_buffer = cur_instance;
 
+    uint32_t num_lights = env_backend.lights.size();
+    PackedLight *light_ptr = *light_buffer;
+    memcpy(light_ptr, env_backend.lights.data(),
+           sizeof(PackedLight) * num_lights);
+    *light_buffer = light_ptr + num_lights;
+
     return PackedEnv {
         packCamera(env.getCamera()),
         env_backend.tlas,
@@ -446,6 +464,8 @@ static PackedEnv packEnv(const Environment &env,
         scene.indexPtr,
         scene.materialPtr,
         env_inst_start,
+        light_ptr,
+        num_lights,
     };
 }
 
@@ -453,9 +473,11 @@ uint32_t OptixBackend::render(const Environment *envs)
 {
     const ShaderBuffers &buffers = render_state_.shaderBuffers[active_idx_];
     PackedInstance *instance_buffer = buffers.instanceBuffer;
+    PackedLight *light_buffer = buffers.lightBuffer;
 
     for (uint32_t batch_idx = 0; batch_idx < batch_size_; batch_idx++) {
-        buffers.envs[batch_idx] = packEnv(envs[batch_idx], &instance_buffer);
+        buffers.envs[batch_idx] =
+            packEnv(envs[batch_idx], &instance_buffer, &light_buffer);
     }
 
     buffers.launchInput->baseBatchOffset = batch_size_ * active_idx_;
