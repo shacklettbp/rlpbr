@@ -132,6 +132,8 @@ SceneDescription<VertexType, MaterialType> parseHabitatJSON(
 
     for (const Instance &inst : raw_scene.additionalInstances) {
         uint32_t mesh_offset = desc.meshes.size();
+        uint32_t mat_offset = desc.materials.size();
+
         auto inst_desc = parseGLTF<VertexType, MaterialType>(
             inst.gltfPath, base_txfm * glm::mat4(inst.transform), texture_dir);
 
@@ -139,10 +141,14 @@ SceneDescription<VertexType, MaterialType> parseHabitatJSON(
             desc.meshes.push_back(mesh);
         }
 
+        for (const auto &mat : inst_desc.materials) {
+            desc.materials.push_back(mat);
+        }
+
         for (const auto &nested_inst : inst_desc.defaultInstances) {
             desc.defaultInstances.push_back({
                 nested_inst.meshIndex + mesh_offset,
-                nested_inst.materialIndex,
+                nested_inst.materialIndex + mat_offset,
                 nested_inst.txfm,
             });
         }
