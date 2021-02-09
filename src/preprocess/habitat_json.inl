@@ -88,7 +88,7 @@ HabitatJSON::Scene habitatJSONLoad(string_view scene_path_name)
             glm::quat rotation;
             idx = 0;
             for (auto c : inst["rotation"]) {
-                rotation[idx++] = float(double(c));
+                rotation[3 - idx++] = float(double(c));
             }
 
             glm::mat4 txfm =
