@@ -31,6 +31,7 @@ struct Environment {
     const PackedVertex *vertexBuffer;
     const uint32_t *indexBuffer;
     const PackedMaterial *materialBuffer;
+    const cudaTextureObject_t *textureHandles;
     const PackedInstance *instances;
     const PackedLight *lights;
     uint32_t numLights;
@@ -41,6 +42,7 @@ struct Instance {
 };
 
 struct Material {
+    uint32_t textureIdx;
     float3 albedoBase;
 };
 
@@ -77,16 +79,18 @@ __forceinline__ Camera unpackCamera(const float4 *packed)
 __forceinline__ pair<Camera, Environment> unpackEnv(uint32_t batch_idx)
 {
     PackedEnv packed;
+
+    uint64_t lights_padded;
     asm ("{\n\t"
         ".reg .u64 t1;\n\t"
-        "mad.wide.u32 t1, %19, %20, %21;\n\t"
+        "mad.wide.u32 t1, %20, %21, %22;\n\t"
         "ld.global.v4.f32 {%0, %1, %2, %3}, [t1];\n\t"
         "ld.global.v4.f32 {%4, %5, %6, %7}, [t1 + 16];\n\t"
         "ld.global.v4.f32 {%8, %9, %10, %11}, [t1 + 32];\n\t"
         "ld.global.v2.u64 {%12, %13}, [t1 + 48];\n\t"
         "ld.global.v2.u64 {%14, %15}, [t1 + 64];\n\t"
         "ld.global.v2.u64 {%16, %17}, [t1 + 80];\n\t"
-        "ld.global.u32 %18, [t1 + 96];\n\t"
+        "ld.global.v2.u64 {%18, %19}, [t1 + 96];\n\t"
         "}\n\t"
         : "=f" (packed.camData[0].x), "=f" (packed.camData[0].y),
           "=f" (packed.camData[0].z), "=f" (packed.camData[0].w),
@@ -96,8 +100,8 @@ __forceinline__ pair<Camera, Environment> unpackEnv(uint32_t batch_idx)
           "=f" (packed.camData[2].z), "=f" (packed.camData[2].w),
           "=l" (packed.tlas), "=l" (packed.vertexBuffer),
           "=l" (packed.indexBuffer), "=l" (packed.materialBuffer),
-          "=l" (packed.instances), "=l" (packed.lights),
-          "=r" (packed.numLights)
+          "=l" (packed.textureHandles), "=l" (packed.instances),
+          "=l" (packed.lights), "=l" (lights_padded)
         : "r" (batch_idx), "n" (sizeof(PackedEnv)), "n" (ENV_PTR)
     );
 
@@ -108,9 +112,10 @@ __forceinline__ pair<Camera, Environment> unpackEnv(uint32_t batch_idx)
             packed.vertexBuffer,
             packed.indexBuffer,
             packed.materialBuffer,
+            packed.textureHandles,
             packed.instances,
             packed.lights,
-            packed.numLights,
+            uint32_t(lights_padded),
         },
     };
 }
@@ -147,10 +152,12 @@ __forceinline__ Instance unpackInstance(const PackedInstance &packed)
 
 __forceinline__ Material unpackMaterial(const PackedMaterial &packed)
 {
-    float4 data = packed.data;
+    float4 data0 = packed.data0;
+    uint4 data1 = packed.data1;
 
     return Material {
-        make_float3(data.x, data.y, data.z),
+        data1.x,
+        make_float3(data0.x, data0.y, data0.z),
     };
 }
 
@@ -350,7 +357,7 @@ extern "C" __global__ void __raygen__rg()
                         launchInput.baseFrameCounter + idx.z);
 
         float3 sample_radiance = make_float3(0.f);
-        float path_prob = 1.f;
+        float3 path_prob = make_float3(1.f);
 
         auto [ray_origin, ray_dir] =
             computeCameraRay(cam, idx, dim, sampler);
@@ -484,18 +491,30 @@ extern "C" __global__ void __raygen__rg()
                     payload_3,
                     payload_4);
 
+            Material mat =
+                unpackMaterial(env.materialBuffer[inst.materialIdx]);
+
+            float3 albedo;
+            if (mat.textureIdx != ~0u) {
+                cudaTextureObject_t tex = env.textureHandles[mat.textureIdx];
+                float4 tex_value = tex2DLod<float4>(tex, interpolated.uv.x,
+                                                   interpolated.uv.y, 0);
+                albedo.x = tex_value.x;
+                albedo.y = tex_value.y;
+                albedo.z = tex_value.z;
+            } else {
+                albedo = mat.albedoBase;
+            }
+            float dir_prob = dot(world_normal, shadow_direction);
+
+            float3 brdf = albedo * dir_prob;
+
             if (payload_0 == 0) {
                 // Shade
-                Material mat =
-                    unpackMaterial(env.materialBuffer[inst.materialIdx]);
-
                 float light_r2 = dot(to_light, to_light);
-                float3 irradiance = light.rgb / light_r2 * 5.f;
+                float3 irradiance = light.rgb / light_r2 * 10.f;
 
-                float3 albedo = make_float3(1.f);
-    
-                float dir_prob = dot(world_normal, shadow_direction);
-                sample_radiance += albedo * dir_prob * irradiance;
+                sample_radiance += brdf * irradiance;
             }
 
             // Start setup for next bounce
@@ -503,8 +522,7 @@ extern "C" __global__ void __raygen__rg()
             ray_dir = randomDirection(tangent, binormal, world_normal);
 
             // FIXME definitely wrong (cur path intensity?)
-            path_prob *=
-                1.f / (CUDART_PI_F) * fabsf(dot(ray_dir, world_normal));
+            path_prob *= brdf * 1.f / (CUDART_PI_F);
         }
 
         pixel_radiance += sample_radiance / SPP;

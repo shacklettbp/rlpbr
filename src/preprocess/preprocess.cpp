@@ -21,15 +21,23 @@ using namespace SceneImport;
 
 struct PreprocessData {
     SceneDescription<Vertex, Material> desc;
+    string textureDir;
 };
 
 static PreprocessData parseSceneData(string_view scene_path,
                                      const glm::mat4 &base_txfm,
                                      optional<string_view> texture_dir)
 {
+    string serialized_tex_dir;
+    if (!texture_dir.has_value()) {
+        serialized_tex_dir = "./";
+    } else {
+        serialized_tex_dir = texture_dir.value();
+    }
     return PreprocessData {
         SceneDescription<Vertex, Material>::parseScene(scene_path, base_txfm,
             texture_dir),
+        serialized_tex_dir,
     };
 }
 
@@ -202,7 +210,8 @@ static ProcessedGeometry<VertexType> processGeometry(
     };
 }
 
-static MaterialMetadata stageMaterials(const vector<Material> &materials)
+static MaterialMetadata stageMaterials(const vector<Material> &materials,
+                                       const string &texture_dir)
 {
     vector<string> albedo_textures;
     unordered_map<string, size_t> albedo_tracker;
@@ -225,14 +234,18 @@ static MaterialMetadata stageMaterials(const vector<Material> &materials)
         }
 
         params.push_back({
-            albedo_idx,
             material.baseAlbedo,
             material.roughness,
+            {
+                albedo_idx,
+                0, 0, 0
+            },
         });
     }
 
     return {
         {
+            texture_dir,
             move(albedo_textures),
         },
         move(params),
@@ -325,6 +338,16 @@ void ScenePreprocessor::dump(string_view out_path_name)
     };
 
     auto write_textures = [&](const MaterialMetadata &metadata) {
+        filesystem::path root_dir = filesystem::path(out_path_name).parent_path();
+        filesystem::path relative_path =
+            filesystem::path(metadata.textureInfo.textureDir).
+                lexically_relative(root_dir);
+
+        string relative_path_str = relative_path.string() + "/";
+
+        out.write(relative_path_str.data(),
+                  relative_path_str.size());
+        out.put(0);
         write(uint32_t(metadata.textureInfo.albedo.size()));
         for (const auto &tex_name : metadata.textureInfo.albedo) {
             out.write(tex_name.data(), tex_name.size());
@@ -354,9 +377,10 @@ void ScenePreprocessor::dump(string_view out_path_name)
     };
 
     auto write_scene = [&](const auto &geometry,
-                           const auto &desc) {
+                           const auto &desc,
+                           const auto &texture_dir) {
         const auto &materials = desc.materials;
-        auto material_metadata = stageMaterials(materials);
+        auto material_metadata = stageMaterials(materials, texture_dir);
 
         StagingHeader hdr = make_staging_header(geometry, material_metadata);
         write(hdr);
@@ -377,7 +401,8 @@ void ScenePreprocessor::dump(string_view out_path_name)
 
     // Header: magic
     write(uint32_t(0x55555555));
-    write_scene(processed_geometry, scene_data_->desc);
+    write_scene(processed_geometry, scene_data_->desc,
+                scene_data_->textureDir);
     out.close();
 }
 
