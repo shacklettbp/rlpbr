@@ -35,9 +35,11 @@ void saveFrame(const char *fname, const half *dev_ptr,
     vector<uint8_t> sdr_buffer(buffer.size());
     for (unsigned i = 0; i < buffer.size(); i++) {
         half v = buffer[i];
-        if (v < 0) v = half(0.f);
-        if (v > 1) v = half(1.f);
-        sdr_buffer[i] = v * 255;
+        float f = v / (v + 1.f);
+        f = powf(f, 1.f/2.2f);
+        if (f < 0) f = half(0.f);
+        if (f > 1) f = half(1.f);
+        sdr_buffer[i] = f * 255;
     }
 
     stbi_write_bmp(fname, width, height, num_channels, sdr_buffer.data());
@@ -71,9 +73,10 @@ int main(int argc, char *argv[]) {
     auto scene = loader.loadScene(argv[1]);
     vector<Environment> envs;
 
-    glm::vec3 eye(-1.517531, 0.738855, 0.259125);
-    glm::vec3 look(-2.359261, 0.900512, -0.256005);
-    glm::vec3 up(0.068618, 0.978416, 0.194921);
+    glm::vec3 eye(-1.421800, 1.424235, -0.937237);
+    glm::vec3 look(-1.121980, 0.842151, -0.181401);
+    glm::vec3 up(0.225326, 0.813076, 0.536784);
+
     glm::vec3 to_look = look - eye;
     
     

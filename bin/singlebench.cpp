@@ -60,9 +60,9 @@ int main(int argc, char *argv[]) {
 
     for (uint32_t batch_idx = 0; batch_idx < batch_size; batch_idx++) {
         envs.emplace_back(renderer.makeEnvironment(scene,
-            glm::vec3(6.986622, 1.689715, -0.781423),
-            glm::vec3(7.950317, 1.431094, -0.847776),
-            glm::vec3(0, 1, 0)));
+            glm::vec3(-1.421800, 1.424235, -0.937237),
+            glm::vec3(-1.121980, 0.842151, -0.181401),
+            glm::vec3(0.225326, 0.813076, 0.536784)));
     }
 
     auto start = chrono::steady_clock::now();
