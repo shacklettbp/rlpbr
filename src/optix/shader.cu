@@ -513,7 +513,7 @@ extern "C" __global__ void __raygen__rg()
                 float inv_light_pdf = env.numLights;
 
                 float dir_prob = fabsf(dot(world_normal, shadow_direction));
-                float3 brdf = albedo * dir_prob * INV_PI;
+                float3 brdf = albedo * INV_PI * dir_prob;
 
                 sample_radiance +=
                     path_prob * brdf * irradiance * inv_light_pdf;
@@ -523,11 +523,8 @@ extern "C" __global__ void __raygen__rg()
             ray_origin = shadow_origin;
             ray_dir = randomDirection(tangent, binormal, world_normal);
 
-            float bounce_prob = fabsf(dot(world_normal, ray_dir));
-            float3 bounce_brdf = albedo * bounce_prob * INV_PI;
-
-            // FIXME definitely wrong (cur path intensity?)
-            path_prob *= bounce_brdf;
+            // nDwi & inverse PI cancel out
+            path_prob *= albedo;
         }
 
         pixel_radiance += sample_radiance / SPP;
