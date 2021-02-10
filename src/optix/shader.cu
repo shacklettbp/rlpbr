@@ -6,6 +6,8 @@
 #include <cuda/std/tuple>
 #include <math_constants.h>
 
+#define INV_PI (1.f / CUDART_PI_F)
+
 using namespace RLpbr::optix;
 using namespace cuda::std;
 
@@ -503,24 +505,29 @@ extern "C" __global__ void __raygen__rg()
             } else {
                 albedo = mat.albedoBase;
             }
-            float dir_prob = dot(world_normal, shadow_direction);
-
-            float3 brdf = albedo * dir_prob;
 
             if (payload_0 == 0) {
                 // Shade
                 float light_r2 = dot(to_light, to_light);
-                float3 irradiance = light.rgb / light_r2 * 10.f;
+                float3 irradiance = light.rgb / light_r2;
+                float inv_light_pdf = env.numLights;
 
-                sample_radiance += brdf * irradiance;
+                float dir_prob = fabsf(dot(world_normal, shadow_direction));
+                float3 brdf = albedo * dir_prob * INV_PI;
+
+                sample_radiance +=
+                    path_prob * brdf * irradiance * inv_light_pdf;
             }
 
             // Start setup for next bounce
             ray_origin = shadow_origin;
             ray_dir = randomDirection(tangent, binormal, world_normal);
 
+            float bounce_prob = fabsf(dot(world_normal, ray_dir));
+            float3 bounce_brdf = albedo * bounce_prob * INV_PI;
+
             // FIXME definitely wrong (cur path intensity?)
-            path_prob *= brdf * 1.f / (CUDART_PI_F);
+            path_prob *= bounce_brdf;
         }
 
         pixel_radiance += sample_radiance / SPP;
