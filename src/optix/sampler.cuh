@@ -40,7 +40,7 @@ public:
         uint32_t hash_seed = mix32(dim_ ^ seed_);
         dim_++;
 
-        return finalize(sobol::sample(idx, 0), hash_seed);
+        return sample(idx, 0, hash_seed);
     }
 
     inline float2 get2D()
@@ -49,11 +49,17 @@ public:
         uint2 hash_seed = mix32x2(dim_ ^ seed_);
         dim_ += 2;
 
-        return make_float2(finalize(sobol::sample(idx, 0), hash_seed.x),
-                           finalize(sobol::sample(idx, 1), hash_seed.y));
+        return make_float2(sample(idx, 0, hash_seed.x),
+                           sample(idx, 1, hash_seed.y));
     }
 
 private:
+    __forceinline__ float sample(uint32_t idx, uint32_t dim,
+                                 uint32_t hash_seed) const
+    {
+        return finalizeSobol(sobol::sample(idx, dim), hash_seed);
+    }
+
     __forceinline__ uint32_t hashMortonPrefix(uint32_t idx) const
     {
         return mix32(idx ^ (0x55555555 * dim_));
@@ -106,24 +112,9 @@ private:
         return sample_idx;
     }
 
-    static __forceinline__ float finalize(uint32_t v, uint32_t hash_seed)
+    static __forceinline__ float finalizeSobol(uint32_t v, uint32_t hash_seed)
     {
-        // Initial reverse not necessary because sobol numbers are flipped
-
-        // https://psychopath.io/post/2021_01_30_building_a_better_lk_hash
-        v += v << 2;
-        v ^= v * 0xfe9b5742;
-        v += hash_seed;
-        v *= hash_seed | 1;
-
-        // Laine - Karras hash
-        //v += hash_seed;
-        //v ^= v * 0x6c50b47cu;
-        //v ^= v * 0xb82f1e52u;
-        //v ^= v * 0xc7afe638u;
-        //v ^= v * 0x8d22f6e6u;
-
-        v = __brev(v);
+        v ^= hash_seed;
 
         return min(v * 0x1p-32f, Constants::nearestOne);
     }
