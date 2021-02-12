@@ -53,7 +53,7 @@ int main(int argc, char *argv[]) {
 
     uint32_t batch_size = atoi(argv[2]);
 
-    glm::u32vec2 out_dim(1024, 1024);
+    glm::u32vec2 out_dim(1920, 1080);
 
     uint32_t spp = 1;
 
@@ -73,9 +73,9 @@ int main(int argc, char *argv[]) {
     auto scene = loader.loadScene(argv[1]);
     vector<Environment> envs;
 
-    glm::vec3 eye(-1.421800, 1.424235, -0.937237);
-    glm::vec3 look(-1.121980, 0.842151, -0.181401);
-    glm::vec3 up(0.225326, 0.813076, 0.536784);
+    glm::vec3 eye(-1.289646, 1.159879, -1.150437);
+    glm::vec3 look(-0.933010, 0.888357, -0.256520);
+    glm::vec3 up(0.109443, 0.962389, 0.248656);
 
     glm::vec3 to_look = look - eye;
     
@@ -84,7 +84,7 @@ int main(int argc, char *argv[]) {
         glm::mat3 r = glm::rotate(glm::radians(10.f * batch_idx), up);
         r = glm::mat3(1.f);
         envs.emplace_back(renderer.makeEnvironment(scene, 
-            eye, eye + r * to_look, up));
+            eye, eye + r * to_look, up, 60.f));
     }
 
     renderer.render(envs.data());
