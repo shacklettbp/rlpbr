@@ -54,22 +54,28 @@ public:
     }
 
 private:
+    __forceinline__ uint32_t hashMortonPrefix(uint32_t idx) const
+    {
+        return mix32(idx ^ (0x55555555 * dim_));
+    }
+
+    __forceinline__ uint32_t hashPermute(uint32_t idx) const
+    {
+        // PBRT version
+        return (hashMortonPrefix(idx) >> 24) % 24;
+
+        // ZSampler paper version
+        //constexpr int BITS = 24;
+        //constexpr uint32_t MASK = (1 << BITS) - 1;
+        //constexpr uint32_t Z = 0x9e377A;
+
+        //idx ^= dim_ * 0x555555;
+        //uint32_t x = (idx * Z) & MASK;
+        //return (x * 24) >> BITS;
+    }
+
     inline uint32_t curSampleIndex() const
     {
-        auto hashPermute = [this](uint32_t idx) {
-            // PBRT version
-            return (mix32(idx ^ (0x55555555 * dim_)) >> 24) % 24;
-
-            // ZSampler paper version
-            //constexpr int BITS = 24;
-            //constexpr uint32_t MASK = (1 << BITS) - 1;
-            //constexpr uint32_t Z = 0x9e377A;
-
-            //idx ^= dim_ * 0x555555;
-            //uint32_t x = (idx * Z) & MASK;
-            //return (x * 24) >> BITS;
-        };
-
         static const uint8_t permutations[24][4] = {
             {0, 1, 2, 3}, {0, 1, 3, 2}, {0, 2, 1, 3}, {0, 2, 3, 1},
             {0, 3, 2, 1}, {0, 3, 1, 2}, {1, 0, 2, 3}, {1, 0, 3, 2},
@@ -93,9 +99,9 @@ private:
 
         if constexpr (isOddPower2) {
             int final_digit = morton_idx_ & 3;
-            int p = hashPermute(morton_idx_ >> 2);
-            sample_idx |= final_digit ^ p & 3;
+            sample_idx |= final_digit;
             sample_idx >>= 1;
+            sample_idx ^= hashMortonPrefix(morton_idx_ >> 2) & 1;
         }
         return sample_idx;
     }
