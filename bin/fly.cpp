@@ -120,7 +120,7 @@ int main(int argc, char *argv[]) {
         exit(EXIT_FAILURE);
     }
 
-    glm::u32vec2 img_dims(1024, 1024);
+    glm::u32vec2 img_dims(1920, 1080);
 
     GLFWwindow *window = makeWindow(img_dims);
     if (glewInit() != GLEW_OK) {
@@ -195,7 +195,7 @@ int main(int argc, char *argv[]) {
 
     vector<Environment> envs;
     envs.emplace_back(
-        renderer.makeEnvironment(scene, cam.eye, cam.look, cam.up));
+        renderer.makeEnvironment(scene, cam.eye, cam.look, cam.up, 60.f));
 
     glfwSetKeyCallback(window, windowKeyHandler);
 
