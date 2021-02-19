@@ -11,7 +11,7 @@ target_link_libraries(singlebench rlpbr)
 add_executable(save_frame
     save_frame.cpp
 )
-target_link_libraries(save_frame rlpbr)
+target_link_libraries(save_frame rlpbr stb)
 
 find_package(glfw3 3.3 QUIET)
 find_package(GLEW QUIET)
