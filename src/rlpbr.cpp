@@ -105,7 +105,7 @@ void Renderer::waitForFrame(uint32_t frame_idx)
     backend_.waitForFrame(frame_idx);
 }
 
-half *Renderer::getOutputPointer(uint32_t frame_idx)
+half *Renderer::getOutputPointer(uint32_t frame_idx) const
 {
     return backend_.getOutputPointer(frame_idx);
 }
@@ -366,7 +366,7 @@ void RendererImpl::waitForFrame(uint32_t frame_idx)
     invoke(wait_ptr_, state_, frame_idx);
 }
 
-half *RendererImpl::getOutputPointer(uint32_t frame_idx)
+half *RendererImpl::getOutputPointer(uint32_t frame_idx) const
 {
     return invoke(get_output_ptr_, state_, frame_idx);
 }

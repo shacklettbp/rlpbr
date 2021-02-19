@@ -89,7 +89,7 @@ public:
 
     inline void waitForFrame(uint32_t frame_idx);
 
-    inline half *getOutputPointer(uint32_t frame_idx);
+    inline half *getOutputPointer(uint32_t frame_idx) const;
 
 private:
     DestroyType destroy_ptr_;
