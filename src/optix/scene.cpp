@@ -17,6 +17,11 @@ namespace optix {
 
 OptixScene::~OptixScene()
 {
+    for (Texture &tex : textures) {
+        cudaDestroyTextureObject(tex.hdl);
+        cudaFreeArray(tex.mem);
+    }
+
     cudaFreeHost(defaultTLAS.instanceBLASes);
 
     cudaFree((void *)defaultTLAS.storage);
