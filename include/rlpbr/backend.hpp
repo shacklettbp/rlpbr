@@ -24,6 +24,9 @@ public:
     EnvironmentImpl(const EnvironmentImpl &) = delete;
     EnvironmentImpl(EnvironmentImpl &&);
 
+    EnvironmentImpl & operator=(const EnvironmentImpl &) = delete;
+    EnvironmentImpl & operator=(EnvironmentImpl &&);
+
     ~EnvironmentImpl();
 
     inline uint32_t addLight(const glm::vec3 &position,
@@ -51,6 +54,9 @@ public:
     LoaderImpl(const LoaderImpl &) = delete;
     LoaderImpl(LoaderImpl &&);
 
+    LoaderImpl & operator=(const LoaderImpl &) = delete;
+    LoaderImpl & operator=(LoaderImpl &&);
+
     ~LoaderImpl();
 
     inline std::shared_ptr<Scene> loadScene(SceneLoadData &&scene_data);
@@ -77,6 +83,9 @@ public:
         GetOutputType get_output_ptr, RenderBackend *state);
     RendererImpl(const RendererImpl &) = delete;
     RendererImpl(RendererImpl &&);
+
+    RendererImpl & operator=(const RendererImpl &) = delete;
+    RendererImpl & operator=(RendererImpl &&);
 
     ~RendererImpl();
 
