@@ -49,7 +49,7 @@ public:
 
     void waitForFrame(uint32_t frame_idx = 0);
 
-    half *getOutputPointer(uint32_t frame_idx = 0);
+    half *getOutputPointer(uint32_t frame_idx = 0) const;
 
 private:
     RendererImpl backend_;
