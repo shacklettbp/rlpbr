@@ -218,6 +218,7 @@ static vector<Texture> loadTextures(const TextureInfo &tex_info,
 
         int x, y, n;
         uint8_t *img_data = stbi_load(full_path.c_str(), &x, &y, &n, 4);
+        host_tex_data.push_back(img_data);
 
         cudaChannelFormatDesc channel_desc = cudaCreateChannelDesc<uchar4>();
 
