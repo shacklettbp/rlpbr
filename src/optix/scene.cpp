@@ -223,10 +223,11 @@ static vector<Texture> loadTextures(const TextureInfo &tex_info,
         cudaChannelFormatDesc channel_desc = cudaCreateChannelDesc<uchar4>();
 
         cudaArray_t tex_mem;
-        REQ_CUDA(cudaMallocArray(&tex_mem, &channel_desc, x, y, cudaArrayDefault));
+        REQ_CUDA(cudaMallocArray(&tex_mem, &channel_desc, x, y,
+                                 cudaArrayDefault));
 
-        cudaMemcpy2DToArrayAsync(tex_mem, 0, 0, img_data, 4 * x, 4 * x, y,
-                                 cudaMemcpyHostToDevice, cpy_strm); 
+        REQ_CUDA(cudaMemcpy2DToArrayAsync(tex_mem, 0, 0, img_data,
+            4 * x, 4 * x, y, cudaMemcpyHostToDevice, cpy_strm)); 
 
         cudaResourceDesc res_desc {};
         res_desc.resType = cudaResourceTypeArray;
