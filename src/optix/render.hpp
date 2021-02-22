@@ -59,7 +59,7 @@ private:
     RenderState render_state_;
     Pipeline pipeline_;
     SBT sbt_;
-
+    TextureManager texture_mgr_;
 };
 
 }

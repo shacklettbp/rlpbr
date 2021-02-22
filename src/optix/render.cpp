@@ -384,7 +384,8 @@ OptixBackend::OptixBackend(const RenderConfig &cfg, bool validate)
       render_state_(makeRenderState(cfg, getNumFrames(cfg))),
       pipeline_(
           buildPipeline(ctx_, cfg, render_state_.shaderBuffers[0], validate)),
-      sbt_(buildSBT(streams_[0], pipeline_))
+      sbt_(buildSBT(streams_[0], pipeline_)),
+      texture_mgr_()
 {
     REQ_CUDA(cudaStreamSynchronize(streams_[0]));
 
@@ -401,7 +402,7 @@ OptixBackend::OptixBackend(const RenderConfig &cfg, bool validate)
 
 LoaderImpl OptixBackend::makeLoader()
 {
-    OptixLoader *loader = new OptixLoader(ctx_);
+    OptixLoader *loader = new OptixLoader(ctx_, texture_mgr_);
     return makeLoaderImpl<OptixLoader>(loader);
 }
 
