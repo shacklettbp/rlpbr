@@ -274,6 +274,10 @@ EnvironmentImpl::~EnvironmentImpl()
 
 EnvironmentImpl & EnvironmentImpl::operator=(EnvironmentImpl &&o)
 {
+    if (state_) {
+        invoke(destroy_ptr_, state_);
+    }
+
     destroy_ptr_ = o.destroy_ptr_;
     add_light_ptr_ = o.add_light_ptr_;
     remove_light_ptr_ = o.remove_light_ptr_;
@@ -319,6 +323,10 @@ LoaderImpl::~LoaderImpl()
 
 LoaderImpl & LoaderImpl::operator=(LoaderImpl &&o)
 {
+    if (state_) {
+        invoke(destroy_ptr_, state_);
+    }
+
     destroy_ptr_ = o.destroy_ptr_;
     load_scene_ptr_ = o.load_scene_ptr_;
     state_ = o.state_;
@@ -370,6 +378,10 @@ RendererImpl::~RendererImpl()
 
 RendererImpl & RendererImpl::operator=(RendererImpl &&o)
 {
+    if (state_) {
+        invoke(destroy_ptr_, state_);
+    }
+
     destroy_ptr_ = o.destroy_ptr_;
     make_loader_ptr_ = o.make_loader_ptr_;
     make_env_ptr_ = o.make_env_ptr_;
