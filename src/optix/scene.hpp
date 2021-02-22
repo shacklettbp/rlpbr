@@ -11,19 +11,65 @@
 #include <cuda_runtime.h>
 #include <optix.h>
 
+#include <atomic>
+#include <mutex>
+#include <unordered_map>
+
 namespace RLpbr {
 namespace optix {
+
+class TextureManager;
+
+struct TextureBacking {
+    TextureBacking(cudaArray_t m, cudaTextureObject_t h);
+
+    cudaArray_t mem;
+    cudaTextureObject_t hdl;
+
+    std::atomic_uint32_t refCount;
+};
+
+using TextureRefType =
+    std::unordered_map<std::string, TextureBacking>::iterator;
+
+class Texture {
+public:
+    Texture(TextureManager &mgr, const TextureRefType &r,
+            cudaTextureObject_t hdl);
+    Texture(const Texture &) = delete;
+    Texture(Texture &&);
+    ~Texture();
+
+    inline cudaTextureObject_t getHandle() const { return hdl_; }
+
+private:
+    TextureManager &mgr_;
+    TextureRefType ref_;
+    cudaTextureObject_t hdl_;
+};
+
+class TextureManager {
+public:
+    TextureManager();
+    ~TextureManager();
+
+    std::vector<Texture> load(
+        const TextureInfo &tex_info, cudaStream_t copy_strm);
+
+private:
+    void decrementTextureRef(const TextureRefType &tex_ref);
+
+    std::mutex cache_lock_;
+    std::unordered_map<std::string, TextureBacking> loaded_;
+
+    friend class Texture;
+};
 
 struct TLAS {
     OptixTraversableHandle hdl;
     CUdeviceptr storage;
     size_t numBytes;
     OptixTraversableHandle *instanceBLASes;
-};
-
-struct Texture {
-    cudaArray_t mem;
-    cudaTextureObject_t hdl;
 };
 
 struct OptixScene : public Scene {
@@ -67,13 +113,14 @@ public:
 
 class OptixLoader : public LoaderBackend {
 public:
-    OptixLoader(OptixDeviceContext ctx);
+    OptixLoader(OptixDeviceContext ctx, TextureManager &texture_mgr);
 
     std::shared_ptr<Scene> loadScene(SceneLoadData &&load_info);
 
 private:
     cudaStream_t stream_;
     OptixDeviceContext ctx_;
+    TextureManager &texture_mgr_;
 };
 
 }

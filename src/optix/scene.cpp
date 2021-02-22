@@ -15,13 +15,159 @@ using namespace std;
 namespace RLpbr {
 namespace optix {
 
-OptixScene::~OptixScene()
+TextureBacking::TextureBacking(cudaArray_t m, cudaTextureObject_t h)
+    : mem(m),
+      hdl(h),
+      refCount(0)
+{}
+
+Texture::Texture(TextureManager &mgr, const TextureRefType &r,
+                 cudaTextureObject_t hdl)
+    : mgr_(mgr),
+      ref_(r),
+      hdl_(hdl)
+{}
+
+Texture::Texture(Texture &&o)
+    : mgr_(o.mgr_),
+      ref_(o.ref_),
+      hdl_(o.hdl_)
 {
-    for (Texture &tex : textures) {
+    o.hdl_ = 0;
+}
+
+Texture::~Texture()
+{
+    if (hdl_ == 0) return;
+    mgr_.decrementTextureRef(ref_);
+}
+
+TextureManager::TextureManager()
+    : cache_lock_(),
+      loaded_()
+{}
+
+TextureManager::~TextureManager()
+{
+    if (!loaded_.empty()) {
+        cerr << "Dangling references to textures" << endl;
+        abort();
+    }
+}
+
+void TextureManager::decrementTextureRef(const TextureRefType &tex_ref)
+{
+    TextureBacking &tex = tex_ref->second;
+
+    if (tex.refCount.fetch_sub(1, memory_order_acq_rel) == 1) {
         cudaDestroyTextureObject(tex.hdl);
         cudaFreeArray(tex.mem);
+
+        cache_lock_.lock();
+
+        if (tex.refCount.load(memory_order_acquire) == 0) {
+            loaded_.erase(tex_ref);
+        }
+
+        cache_lock_.unlock();
+    }
+}
+
+static tuple<cudaArray_t, cudaTextureObject_t, uint8_t *> loadTexture(
+    const string &tex_path, cudaStream_t cpy_strm)
+{
+    int x, y, n;
+    uint8_t *img_data = stbi_load(tex_path.c_str(), &x, &y, &n, 4);
+
+    cudaChannelFormatDesc channel_desc = cudaCreateChannelDesc<uchar4>();
+
+    cudaArray_t tex_mem;
+    REQ_CUDA(cudaMallocArray(&tex_mem, &channel_desc, x, y,
+                             cudaArrayDefault));
+
+    REQ_CUDA(cudaMemcpy2DToArrayAsync(tex_mem, 0, 0, img_data,
+        4 * x, 4 * x, y, cudaMemcpyHostToDevice, cpy_strm)); 
+
+    cudaResourceDesc res_desc {};
+    res_desc.resType = cudaResourceTypeArray;
+    res_desc.res.array.array = tex_mem;
+
+    cudaTextureDesc tex_desc {};
+    tex_desc.addressMode[0] = cudaAddressModeWrap;
+    tex_desc.addressMode[1] = cudaAddressModeWrap;
+    tex_desc.filterMode = cudaFilterModeLinear;
+    tex_desc.readMode = cudaReadModeNormalizedFloat;
+    tex_desc.normalizedCoords = true;
+    tex_desc.sRGB = true;
+
+    cudaTextureObject_t hdl;
+    REQ_CUDA(cudaCreateTextureObject(&hdl, &res_desc, &tex_desc,
+                                     nullptr));
+    return {
+        tex_mem,
+        hdl,
+        img_data,
+    };
+}
+
+vector<Texture> TextureManager::load(
+    const TextureInfo &tex_info, cudaStream_t cpy_strm)
+{
+    vector<uint8_t *> host_tex_data;
+    host_tex_data.reserve(tex_info.albedo.size());
+
+    vector<Texture> gpu_textures;
+    gpu_textures.reserve(tex_info.albedo.size());
+
+    for (const auto &tex_name : tex_info.albedo) {
+        string full_path = tex_info.textureDir + tex_name;
+
+        cache_lock_.lock();
+        auto iter = loaded_.find(full_path);
+
+        if (iter == loaded_.end()) {
+            cache_lock_.unlock();
+
+            auto [tex_mem, tex_hdl, host_ptr] =
+                loadTexture(full_path, cpy_strm);
+            host_tex_data.push_back(host_ptr);
+
+            cache_lock_.lock();
+
+            auto res = loaded_.emplace(piecewise_construct,
+                                       forward_as_tuple(full_path),
+                                       forward_as_tuple(tex_mem, tex_hdl));
+            iter = res.first;
+            iter->second.refCount.fetch_add(1, memory_order_acq_rel);
+
+            cache_lock_.unlock();
+
+            if (!res.second) {
+                cudaDestroyTextureObject(tex_hdl);
+                cudaFreeArray(tex_mem);
+            }
+
+        } else {
+            iter->second.refCount.fetch_add(1, memory_order_acq_rel);
+
+            cache_lock_.unlock();
+        }
+
+        gpu_textures.emplace_back(*this, iter, iter->second.hdl);
     }
 
+    REQ_CUDA(cudaStreamSynchronize(cpy_strm));
+
+    for (uint8_t *ptr : host_tex_data) {
+        stbi_image_free(ptr);
+    }
+
+    return gpu_textures;
+}
+
+
+OptixScene::~OptixScene()
+{
     cudaFreeHost(defaultTLAS.instanceBLASes);
 
     cudaFree((void *)defaultTLAS.storage);
@@ -107,13 +253,14 @@ void OptixEnvironment::removeLight(uint32_t light_idx)
     (void)light_idx;
 }
 
-OptixLoader::OptixLoader(OptixDeviceContext ctx)
+OptixLoader::OptixLoader(OptixDeviceContext ctx, TextureManager &texture_mgr)
     : stream_([]() {
           cudaStream_t strm;
           REQ_CUDA(cudaStreamCreate(&strm));
           return strm;
       }()),
-      ctx_(ctx)
+      ctx_(ctx),
+      texture_mgr_(texture_mgr)
 {}
 
 struct TLASIntermediate {
@@ -204,65 +351,9 @@ static pair<TLAS, TLASIntermediate> buildTLAS(
     };
 }
 
-static vector<Texture> loadTextures(const TextureInfo &tex_info,
-    cudaStream_t cpy_strm)
-{
-    vector<uint8_t *> host_tex_data;
-    host_tex_data.reserve(tex_info.albedo.size());
-
-    vector<Texture> gpu_textures;
-    gpu_textures.reserve(tex_info.albedo.size());
-
-    for (const auto &tex_name : tex_info.albedo) {
-        string full_path = tex_info.textureDir + tex_name;
-
-        int x, y, n;
-        uint8_t *img_data = stbi_load(full_path.c_str(), &x, &y, &n, 4);
-        host_tex_data.push_back(img_data);
-
-        cudaChannelFormatDesc channel_desc = cudaCreateChannelDesc<uchar4>();
-
-        cudaArray_t tex_mem;
-        REQ_CUDA(cudaMallocArray(&tex_mem, &channel_desc, x, y,
-                                 cudaArrayDefault));
-
-        REQ_CUDA(cudaMemcpy2DToArrayAsync(tex_mem, 0, 0, img_data,
-            4 * x, 4 * x, y, cudaMemcpyHostToDevice, cpy_strm)); 
-
-        cudaResourceDesc res_desc {};
-        res_desc.resType = cudaResourceTypeArray;
-        res_desc.res.array.array = tex_mem;
-
-        cudaTextureDesc tex_desc {};
-        tex_desc.addressMode[0] = cudaAddressModeWrap;
-        tex_desc.addressMode[1] = cudaAddressModeWrap;
-        tex_desc.filterMode = cudaFilterModeLinear;
-        tex_desc.readMode = cudaReadModeNormalizedFloat;
-        tex_desc.normalizedCoords = true;
-        tex_desc.sRGB = true;
-
-        cudaTextureObject_t tex_obj;
-        REQ_CUDA(cudaCreateTextureObject(&tex_obj, &res_desc, &tex_desc,
-                                         nullptr));
-
-        gpu_textures.push_back({
-            tex_mem,
-            tex_obj,
-        });
-    }
-
-    REQ_CUDA(cudaStreamSynchronize(cpy_strm));
-
-    for (uint8_t *ptr : host_tex_data) {
-        stbi_image_free(ptr);
-    }
-
-    return gpu_textures;
-}
-
 shared_ptr<Scene> OptixLoader::loadScene(SceneLoadData &&load_info)
 {
-    auto textures = loadTextures(load_info.textureInfo, stream_);
+    auto textures = texture_mgr_.load(load_info.textureInfo, stream_);
 
     size_t texture_ptr_offset = alignOffset(load_info.hdr.totalBytes, 16);
     size_t texture_ptr_bytes = textures.size() * sizeof(cudaTextureObject_t);
@@ -370,7 +461,7 @@ shared_ptr<Scene> OptixLoader::loadScene(SceneLoadData &&load_info)
     vector<cudaTextureObject_t> texture_hdls;
     texture_hdls.reserve(textures.size());
     for (uint32_t tex_idx = 0; tex_idx < textures.size(); tex_idx++) {
-        const auto &tex_hdl = textures[tex_idx].hdl;
+        const auto &tex_hdl = textures[tex_idx].getHandle();
         texture_hdls[tex_idx] = tex_hdl;
     }
 
