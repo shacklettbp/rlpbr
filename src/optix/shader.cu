@@ -3,8 +3,19 @@
 #include "shader.hpp"
 
 #include <optix.h>
-#include <cuda/std/tuple>
 #include <math_constants.h>
+
+#if __CUDACC_VER_MAJOR__ >= 11 && __CUDACC_VER_MINOR__ >= 2
+#include <cuda/std/tuple>
+#else
+
+template <typename X, typename Y>
+struct pair {
+  X first;
+  Y second;
+};
+
+#endif
 
 #define INV_PI (1.f / CUDART_PI_F)
 
