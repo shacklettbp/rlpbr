@@ -96,6 +96,12 @@ public:
 
     inline void setCameraView(const glm::vec3 &eye, const glm::vec3 &target,
                               const glm::vec3 &up);
+
+    inline void setCameraView(const glm::vec3 &position,
+                              const glm::vec3 &fwd,
+                              const glm::vec3 &up,
+                              const glm::vec3 &right);
+
     inline void setCameraView(const glm::mat4 &camera_to_world);
 
     uint32_t addLight(const glm::vec3 &position, const glm::vec3 &color);

@@ -158,6 +158,14 @@ void Environment::setCameraView(const glm::mat4 &camera_to_world)
     camera_.updateView(camera_to_world);
 }
 
+void Environment::setCameraView(const glm::vec3 &position,
+                                const glm::vec3 &fwd,
+                                const glm::vec3 &up,
+                                const glm::vec3 &right)
+{
+    camera_.updateView(position, fwd, up, right);
+}
+
 const std::shared_ptr<Scene> Environment::getScene() const
 {
     return scene_;
