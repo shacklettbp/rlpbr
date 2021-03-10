@@ -1,7 +1,7 @@
 #pragma once
 
 #include <rlpbr/config.hpp>
-#include <rlpbr_backend/common.hpp>
+#include <rlpbr_core/common.hpp>
 
 #include "scene.hpp"
 #include "shader.hpp"

@@ -117,6 +117,12 @@ public:
     inline const std::vector<std::vector<uint32_t>> &
         getMaterials() const;
 
+    inline uint32_t getNumInstances() const;
+
+    inline bool isDirty() const;
+    inline void setDirty();
+    inline void clearDirty();
+
 private:
     Environment(EnvironmentImpl &&backend,
                 const std::shared_ptr<Scene> &scene,
@@ -137,6 +143,8 @@ private:
     std::vector<uint32_t> free_light_ids_;
     std::vector<uint32_t> light_ids_;
     std::vector<uint32_t> light_reverse_ids_;
+
+    bool dirty_;
 };
 
 }

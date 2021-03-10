@@ -1214,5 +1214,25 @@ inline float3 cross(float3 a, float3 b)
     return make_float3(a.y*b.z - a.z*b.y, a.z*b.x - a.x*b.z, a.x*b.y - a.y*b.x);
 }
 
+inline float lerp(float a, float b, float t)
+{
+    return a + t * (b - a);
+}
+
+inline float2 lerp(float2 a, float2 b, float t)
+{
+    return a + t * (b - a);
+}
+
+inline float3 lerp(float3 a, float3 b, float t)
+{
+    return a + t * (b - a);
+}
+
+inline float4 lerp(float4 a, float4 b, float t)
+{
+    return a + t * (b - a);
+}
+
 }
 }

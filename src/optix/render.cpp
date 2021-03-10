@@ -1,7 +1,7 @@
 #include "render.hpp"
 #include "config.hpp"
 #include "utils.hpp"
-#include <rlpbr_backend/utils.hpp>
+#include <rlpbr_core/utils.hpp>
 
 #include <cuda_runtime.h>
 #include <nvrtc.h>
@@ -152,6 +152,7 @@ static Pipeline buildPipeline(OptixDeviceContext ctx, const RenderConfig &cfg,
         string("-DENV_PTR=(") +
                to_string((uintptr_t)base_buffers.envs) + "ul)",
         string("-DZSOBOL_SAMPLING"),
+        string("-DMETALLIC_ROUGHNESS"),
     };
 
     vector<char> ptx = compileToPTX(STRINGIFY(OPTIX_SHADER),

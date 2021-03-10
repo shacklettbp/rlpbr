@@ -1,5 +1,5 @@
 #include <rlpbr/preprocess.hpp>
-#include <rlpbr_backend/utils.hpp>
+#include <rlpbr_core/utils.hpp>
 
 #include <cstring>
 #include <iostream>
@@ -213,42 +213,117 @@ static ProcessedGeometry<VertexType> processGeometry(
 static MaterialMetadata stageMaterials(const vector<Material> &materials,
                                        const string &texture_dir)
 {
-    vector<string> albedo_textures;
-    unordered_map<string, size_t> albedo_tracker;
+    vector<string> diffuse_textures;
+    // Specular textures are used for metallic / roughness
+    vector<string> specular_textures;
+    unordered_map<string, size_t> tracker;
 
-    vector<MaterialParams> params;
-    params.reserve(materials.size());
+    vector<MetallicRoughnessParams> mr_params;
+    vector<SpecularGlossinessParams> sg_params;
+    vector<pair<uint32_t, uint32_t>> sg_indices;
 
     for (const Material &material : materials) {
-        uint32_t albedo_idx = -1;
-        if (!material.albedoName.empty()) {
-            auto [iter, inserted] =
-                albedo_tracker.emplace(material.albedoName,
-                                       albedo_textures.size());
+        if (material.materialModel == MaterialModelType::MetallicRoughness) {
+            uint32_t base_color_idx = -1;
+            if (!material.baseColorTexture.empty()) {
+                auto [iter, inserted] =
+                    tracker.emplace(material.baseColorTexture,
+                                    diffuse_textures.size());
 
-            if (inserted) {
-                albedo_textures.emplace_back(material.albedoName);
+                if (inserted) {
+                    diffuse_textures.emplace_back(material.baseColorTexture);
+                }
+
+                base_color_idx = iter->second;
             }
 
-            albedo_idx = iter->second;
-        }
+            uint32_t mr_idx = -1;
+            if (!material.metallicRoughnessTexture.empty()) {
+                auto [iter, inserted] =
+                    tracker.emplace(material.metallicRoughnessTexture,
+                                    specular_textures.size());
 
-        params.push_back({
-            material.baseAlbedo,
-            material.roughness,
-            {
-                albedo_idx,
-                0, 0, 0
-            },
-        });
+                if (inserted) {
+                    specular_textures.emplace_back(material.metallicRoughnessTexture);
+                }
+
+                mr_idx = iter->second;
+            }
+
+            mr_params.emplace_back(MetallicRoughnessParams {
+                material.baseColor,
+                material.baseMetallic,
+                material.baseRoughness,
+                base_color_idx,
+                mr_idx,
+            });
+        } else if (material.materialModel == 
+                   MaterialModelType::SpecularGlossiness) {
+            uint32_t diffuse_idx = -1;
+            if (!material.diffuseTexture.empty()) {
+                auto [iter, inserted] =
+                    tracker.emplace(material.diffuseTexture,
+                                    diffuse_textures.size());
+
+                if (inserted) {
+                    diffuse_textures.emplace_back(material.diffuseTexture);
+                }
+
+                diffuse_idx = iter->second;
+            }
+
+            uint32_t specular_idx = -1;
+            if (!material.specularTexture.empty()) {
+                auto [iter, inserted] =
+                    tracker.emplace(material.specularTexture,
+                                    specular_textures.size());
+
+                if (inserted) {
+                    specular_textures.emplace_back(material.specularTexture);
+                }
+
+                specular_idx = iter->second;
+            }
+
+            sg_params.emplace_back(SpecularGlossinessParams {
+                glm::vec4(material.baseDiffuse, 0),
+                glm::vec4(material.baseSpecular, material.baseShininess),
+            });
+
+            sg_indices.emplace_back(diffuse_idx, specular_idx);
+        }
+    }
+
+    // Diffuse and "specular" textures share indexing. Reindex the
+    // specular textures after diffuse.
+    for (auto &param : mr_params) {
+        if (param.roughnessMetallicIdx != uint32_t(-1)) {
+            param.roughnessMetallicIdx += diffuse_textures.size();
+        }
+    }
+
+    for (int i = 0; i < (int)sg_params.size(); i++) {
+        auto [diffuse_idx, specular_idx] = sg_indices[i];
+
+        specular_idx += diffuse_textures.size();
+
+        uint32_t merged_idx = diffuse_idx | ((0xFFFF & specular_idx) << 16);
+        memcpy(&sg_params[i].baseDiffuseAndIndices.w, &merged_idx, 4);
+    }
+
+    if (mr_params.size() > 0 && sg_params.size() > 0) {
+        cerr << "Only one material model in a scene is supported" << endl;
+        abort();
     }
 
     return {
         {
             texture_dir,
-            move(albedo_textures),
+            move(diffuse_textures),
+            move(specular_textures),
         },
-        move(params),
+        move(mr_params),
+        move(sg_params),
     };
 }
 
@@ -291,13 +366,25 @@ void ScenePreprocessor::dump(string_view out_path_name)
         hdr.numMeshes = geometry.meshInfos.size();
         hdr.numVertices = geometry.totalVertices;
         hdr.numIndices = geometry.totalIndices;
-        hdr.numMaterials = material_metadata.params.size();
+
+        size_t bytes_per_param;
+        if (material_metadata.metallicRoughness.size() > 0) {
+            hdr.numMaterials = material_metadata.metallicRoughness.size();
+            bytes_per_param = sizeof(MetallicRoughnessParams);
+            hdr.materialModel =
+                static_cast<uint32_t>(MaterialModelType::MetallicRoughness);
+        } else {
+            hdr.numMaterials = material_metadata.specularGlossiness.size();
+            bytes_per_param = sizeof(SpecularGlossinessParams);
+            hdr.materialModel = 
+                static_cast<uint32_t>(MaterialModelType::SpecularGlossiness);
+        }
 
         hdr.indexOffset = align_offset(vertex_bytes);
         hdr.materialOffset = align_offset(hdr.indexOffset + index_bytes);
 
         hdr.totalBytes =
-            hdr.materialOffset + hdr.numMaterials * sizeof(MaterialParams);
+            hdr.materialOffset + hdr.numMaterials * bytes_per_param;
 
         return hdr;
     };
@@ -324,8 +411,18 @@ void ScenePreprocessor::dump(string_view out_path_name)
         }
 
         write_pad(256);
-        out.write(reinterpret_cast<const char *>(materials.params.data()),
-            materials.params.size() * sizeof(MaterialParams));
+        if (MaterialModelType(hdr.materialModel) ==
+            MaterialModelType::MetallicRoughness) {
+            out.write(reinterpret_cast<const char *>(
+                    materials.metallicRoughness.data()),
+                    materials.metallicRoughness.size() *
+                    sizeof(MetallicRoughnessParams));
+        } else {
+            out.write(reinterpret_cast<const char *>(
+                    materials.specularGlossiness.data()),
+                    materials.specularGlossiness.size() *
+                    sizeof(SpecularGlossinessParams));
+        }
 
         assert(out.tellp() == int64_t(hdr.totalBytes + stage_beginning));
     };
@@ -348,8 +445,13 @@ void ScenePreprocessor::dump(string_view out_path_name)
         out.write(relative_path_str.data(),
                   relative_path_str.size());
         out.put(0);
-        write(uint32_t(metadata.textureInfo.albedo.size()));
-        for (const auto &tex_name : metadata.textureInfo.albedo) {
+        write(uint32_t(metadata.textureInfo.diffuse.size()));
+        for (const auto &tex_name : metadata.textureInfo.diffuse) {
+            out.write(tex_name.data(), tex_name.size());
+            out.put(0);
+        }
+        write(uint32_t(metadata.textureInfo.specular.size()));
+        for (const auto &tex_name : metadata.textureInfo.specular) {
             out.write(tex_name.data(), tex_name.size());
             out.put(0);
         }

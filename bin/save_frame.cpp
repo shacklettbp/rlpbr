@@ -35,11 +35,12 @@ void saveFrame(const char *fname, const half *dev_ptr,
     vector<uint8_t> sdr_buffer(buffer.size());
     for (unsigned i = 0; i < buffer.size(); i++) {
         half v = buffer[i];
+        assert(v >= 0);
         float f = v / (v + 1.f);
         f = powf(f, 1.f/2.2f);
-        if (f < 0) f = half(0.f);
-        if (f > 1) f = half(1.f);
-        sdr_buffer[i] = f * 255;
+        if (f < 0) f = 0.f;
+        if (f > 1) f = 1.f;
+        sdr_buffer[i] = uint8_t(f * 255.f);
     }
 
     stbi_write_bmp(fname, width, height, num_channels, sdr_buffer.data());
@@ -73,9 +74,9 @@ int main(int argc, char *argv[]) {
     auto scene = loader.loadScene(argv[1]);
     vector<Environment> envs;
 
-    glm::vec3 eye(-1.289646, 1.159879, -1.150437);
-    glm::vec3 look(-0.933010, 0.888357, -0.256520);
-    glm::vec3 up(0.109443, 0.962389, 0.248656);
+    glm::vec3 eye(12.796778, 1.331334, -0.135939);
+    glm::vec3 look(12.622172, 1.227377, 0.843202);
+    glm::vec3 up(-0.101932, 0.990977, 0.087038);
 
     glm::vec3 to_look = look - eye;
     
@@ -86,6 +87,10 @@ int main(int argc, char *argv[]) {
         envs.emplace_back(renderer.makeEnvironment(scene, 
             eye, eye + r * to_look, up, 60.f));
     }
+    envs.back().addLight(glm::vec3(-1.950218, 1.623819, 0.863453), glm::vec3(10.f));
+    envs.back().addLight(glm::vec3(1.762336, 1.211801, -4.574429), glm::vec3(10.f));
+    envs.back().addLight(glm::vec3(8.107919, 1.345027, -1.867001), glm::vec3(10.f));
+    envs.back().addLight(glm::vec3(12.499360, 2.102839, 1.691340), glm::vec3(10.f));
 
     renderer.render(envs.data());
     renderer.waitForFrame();

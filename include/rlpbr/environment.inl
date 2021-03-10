@@ -193,4 +193,24 @@ const std::vector<std::vector<uint32_t>> &
     return materials_;
 }
 
+uint32_t Environment::getNumInstances() const
+{
+    return index_map_.size();
+}
+
+bool Environment::isDirty() const
+{
+    return dirty_;
+}
+
+void Environment::setDirty()
+{
+    dirty_ = true;
+}
+
+void Environment::clearDirty()
+{
+    dirty_ = false;
+}
+
 }

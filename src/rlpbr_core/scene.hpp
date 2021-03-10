@@ -1,7 +1,6 @@
 #pragma once
 
 #include "common.hpp"
-#include "shader.hpp"
 
 #include <glm/glm.hpp>
 
@@ -15,6 +14,30 @@
 namespace RLpbr {
 
 struct LoaderBackend;
+
+struct alignas(16) Vertex {
+    glm::vec3 position;
+    glm::vec3 normal;
+    glm::vec2 uv;
+};
+
+enum class MaterialModelType : uint32_t {
+    MetallicRoughness,
+    SpecularGlossiness,
+};
+
+struct alignas(16) MetallicRoughnessParams {
+    glm::vec3 baseColor;
+    float baseMetallic;
+    float baseRoughness;
+    uint32_t colorIdx;
+    uint32_t roughnessMetallicIdx;
+};
+
+struct alignas(16) SpecularGlossinessParams {
+    glm::vec4 baseDiffuseAndIndices;
+    glm::vec4 baseSpecularGlossiness;
+};
 
 struct InstanceProperties {
     uint32_t meshIndex;
@@ -50,12 +73,14 @@ struct MeshInfo {
 
 struct TextureInfo {
     std::string textureDir;
-    std::vector<std::string> albedo;
+    std::vector<std::string> diffuse;
+    std::vector<std::string> specular;
 };
 
 struct MaterialMetadata {
     TextureInfo textureInfo;
-    std::vector<MaterialParams> params;
+    std::vector<MetallicRoughnessParams> metallicRoughness;
+    std::vector<SpecularGlossinessParams> specularGlossiness;
 };
 
 struct StagingHeader {
@@ -68,6 +93,8 @@ struct StagingHeader {
     uint64_t materialOffset;
     
     uint64_t totalBytes;
+
+    uint32_t materialModel; 
 };
 
 struct SceneLoadData {

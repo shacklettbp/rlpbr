@@ -1,7 +1,6 @@
 #include "scene.hpp"
 #include "utils.hpp"
 
-#include <rlpbr_backend/shader.hpp>
 #include <optix_stubs.h>
 #include <iostream>
 
@@ -74,8 +73,10 @@ void TextureManager::decrementTextureRef(const TextureRefType &tex_ref)
 }
 
 static tuple<cudaArray_t, cudaTextureObject_t, uint8_t *> loadTexture(
-    const string &tex_path, cudaStream_t cpy_strm)
+    const string &tex_path, cudaStream_t cpy_strm, bool specular)
 {
+    (void)specular; // FIXME does this actually need different loading code
+
     int x, y, n;
     uint8_t *img_data = stbi_load(tex_path.c_str(), &x, &y, &n, 4);
 
@@ -113,48 +114,55 @@ static tuple<cudaArray_t, cudaTextureObject_t, uint8_t *> loadTexture(
 vector<Texture> TextureManager::load(
     const TextureInfo &tex_info, cudaStream_t cpy_strm)
 {
+    size_t num_textures = tex_info.diffuse.size() + tex_info.specular.size();
     vector<uint8_t *> host_tex_data;
-    host_tex_data.reserve(tex_info.albedo.size());
+    host_tex_data.reserve(num_textures);
 
     vector<Texture> gpu_textures;
-    gpu_textures.reserve(tex_info.albedo.size());
+    gpu_textures.reserve(num_textures);
 
-    for (const auto &tex_name : tex_info.albedo) {
-        string full_path = tex_info.textureDir + tex_name;
-
-        cache_lock_.lock();
-        auto iter = loaded_.find(full_path);
-
-        if (iter == loaded_.end()) {
-            cache_lock_.unlock();
-
-            auto [tex_mem, tex_hdl, host_ptr] =
-                loadTexture(full_path, cpy_strm);
-            host_tex_data.push_back(host_ptr);
+    auto loadTextures = [&](const vector<string> &texture_names,
+                            bool specular) {
+        for (const auto &tex_name : texture_names) {
+            string full_path = tex_info.textureDir + tex_name;
 
             cache_lock_.lock();
+            auto iter = loaded_.find(full_path);
 
-            auto res = loaded_.emplace(piecewise_construct,
-                                       forward_as_tuple(full_path),
-                                       forward_as_tuple(tex_mem, tex_hdl));
-            iter = res.first;
-            iter->second.refCount.fetch_add(1, memory_order_acq_rel);
+            if (iter == loaded_.end()) {
+                cache_lock_.unlock();
 
-            cache_lock_.unlock();
+                auto [tex_mem, tex_hdl, host_ptr] =
+                    loadTexture(full_path, cpy_strm, specular);
+                host_tex_data.push_back(host_ptr);
 
-            if (!res.second) {
-                cudaDestroyTextureObject(tex_hdl);
-                cudaFreeArray(tex_mem);
+                cache_lock_.lock();
+
+                auto res = loaded_.emplace(piecewise_construct,
+                                           forward_as_tuple(full_path),
+                                           forward_as_tuple(tex_mem, tex_hdl));
+                iter = res.first;
+                iter->second.refCount.fetch_add(1, memory_order_acq_rel);
+
+                cache_lock_.unlock();
+
+                if (!res.second) {
+                    cudaDestroyTextureObject(tex_hdl);
+                    cudaFreeArray(tex_mem);
+                }
+
+            } else {
+                iter->second.refCount.fetch_add(1, memory_order_acq_rel);
+
+                cache_lock_.unlock();
             }
 
-        } else {
-            iter->second.refCount.fetch_add(1, memory_order_acq_rel);
-
-            cache_lock_.unlock();
+            gpu_textures.emplace_back(*this, iter, iter->second.hdl);
         }
+    };
 
-        gpu_textures.emplace_back(*this, iter, iter->second.hdl);
-    }
+    loadTextures(tex_info.diffuse, false);
+    loadTextures(tex_info.specular, true);
 
     REQ_CUDA(cudaStreamSynchronize(cpy_strm));
 
@@ -187,6 +195,94 @@ static void assignInstanceTransform(OptixInstance &inst,
             inst.transform[row * 4 + col] = mat[col][row];
         }
     }
+}
+
+static pair<TLAS, TLASIntermediate> buildTLAS(
+    OptixDeviceContext ctx,
+    const vector<vector<glm::mat4x3>> &instance_transforms,
+    uint32_t num_instances,
+    const vector<MeshInfo> &mesh_infos,
+    const OptixTraversableHandle *blases,
+    cudaStream_t build_stream,
+    bool update = false,
+    void *tlas_storage = nullptr,
+    OptixTraversableHandle tlas_hdl = 0)
+{
+    OptixInstance *instance_ptr;
+    REQ_CUDA(cudaHostAlloc(&instance_ptr, sizeof(OptixInstance) * num_instances,
+                           cudaHostAllocMapped));
+
+    OptixTraversableHandle *instance_blases;
+    REQ_CUDA(cudaHostAlloc(&instance_blases,
+                           sizeof(OptixTraversableHandle) * num_instances,
+                           cudaHostAllocMapped));
+
+    uint32_t cur_instance_idx = 0;
+    for (uint32_t model_idx = 0; model_idx < instance_transforms.size();
+         model_idx++) {
+        const auto &model_instances = instance_transforms[model_idx];
+        for (const glm::mat4x3 &txfm : model_instances) {
+            OptixInstance &cur_inst = instance_ptr[cur_instance_idx];
+
+            assignInstanceTransform(cur_inst, txfm);
+            cur_inst.instanceId = mesh_infos[model_idx].indexOffset;
+            cur_inst.sbtOffset = 0;
+            cur_inst.visibilityMask = 0xff;
+            cur_inst.flags = 0;
+            cur_inst.traversableHandle = blases[model_idx];
+
+            instance_blases[cur_instance_idx] = blases[model_idx];
+
+            cur_instance_idx++;
+        }
+    }
+
+    OptixBuildInput tlas_build {};
+    tlas_build.type = OPTIX_BUILD_INPUT_TYPE_INSTANCES;
+    OptixBuildInputInstanceArray &tlas_instances = tlas_build.instanceArray;
+    tlas_instances.instances = (CUdeviceptr)instance_ptr;
+    tlas_instances.numInstances = num_instances;
+
+    OptixAccelBuildOptions tlas_options;
+    tlas_options.buildFlags = OPTIX_BUILD_FLAG_PREFER_FAST_TRACE | OPTIX_BUILD_FLAG_ALLOW_UPDATE;
+    tlas_options.motionOptions = {};
+
+    if (update) {
+        tlas_options.operation = OPTIX_BUILD_OPERATION_UPDATE;
+    } else {
+        tlas_options.operation = OPTIX_BUILD_OPERATION_BUILD;
+    }
+
+
+    OptixAccelBufferSizes tlas_buffer_sizes;
+    REQ_OPTIX(optixAccelComputeMemoryUsage(ctx, &tlas_options, &tlas_build, 1,
+                                           &tlas_buffer_sizes));
+
+    if (tlas_storage == nullptr) {
+        REQ_CUDA(cudaMalloc(&tlas_storage, tlas_buffer_sizes.outputSizeInBytes));
+    }
+    void *scratch_storage;
+    REQ_CUDA(cudaMalloc(&scratch_storage, update ? tlas_buffer_sizes.tempUpdateSizeInBytes : tlas_buffer_sizes.tempSizeInBytes));
+
+    REQ_OPTIX(optixAccelBuild(ctx, build_stream, &tlas_options, &tlas_build,
+        1, (CUdeviceptr)scratch_storage,
+        update ? tlas_buffer_sizes.tempUpdateSizeInBytes :
+                 tlas_buffer_sizes.tempSizeInBytes,
+        (CUdeviceptr)tlas_storage, tlas_buffer_sizes.outputSizeInBytes, &tlas_hdl,
+        nullptr, 0));
+
+    return {
+        TLAS {
+            tlas_hdl,
+            (CUdeviceptr)tlas_storage,
+            tlas_buffer_sizes.outputSizeInBytes,
+            instance_blases,
+        },
+        TLASIntermediate {
+            instance_ptr,
+            scratch_storage,
+        },
+    };
 }
 
 OptixEnvironment OptixEnvironment::make(OptixDeviceContext ctx,
@@ -243,14 +339,37 @@ OptixEnvironment::~OptixEnvironment()
 uint32_t OptixEnvironment::addLight(const glm::vec3 &position,
                   const glm::vec3 &color)
 {
-    (void)position;
-    (void)color;
-    return 0;
+    PackedLight packed;
+    packed.data[0].x = color.r;
+    packed.data[0].y = color.g;
+    packed.data[0].z = color.b;
+    packed.data[0].w = position.x;
+    packed.data[1].x = position.y;
+    packed.data[1].y = position.z;
+
+    lights.push_back(packed);
+
+    return lights.size() - 1;
 }
 
 void OptixEnvironment::removeLight(uint32_t light_idx)
 {
-    (void)light_idx;
+    lights[light_idx] = lights.back();
+
+    lights.pop_back();
+}
+
+TLASIntermediate OptixEnvironment::queueTLASRebuild(const Environment &env,
+                                        OptixDeviceContext ctx, cudaStream_t strm)
+{
+    const OptixScene &scene = 
+        *static_cast<const OptixScene *>(env.getScene().get());
+
+    auto [new_tlas, tlas_inter] = buildTLAS(ctx, env.getTransforms(),
+        env.getNumInstances(), scene.meshInfo,
+        scene.blases.data(), strm, true, (void *)tlasStorage, tlas);
+
+    return tlas_inter;
 }
 
 OptixLoader::OptixLoader(OptixDeviceContext ctx, TextureManager &texture_mgr)
@@ -263,92 +382,10 @@ OptixLoader::OptixLoader(OptixDeviceContext ctx, TextureManager &texture_mgr)
       texture_mgr_(texture_mgr)
 {}
 
-struct TLASIntermediate {
-    void *instanceTransforms;
-    void *buildScratch;
-};
-
-static void freeTLASIntermediate(TLASIntermediate &&inter)
+void TLASIntermediate::free()
 {
-    REQ_CUDA(cudaFreeHost(inter.instanceTransforms));
-    REQ_CUDA(cudaFree(inter.buildScratch));
-}
-
-static pair<TLAS, TLASIntermediate> buildTLAS(
-    OptixDeviceContext ctx,
-    const vector<vector<glm::mat4x3>> &instance_transforms,
-    uint32_t num_instances,
-    const vector<MeshInfo> &mesh_infos,
-    OptixTraversableHandle *blases,
-    cudaStream_t build_stream)
-{
-    OptixInstance *instance_ptr;
-    REQ_CUDA(cudaHostAlloc(&instance_ptr, sizeof(OptixInstance) * num_instances,
-                           cudaHostAllocMapped));
-
-    OptixTraversableHandle *instance_blases;
-    REQ_CUDA(cudaHostAlloc(&instance_blases,
-                           sizeof(OptixTraversableHandle) * num_instances,
-                           cudaHostAllocMapped));
-
-    uint32_t cur_instance_idx = 0;
-    for (uint32_t model_idx = 0; model_idx < instance_transforms.size();
-         model_idx++) {
-        const auto &model_instances = instance_transforms[model_idx];
-        for (const glm::mat4x3 &txfm : model_instances) {
-            OptixInstance &cur_inst = instance_ptr[cur_instance_idx];
-
-            assignInstanceTransform(cur_inst, txfm);
-            cur_inst.instanceId = mesh_infos[model_idx].indexOffset;
-            cur_inst.sbtOffset = 0;
-            cur_inst.visibilityMask = 0xff;
-            cur_inst.flags = 0;
-            cur_inst.traversableHandle = blases[model_idx];
-
-            instance_blases[cur_instance_idx] = blases[model_idx];
-
-            cur_instance_idx++;
-        }
-    }
-
-    OptixBuildInput tlas_build {};
-    tlas_build.type = OPTIX_BUILD_INPUT_TYPE_INSTANCES;
-    OptixBuildInputInstanceArray &tlas_instances = tlas_build.instanceArray;
-    tlas_instances.instances = (CUdeviceptr)instance_ptr;
-    tlas_instances.numInstances = num_instances;
-
-    OptixAccelBuildOptions tlas_options;
-    tlas_options.buildFlags = OPTIX_BUILD_FLAG_PREFER_FAST_TRACE;
-    tlas_options.motionOptions = {};
-    tlas_options.operation = OPTIX_BUILD_OPERATION_BUILD;
-
-    OptixAccelBufferSizes tlas_buffer_sizes;
-    REQ_OPTIX(optixAccelComputeMemoryUsage(ctx, &tlas_options, &tlas_build, 1,
-                                           &tlas_buffer_sizes));
-
-    void *tlas_storage;
-    REQ_CUDA(cudaMalloc(&tlas_storage, tlas_buffer_sizes.outputSizeInBytes));
-    void *scratch_storage;
-    REQ_CUDA(cudaMalloc(&scratch_storage, tlas_buffer_sizes.tempSizeInBytes));
-
-    OptixTraversableHandle tlas;
-    REQ_OPTIX(optixAccelBuild(ctx, build_stream, &tlas_options, &tlas_build,
-        1, (CUdeviceptr)scratch_storage, tlas_buffer_sizes.tempSizeInBytes,
-        (CUdeviceptr)tlas_storage, tlas_buffer_sizes.outputSizeInBytes, &tlas,
-        nullptr, 0));
-
-    return {
-        TLAS {
-            tlas,
-            (CUdeviceptr)tlas_storage,
-            tlas_buffer_sizes.outputSizeInBytes,
-            instance_blases,
-        },
-        TLASIntermediate {
-            instance_ptr,
-            scratch_storage,
-        },
-    };
+    REQ_CUDA(cudaFreeHost(instanceTransforms));
+    REQ_CUDA(cudaFree(buildScratch));
 }
 
 shared_ptr<Scene> OptixLoader::loadScene(SceneLoadData &&load_info)
@@ -471,7 +508,7 @@ shared_ptr<Scene> OptixLoader::loadScene(SceneLoadData &&load_info)
                     cudaMemcpyHostToDevice, stream_);
 
     REQ_CUDA(cudaStreamSynchronize(stream_));
-    freeTLASIntermediate(move(tlas_inter));
+    tlas_inter.free();
     
     if (cuda_staging) {
         REQ_CUDA(cudaFreeHost(data_src));

@@ -54,13 +54,22 @@ SceneLoadData SceneLoadData::loadFromDisk(string_view scene_path_name)
     textures.textureDir = scene_dir / name_buffer.data();
     name_buffer.clear();
 
-    uint32_t num_textures = read_uint();
-    for (uint32_t tex_idx = 0; tex_idx < num_textures; tex_idx++) {
+    uint32_t num_diffuse = read_uint();
+    for (uint32_t tex_idx = 0; tex_idx < num_diffuse; tex_idx++) {
         do {
             name_buffer.push_back(scene_file.get());
         } while (name_buffer.back() != 0);
 
-        textures.albedo.emplace_back(name_buffer.data());
+        textures.diffuse.emplace_back(name_buffer.data());
+        name_buffer.clear();
+    }
+    uint32_t num_specular = read_uint();
+    for (uint32_t tex_idx = 0; tex_idx < num_specular; tex_idx++) {
+        do {
+            name_buffer.push_back(scene_file.get());
+        } while (name_buffer.back() != 0);
+
+        textures.specular.emplace_back(name_buffer.data());
         name_buffer.clear();
     }
 

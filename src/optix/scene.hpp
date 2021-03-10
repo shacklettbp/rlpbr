@@ -1,9 +1,8 @@
 #pragma once
 
-#include <rlpbr_backend/common.hpp>
-#include <rlpbr_backend/scene.hpp>
-#include <rlpbr_backend/utils.hpp>
-#include <rlpbr_backend/shader.hpp>
+#include <rlpbr_core/common.hpp>
+#include <rlpbr_core/scene.hpp>
+#include <rlpbr_core/utils.hpp>
 
 #include "shader.hpp"
 
@@ -65,6 +64,13 @@ private:
     friend class Texture;
 };
 
+struct TLASIntermediate {
+    void *instanceTransforms;
+    void *buildScratch;
+
+    void free();
+};
+
 struct TLAS {
     OptixTraversableHandle hdl;
     CUdeviceptr storage;
@@ -104,6 +110,9 @@ public:
                       const glm::vec3 &color);
 
     void removeLight(uint32_t light_idx);
+
+    TLASIntermediate queueTLASRebuild(const Environment &env, OptixDeviceContext ctx,
+                          cudaStream_t strm);
 
     CUdeviceptr tlasStorage;
     OptixTraversableHandle tlas;

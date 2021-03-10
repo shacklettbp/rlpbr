@@ -1,7 +1,7 @@
 #include <rlpbr.hpp>
-#include <rlpbr_backend/common.hpp>
-#include <rlpbr_backend/scene.hpp>
-#include <rlpbr_backend/utils.hpp>
+#include <rlpbr_core/common.hpp>
+#include <rlpbr_core/scene.hpp>
+#include <rlpbr_core/utils.hpp>
 
 #include "optix/render.hpp"
 
@@ -123,7 +123,8 @@ Environment::Environment(EnvironmentImpl &&backend,
       free_ids_(),
       free_light_ids_(),
       light_ids_(scene_->envInit.lightIDs),
-      light_reverse_ids_(scene_->envInit.lightReverseIDs)
+      light_reverse_ids_(scene_->envInit.lightReverseIDs),
+      dirty_(false)
 {
     // FIXME use EnvironmentInit lights
 }

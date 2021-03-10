@@ -1,7 +1,7 @@
 #include "gltf.hpp"
 #include "import.hpp"
 
-#include <rlpbr_backend/utils.hpp>
+#include <rlpbr_core/utils.hpp>
 #include <glm/glm.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #include <glm/gtx/transform.hpp>
@@ -211,14 +211,40 @@ GLTFScene gltfLoad(filesystem::path gltf_path) noexcept
         for (const auto &material : scene.root["materials"]) {
             const auto &pbr = material["pbrMetallicRoughness"];
             simdjson::dom::element base_tex;
-            // FIXME assumes tex coord 0
-            uint64_t tex_idx;
-            auto tex_err = pbr["baseColorTexture"]["index"].get(tex_idx);
-            if (tex_err) {
-                tex_idx = scene.textures.size();
+            uint64_t base_color_idx;
+            auto color_tex_err = pbr["baseColorTexture"]["index"].get(
+                base_color_idx);
+            if (color_tex_err) {
+                base_color_idx = scene.textures.size();
             }
 
-            glm::vec4 base_color(0.f);
+            uint64_t metallic_roughness_idx;
+            auto mr_tex_err = pbr["metallicRoughnessTexture"]["index"].get(
+                metallic_roughness_idx);
+            if (mr_tex_err) {
+                metallic_roughness_idx = scene.textures.size();
+            }
+
+            uint64_t bc_coord;
+            auto bc_coord_err = pbr["baseColorTexture"]["texCoord"].get(
+                bc_coord);
+            if (bc_coord_err) {
+                bc_coord = 0;
+            }
+
+            uint64_t mr_coord;
+            auto mr_coord_err = pbr["metallicRoughnessTexture"]["texCoord"].get(
+                mr_coord);
+            if (mr_coord_err) {
+                mr_coord = 0;
+            }
+
+            if (bc_coord != 0 || mr_coord != 0) {
+                cerr << "Multiple UVs not supported" << endl;
+                abort();
+            }
+
+            glm::vec4 base_color(1.f);
             simdjson::dom::array base_color_json;
             auto color_err = pbr["baseColorFactor"].get(base_color_json);
             if (!color_err) {                       
@@ -242,10 +268,17 @@ GLTFScene gltfLoad(filesystem::path gltf_path) noexcept
             }
 
             scene.materials.push_back(GLTFMaterial {
-                static_cast<uint32_t>(tex_idx),
+                false,
+                uint32_t(base_color_idx),
+                uint32_t(metallic_roughness_idx),
                 base_color,
                 static_cast<float>(metallic),
                 static_cast<float>(roughness),
+                uint32_t(-1),
+                uint32_t(-1),
+                glm::vec3(),
+                glm::vec3(),
+                -1,
             });
         }
 
@@ -291,6 +324,12 @@ GLTFScene gltfLoad(filesystem::path gltf_path) noexcept
             if (!color_error) {
                 color_idx = color_res;
             }
+            
+            uint64_t material_idx;
+            auto mat_error = prim["material"].get(material_idx);
+            if (mat_error) {
+                material_idx = 0;
+            }
 
             scene.meshes.push_back(GLTFMesh {
                 position_idx,
@@ -298,7 +337,7 @@ GLTFScene gltfLoad(filesystem::path gltf_path) noexcept
                 uv_idx,
                 color_idx,
                 static_cast<uint32_t>(prim["indices"].get_uint64()),
-                static_cast<uint32_t>(prim["material"].get_uint64()),
+                static_cast<uint32_t>(material_idx),
             });
         }
 
@@ -466,9 +505,7 @@ vector<MaterialType> gltfParseMaterials(const GLTFScene &scene,
 
     unordered_set<uint32_t> internal_tracker;
 
-    for (const auto &gltf_mat : scene.materials) {
-        uint32_t tex_idx = gltf_mat.textureIdx;
-
+    auto extractTex = [&](uint32_t tex_idx) {
         string tex_name = "";
         if (tex_idx < scene.textures.size()) {
             const GLTFImage &img =
@@ -499,9 +536,15 @@ vector<MaterialType> gltfParseMaterials(const GLTFScene &scene,
             }
         }
 
-        materials.push_back(MaterialType::make(
-            tex_name,
+        return tex_name;
+    };
+
+    for (const auto &gltf_mat : scene.materials) {
+        materials.push_back(MaterialType::makeMetallicRoughness(
+            extractTex(gltf_mat.baseColorIdx),
+            extractTex(gltf_mat.metallicRoughnessIdx),
             gltf_mat.baseColor,
+            gltf_mat.metallic,
             gltf_mat.roughness
         ));
     }
