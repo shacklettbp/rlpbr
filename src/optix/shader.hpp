@@ -19,8 +19,8 @@ struct PackedVertex {
 };
 
 struct PackedMaterial {
-    float4 data0;
-    uint4 data1;
+    // Actually a mix of integers and floats
+    float4 data[2];
 };
 
 struct PackedInstance {

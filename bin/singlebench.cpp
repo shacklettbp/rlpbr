@@ -72,6 +72,9 @@ int main(int argc, char *argv[]) {
     //uint32_t cur_view = 0;
 
     for (uint32_t i = 0; i < num_iters; i++) {
+        for (auto &env : envs) {
+            env.setDirty();
+        }
         renderer.render(envs.data());
         renderer.waitForFrame();
     }

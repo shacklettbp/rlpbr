@@ -1,7 +1,6 @@
 #pragma once
 
-#include <rlpbr_backend/shader.hpp>
-#include <rlpbr_backend/scene.hpp>
+#include <rlpbr_core/scene.hpp>
 
 #include <vector>
 
@@ -15,12 +14,32 @@ struct Mesh {
 };
 
 struct Material {
-    std::string albedoName;
-    glm::vec3 baseAlbedo;
-    float roughness;
+    MaterialModelType materialModel;
 
-    static Material make(const std::string_view albedo_name,
-        const glm::vec3 &color, float roughness);
+    std::string baseColorTexture;
+    std::string metallicRoughnessTexture;
+    glm::vec3 baseColor;
+    float baseMetallic;
+    float baseRoughness;
+
+    std::string diffuseTexture;
+    std::string specularTexture;
+    glm::vec3 baseDiffuse;
+    glm::vec3 baseSpecular;
+    float baseShininess;
+
+    static Material makeMetallicRoughness(
+        const std::string_view base_color_texture,
+        const std::string_view metallic_roughness_texture,
+        const glm::vec3 &base_color,
+        float base_metallic, float base_roughness);
+
+    static Material makeSpecularGlossiness(
+        const std::string_view diffuse_texture,
+        const std::string_view specular_texture,
+        const glm::vec3 &base_diffuse,
+        const glm::vec3 &base_specular,
+        float base_shininess);
 };
 
 template <typename VertexType, typename MaterialType>

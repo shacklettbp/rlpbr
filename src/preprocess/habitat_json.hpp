@@ -2,7 +2,7 @@
 
 #include "import.hpp"
 
-#include <rlpbr_backend/scene.hpp>
+#include <rlpbr_core/scene.hpp>
 
 #include <glm/glm.hpp>
 #include <simdjson.h>

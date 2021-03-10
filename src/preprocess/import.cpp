@@ -9,15 +9,43 @@ using namespace std;
 namespace RLpbr {
 namespace SceneImport {
 
-Material Material::make(const string_view albedo_name,
-    const glm::vec3 &base_albedo, float roughness)
+Material Material::makeMetallicRoughness(
+    const string_view base_color_texture,
+    const string_view metallic_roughness_texture,
+    const glm::vec3 &base_color,
+    float base_metallic, float base_roughness)
 {
-    return Material {
-        string(albedo_name),
-        base_albedo,
-        roughness,
-    };
+    Material mat {};
+
+    mat.materialModel = MaterialModelType::MetallicRoughness;
+    mat.baseColorTexture = base_color_texture;
+    mat.metallicRoughnessTexture = metallic_roughness_texture;
+    mat.baseColor = base_color;
+    mat.baseMetallic = base_metallic;
+    mat.baseRoughness = base_roughness;
+
+    return mat;
 }
+
+Material Material::makeSpecularGlossiness(
+    const string_view diffuse_texture,
+    const string_view specular_texture,
+    const glm::vec3 &base_diffuse,
+    const glm::vec3 &base_specular,
+    float base_shininess)
+{
+    Material mat {};
+
+    mat.materialModel = MaterialModelType::SpecularGlossiness;
+    mat.diffuseTexture = diffuse_texture;
+    mat.specularTexture = specular_texture;
+    mat.baseDiffuse = base_diffuse;
+    mat.baseSpecular = base_specular;
+    mat.baseShininess = base_shininess;
+
+    return mat;
+}
+
 
 static bool isGLTF(string_view gltf_path)
 {

@@ -7,7 +7,7 @@ add_library(rlpbr_preprocess SHARED
 
 target_link_libraries(rlpbr_preprocess
     PRIVATE
-        rlpbr_backend
+        rlpbr_core
         meshoptimizer
         simdjson
 )

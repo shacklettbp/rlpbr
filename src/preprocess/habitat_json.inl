@@ -17,7 +17,7 @@ HabitatJSON::Scene habitatJSONLoad(string_view scene_path_name)
     using namespace simdjson;
     using namespace HabitatJSON;
 
-    path scene_path(scene_path_name);
+    path scene_path(absolute(scene_path_name));
     path root_path = scene_path.parent_path().parent_path();
 
     path stage_dir = root_path / "stages";
@@ -61,6 +61,10 @@ HabitatJSON::Scene habitatJSONLoad(string_view scene_path_name)
             }
 
             float intensity = double(light["intensity"]);
+            if (intensity <= 0.f) {
+                cerr << "Warning: Skipping negative intensity light" << endl;
+                continue;
+            }
 
             vec_idx = 0;
             glm::vec3 color;

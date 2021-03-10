@@ -2,7 +2,7 @@
 
 #include "import.hpp"
 
-#include <rlpbr_backend/scene.hpp>
+#include <rlpbr_core/scene.hpp>
 
 #include <glm/glm.hpp>
 #include <simdjson.h>
@@ -62,10 +62,18 @@ struct GLTFTexture {
 };
 
 struct GLTFMaterial {
-    uint32_t textureIdx;
+    bool specularGlossinessExtension;
+    uint32_t baseColorIdx;
+    uint32_t metallicRoughnessIdx;
     glm::vec3 baseColor;
     float metallic;
     float roughness;
+
+    uint32_t diffuseIdx;
+    uint32_t specularIdx;
+    glm::vec3 baseDiffuse;
+    glm::vec3 baseSpecular;
+    float baseShininess;
 };
 
 struct GLTFMesh {

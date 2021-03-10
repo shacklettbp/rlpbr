@@ -12,7 +12,7 @@ add_library(rlpbr_optix SHARED
     utils.hpp utils.cpp
 )
 
-target_link_libraries(rlpbr_optix PRIVATE rlpbr_backend CUDA::nvrtc stb)
+target_link_libraries(rlpbr_optix PRIVATE rlpbr_core CUDA::nvrtc stb)
 
 target_include_directories(rlpbr_optix SYSTEM
     PUBLIC
