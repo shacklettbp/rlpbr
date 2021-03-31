@@ -5,6 +5,7 @@
 #include <iostream>
 
 #include <glm/gtc/type_ptr.hpp>
+#include <glm/gtx/string_cast.hpp>
 
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
@@ -13,166 +14,6 @@ using namespace std;
 
 namespace RLpbr {
 namespace optix {
-
-TextureBacking::TextureBacking(cudaArray_t m, cudaTextureObject_t h)
-    : mem(m),
-      hdl(h),
-      refCount(0)
-{}
-
-Texture::Texture(TextureManager &mgr, const TextureRefType &r,
-                 cudaTextureObject_t hdl)
-    : mgr_(mgr),
-      ref_(r),
-      hdl_(hdl)
-{}
-
-Texture::Texture(Texture &&o)
-    : mgr_(o.mgr_),
-      ref_(o.ref_),
-      hdl_(o.hdl_)
-{
-    o.hdl_ = 0;
-}
-
-Texture::~Texture()
-{
-    if (hdl_ == 0) return;
-    mgr_.decrementTextureRef(ref_);
-}
-
-TextureManager::TextureManager()
-    : cache_lock_(),
-      loaded_()
-{}
-
-TextureManager::~TextureManager()
-{
-    if (!loaded_.empty()) {
-        cerr << "Dangling references to textures" << endl;
-        abort();
-    }
-}
-
-void TextureManager::decrementTextureRef(const TextureRefType &tex_ref)
-{
-    TextureBacking &tex = tex_ref->second;
-
-    if (tex.refCount.fetch_sub(1, memory_order_acq_rel) == 1) {
-        cudaDestroyTextureObject(tex.hdl);
-        cudaFreeArray(tex.mem);
-
-        cache_lock_.lock();
-
-        if (tex.refCount.load(memory_order_acquire) == 0) {
-            loaded_.erase(tex_ref);
-        }
-
-        cache_lock_.unlock();
-    }
-}
-
-static tuple<cudaArray_t, cudaTextureObject_t, uint8_t *> loadTexture(
-    const string &tex_path, cudaStream_t cpy_strm, bool specular)
-{
-    (void)specular; // FIXME does this actually need different loading code
-
-    int x, y, n;
-    uint8_t *img_data = stbi_load(tex_path.c_str(), &x, &y, &n, 4);
-
-    cudaChannelFormatDesc channel_desc = cudaCreateChannelDesc<uchar4>();
-
-    cudaArray_t tex_mem;
-    REQ_CUDA(cudaMallocArray(&tex_mem, &channel_desc, x, y,
-                             cudaArrayDefault));
-
-    REQ_CUDA(cudaMemcpy2DToArrayAsync(tex_mem, 0, 0, img_data,
-        4 * x, 4 * x, y, cudaMemcpyHostToDevice, cpy_strm)); 
-
-    cudaResourceDesc res_desc {};
-    res_desc.resType = cudaResourceTypeArray;
-    res_desc.res.array.array = tex_mem;
-
-    cudaTextureDesc tex_desc {};
-    tex_desc.addressMode[0] = cudaAddressModeWrap;
-    tex_desc.addressMode[1] = cudaAddressModeWrap;
-    tex_desc.filterMode = cudaFilterModeLinear;
-    tex_desc.readMode = cudaReadModeNormalizedFloat;
-    tex_desc.normalizedCoords = true;
-    tex_desc.sRGB = true;
-
-    cudaTextureObject_t hdl;
-    REQ_CUDA(cudaCreateTextureObject(&hdl, &res_desc, &tex_desc,
-                                     nullptr));
-    return {
-        tex_mem,
-        hdl,
-        img_data,
-    };
-}
-
-vector<Texture> TextureManager::load(
-    const TextureInfo &tex_info, cudaStream_t cpy_strm)
-{
-    size_t num_textures = tex_info.diffuse.size() + tex_info.specular.size();
-    vector<uint8_t *> host_tex_data;
-    host_tex_data.reserve(num_textures);
-
-    vector<Texture> gpu_textures;
-    gpu_textures.reserve(num_textures);
-
-    auto loadTextures = [&](const vector<string> &texture_names,
-                            bool specular) {
-        for (const auto &tex_name : texture_names) {
-            string full_path = tex_info.textureDir + tex_name;
-
-            cache_lock_.lock();
-            auto iter = loaded_.find(full_path);
-
-            if (iter == loaded_.end()) {
-                cache_lock_.unlock();
-
-                auto [tex_mem, tex_hdl, host_ptr] =
-                    loadTexture(full_path, cpy_strm, specular);
-                host_tex_data.push_back(host_ptr);
-
-                cache_lock_.lock();
-
-                auto res = loaded_.emplace(piecewise_construct,
-                                           forward_as_tuple(full_path),
-                                           forward_as_tuple(tex_mem, tex_hdl));
-                iter = res.first;
-                iter->second.refCount.fetch_add(1, memory_order_acq_rel);
-
-                cache_lock_.unlock();
-
-                if (!res.second) {
-                    cudaDestroyTextureObject(tex_hdl);
-                    cudaFreeArray(tex_mem);
-                }
-
-            } else {
-                iter->second.refCount.fetch_add(1, memory_order_acq_rel);
-
-                cache_lock_.unlock();
-            }
-
-            gpu_textures.emplace_back(*this, iter, iter->second.hdl);
-        }
-    };
-
-    loadTextures(tex_info.diffuse, false);
-    loadTextures(tex_info.specular, true);
-
-    REQ_CUDA(cudaStreamSynchronize(cpy_strm));
-
-    for (uint8_t *ptr : host_tex_data) {
-        stbi_image_free(ptr);
-    }
-
-    return gpu_textures;
-}
-
 
 OptixScene::~OptixScene()
 {
@@ -199,15 +40,17 @@ static void assignInstanceTransform(OptixInstance &inst,
 
 static pair<TLAS, TLASIntermediate> buildTLAS(
     OptixDeviceContext ctx,
-    const vector<vector<glm::mat4x3>> &instance_transforms,
-    uint32_t num_instances,
-    const vector<MeshInfo> &mesh_infos,
+    const vector<ObjectInstance> &instances,
+    const vector<InstanceTransform> &instance_transforms,
+    const vector<InstanceFlags> &instance_flags,
     const OptixTraversableHandle *blases,
     cudaStream_t build_stream,
     bool update = false,
     void *tlas_storage = nullptr,
     OptixTraversableHandle tlas_hdl = 0)
 {
+    uint32_t num_instances = instances.size();
+
     OptixInstance *instance_ptr;
     REQ_CUDA(cudaHostAlloc(&instance_ptr, sizeof(OptixInstance) * num_instances,
                            cudaHostAllocMapped));
@@ -217,24 +60,23 @@ static pair<TLAS, TLASIntermediate> buildTLAS(
                            sizeof(OptixTraversableHandle) * num_instances,
                            cudaHostAllocMapped));
 
-    uint32_t cur_instance_idx = 0;
-    for (uint32_t model_idx = 0; model_idx < instance_transforms.size();
-         model_idx++) {
-        const auto &model_instances = instance_transforms[model_idx];
-        for (const glm::mat4x3 &txfm : model_instances) {
-            OptixInstance &cur_inst = instance_ptr[cur_instance_idx];
+    for (int inst_id = 0; inst_id < (int)num_instances; inst_id++) {
+        const ObjectInstance &inst = instances[inst_id];
+        const InstanceTransform &txfm = instance_transforms[inst_id];
+        OptixInstance &cur_inst = instance_ptr[inst_id];
 
-            assignInstanceTransform(cur_inst, txfm);
-            cur_inst.instanceId = mesh_infos[model_idx].indexOffset;
-            cur_inst.sbtOffset = 0;
-            cur_inst.visibilityMask = 0xff;
-            cur_inst.flags = 0;
-            cur_inst.traversableHandle = blases[model_idx];
-
-            instance_blases[cur_instance_idx] = blases[model_idx];
-
-            cur_instance_idx++;
+        assignInstanceTransform(cur_inst, txfm.mat);
+        cur_inst.instanceId = 0;
+        cur_inst.sbtOffset = 0;
+        if (instance_flags[inst_id] & InstanceFlags::Transparent) {
+            cur_inst.visibilityMask = 2;
+        } else {
+            cur_inst.visibilityMask = 1;
         }
+        cur_inst.flags = 0;
+        cur_inst.traversableHandle = blases[inst.objectIndex];
+
+        instance_blases[inst_id] = blases[inst.objectIndex];
     }
 
     OptixBuildInput tlas_build {};
@@ -289,6 +131,14 @@ OptixEnvironment OptixEnvironment::make(OptixDeviceContext ctx,
                                         cudaStream_t build_stream,
                                         const OptixScene &scene)
 {
+    uint32_t num_instances = scene.envInit.defaultInstances.size();
+
+    InstanceTransform *transforms =
+        (InstanceTransform *)allocCU(sizeof(InstanceTransform) * num_instances);
+    cudaMemcpyAsync(transforms, scene.defaultTransformBuffer,
+                    num_instances * sizeof(InstanceTransform),
+                    cudaMemcpyHostToDevice, build_stream);
+
     void *tlas_storage = allocCU(scene.defaultTLAS.numBytes);
     cudaMemcpyAsync(tlas_storage, (void *)scene.defaultTLAS.storage,
                     scene.defaultTLAS.numBytes, cudaMemcpyDeviceToDevice,
@@ -301,7 +151,7 @@ OptixEnvironment OptixEnvironment::make(OptixDeviceContext ctx,
     OptixTraversableHandle new_tlas;
     REQ_OPTIX(optixAccelRelocate(ctx, build_stream, &tlas_reloc_info,
         (CUdeviceptr)scene.defaultTLAS.instanceBLASes,
-        scene.envInit.indexMap.size(), (CUdeviceptr)tlas_storage,
+        num_instances, (CUdeviceptr)tlas_storage,
         scene.defaultTLAS.numBytes, &new_tlas));
 
     REQ_CUDA(cudaStreamSynchronize(build_stream));
@@ -323,17 +173,26 @@ OptixEnvironment OptixEnvironment::make(OptixDeviceContext ctx,
         lights.push_back(packed);
     }
 
+    optional<PhysicsEnvironment> physics;
+    if (scene.physics.has_value()) {
+        physics.emplace(*scene.physics, build_stream);
+    }
+
     return OptixEnvironment {
         {},
         (CUdeviceptr)tlas_storage,
         new_tlas,
+        transforms,
         move(lights),
+        scene.envInit.defaultInstanceFlags,
+        move(physics),
     };
 }
 
 OptixEnvironment::~OptixEnvironment()
 {
     cudaFree((void *)tlasStorage);
+    cudaFree(transformBuffer);
 }
 
 uint32_t OptixEnvironment::addLight(const glm::vec3 &position,
@@ -360,26 +219,31 @@ void OptixEnvironment::removeLight(uint32_t light_idx)
 }
 
 TLASIntermediate OptixEnvironment::queueTLASRebuild(const Environment &env,
-                                        OptixDeviceContext ctx, cudaStream_t strm)
+    OptixDeviceContext ctx, cudaStream_t strm)
 {
     const OptixScene &scene = 
         *static_cast<const OptixScene *>(env.getScene().get());
+    const OptixEnvironment &env_backend =
+        *static_cast<const OptixEnvironment *>(env.getBackend());
 
-    auto [new_tlas, tlas_inter] = buildTLAS(ctx, env.getTransforms(),
-        env.getNumInstances(), scene.meshInfo,
-        scene.blases.data(), strm, true, (void *)tlasStorage, tlas);
+    auto [new_tlas, tlas_inter] = buildTLAS(ctx, env.getInstances(),
+        env.getTransforms(), env_backend.instanceFlags,
+        scene.blases.data(), strm, true,
+        (void *)tlasStorage, tlas);
 
     return tlas_inter;
 }
 
-OptixLoader::OptixLoader(OptixDeviceContext ctx, TextureManager &texture_mgr)
+OptixLoader::OptixLoader(OptixDeviceContext ctx, TextureManager &texture_mgr,
+                         bool need_physics)
     : stream_([]() {
           cudaStream_t strm;
           REQ_CUDA(cudaStreamCreate(&strm));
           return strm;
       }()),
       ctx_(ctx),
-      texture_mgr_(texture_mgr)
+      texture_mgr_(texture_mgr),
+      need_physics_(need_physics)
 {}
 
 void TLASIntermediate::free()
@@ -388,13 +252,129 @@ void TLASIntermediate::free()
     REQ_CUDA(cudaFree(buildScratch));
 }
 
+static LoadedTextures loadTextures(const TextureInfo &texture_info,
+                                   cudaStream_t cpy_strm,
+                                   TextureManager &mgr)
+{
+    vector<void *> host_tex_data;
+
+    auto loadTextureList = [&](const vector<string> &texture_names,
+                               TextureFormat fmt) {
+        vector<Texture> gpu_textures;
+        gpu_textures.reserve(texture_names.size());
+
+        int num_components;
+        if (fmt == TextureFormat::R8G8B8A8_SRGB) {
+            num_components = 4;
+        } else if (fmt == TextureFormat::R8G8B8A8_UNORM) {
+            num_components = 4;
+        } else if (fmt == TextureFormat::R8G8_UNORM) {
+            num_components = 2;
+        } else if (fmt == TextureFormat::R8_UNORM) {
+            num_components = 1;
+        } else {
+            num_components = 0; // FIXME
+        }
+
+        for (const auto &tex_name : texture_names) {
+            string full_path = texture_info.textureDir + tex_name;
+
+            Texture tex = mgr.load(full_path, fmt, cudaAddressModeWrap,
+                cpy_strm, [&](const string &tex_path) {
+                    int x, y, n;
+                    uint8_t *img_data =
+                        stbi_load(tex_path.c_str(), &x, &y, &n, 4);
+                    host_tex_data.push_back(img_data);
+
+                    // FIXME passing in num_components < 3 to stbi_load
+                    // doesn't work properly
+                    if (num_components < 4) {
+                        for (int i = 0; i < x*y; i++) {
+                            img_data[i * num_components] = img_data[i * 4];
+                            if (num_components > 1) {
+                                img_data[i * num_components + 1] =
+                                    img_data[i * 4 + 1];
+                            }
+                            if (num_components > 2) {
+                                img_data[i * num_components + 2] =
+                                    img_data[i * 4 + 2];
+                            }
+                        }
+                    }
+
+                    return make_pair(img_data, glm::u32vec2(x, y));
+                });
+
+            gpu_textures.emplace_back(move(tex));
+        }
+
+        return gpu_textures;
+    };
+
+    LoadedTextures loaded;
+    loaded.base = loadTextureList(texture_info.base,
+                                  TextureFormat::R8G8B8A8_SRGB);
+    loaded.metallicRoughness = loadTextureList(texture_info.metallicRoughness,
+                                               TextureFormat::R8G8B8A8_UNORM);
+    loaded.specular = loadTextureList(texture_info.specular,
+                                      TextureFormat::R8G8B8A8_SRGB);
+    loaded.normal = loadTextureList(texture_info.normal,
+                                    TextureFormat::R8G8_UNORM);
+    loaded.emittance = loadTextureList(texture_info.emittance,
+                                       TextureFormat::R32G32B32A32_SFLOAT);
+    loaded.transmission = loadTextureList(texture_info.transmission,
+                                          TextureFormat::R8_UNORM);
+    loaded.clearcoat = loadTextureList(texture_info.clearcoat,
+                                       TextureFormat::R8G8_UNORM);
+    loaded.anisotropic = loadTextureList(texture_info.anisotropic,
+                                         TextureFormat::R8G8_UNORM);
+
+    if (!texture_info.envMap.empty()) {
+        loaded.envMap.emplace(mgr.load(
+            texture_info.textureDir + texture_info.envMap,
+            TextureFormat::R32G32B32A32_SFLOAT, cudaAddressModeWrap,
+            cpy_strm, [&](const string &tex_path) {
+                int x, y, n;
+                float *img_data =
+                    stbi_loadf(tex_path.c_str(), &x, &y, &n, 4);
+                host_tex_data.push_back(img_data);
+                return make_pair(img_data, glm::u32vec2(x, y));
+            }));
+    }
+
+    REQ_CUDA(cudaStreamSynchronize(cpy_strm));
+
+    for (void *ptr : host_tex_data) {
+        stbi_image_free(ptr);
+    }
+
+    return loaded;
+}
+
 shared_ptr<Scene> OptixLoader::loadScene(SceneLoadData &&load_info)
 {
-    auto textures = texture_mgr_.load(load_info.textureInfo, stream_);
+    auto textures = loadTextures(load_info.textureInfo, stream_, texture_mgr_);
 
+    size_t num_texture_hdls = load_info.hdr.numMaterials *
+        TextureConstants::numTexturesPerMaterial;
+    if (textures.envMap.has_value()) {
+        num_texture_hdls++;
+    }
     size_t texture_ptr_offset = alignOffset(load_info.hdr.totalBytes, 16);
-    size_t texture_ptr_bytes = textures.size() * sizeof(cudaTextureObject_t);
-    size_t total_device_bytes = texture_ptr_offset + texture_ptr_bytes;
+    size_t texture_ptr_bytes = num_texture_hdls * sizeof(cudaTextureObject_t);
+    size_t sdf_ptr_offset = 0;
+    size_t sdf_ptr_bytes = 0;
+    size_t total_device_bytes = 0;
+    if (need_physics_) {
+        sdf_ptr_offset =
+            alignOffset(texture_ptr_offset + texture_ptr_bytes, 16);
+        sdf_ptr_bytes =
+            load_info.physics.sdfPaths.size() * sizeof(cudaTextureObject_t);
+
+        total_device_bytes = sdf_ptr_offset + sdf_ptr_bytes;
+    } else {
+        total_device_bytes = texture_ptr_offset + texture_ptr_bytes;
+    }
 
     char *scene_storage = (char *)allocCU(total_device_bytes);
 
@@ -416,13 +396,13 @@ shared_ptr<Scene> OptixLoader::loadScene(SceneLoadData &&load_info)
                     cudaMemcpyHostToDevice, stream_);
 
     // Build BLASes
-    uint32_t num_meshes = load_info.meshInfo.size();
+    uint32_t num_objects = load_info.objectInfo.size();
 
     vector<CUdeviceptr> blas_storage;
-    blas_storage.reserve(num_meshes);
+    blas_storage.reserve(num_objects);
 
     vector<OptixTraversableHandle> blases;
-    blases.reserve(num_meshes);
+    blases.reserve(num_objects);
 
     // Improves performance slightly
     unsigned int tri_build_flag = OPTIX_GEOMETRY_FLAG_DISABLE_ANYHIT;
@@ -434,42 +414,53 @@ shared_ptr<Scene> OptixLoader::loadScene(SceneLoadData &&load_info)
     };
 
     CUdeviceptr scene_storage_dev = (CUdeviceptr)scene_storage;
-    const PackedVertex *base_vertex_ptr = (const PackedVertex *)scene_storage;
+    const DevicePackedVertex *base_vertex_ptr =
+        (const DevicePackedVertex *)scene_storage;
     const uint32_t *base_index_ptr = 
         (const uint32_t *)(scene_storage + load_info.hdr.indexOffset);
 
     static_assert(sizeof(PackedVertex) == sizeof(Vertex));
 
-    for (uint32_t mesh_idx = 0; mesh_idx < num_meshes; mesh_idx++) {
-        const MeshInfo &mesh_info = load_info.meshInfo[mesh_idx];
+    for (int obj_idx = 0; obj_idx < (int)num_objects; obj_idx++) {
+        const ObjectInfo &object_info = load_info.objectInfo[obj_idx];
+        vector<OptixBuildInput> geometry_infos;
+        geometry_infos.reserve(object_info.numMeshes);
 
-        OptixBuildInput geometry_info {};
-        geometry_info.type = OPTIX_BUILD_INPUT_TYPE_TRIANGLES;
+        for (int obj_mesh_idx = 0; obj_mesh_idx < (int)object_info.numMeshes;
+             obj_mesh_idx++) {
+            uint32_t mesh_idx = object_info.meshIndex + obj_mesh_idx;
+            const MeshInfo &mesh_info = load_info.meshInfo[mesh_idx];
 
-        CUdeviceptr index_ptr =
-            (CUdeviceptr)(base_index_ptr + mesh_info.indexOffset);
+            OptixBuildInput geometry_info {};
+            geometry_info.type = OPTIX_BUILD_INPUT_TYPE_TRIANGLES;
 
-        auto &tri_info = geometry_info.triangleArray;
-        tri_info.vertexBuffers = &scene_storage_dev;
-        tri_info.numVertices = load_info.hdr.numVertices;
-        tri_info.vertexFormat = OPTIX_VERTEX_FORMAT_FLOAT3;
-        tri_info.vertexStrideInBytes = sizeof(Vertex);
-        tri_info.indexBuffer = index_ptr;
-        tri_info.numIndexTriplets = mesh_info.numTriangles;
-        tri_info.indexFormat = OPTIX_INDICES_FORMAT_UNSIGNED_INT3;
-        tri_info.indexStrideInBytes = 0;
-        tri_info.preTransform = 0;
-        tri_info.flags = &tri_build_flag;
-        tri_info.numSbtRecords = 1;
-        tri_info.sbtIndexOffsetBuffer = 0;
-        tri_info.sbtIndexOffsetSizeInBytes = 0;
-        tri_info.sbtIndexOffsetStrideInBytes = 0;
-        tri_info.primitiveIndexOffset = 0;
-        tri_info.transformFormat = OPTIX_TRANSFORM_FORMAT_NONE;
+            CUdeviceptr index_ptr =
+                (CUdeviceptr)(base_index_ptr + mesh_info.indexOffset);
+            auto &tri_info = geometry_info.triangleArray;
+            tri_info.vertexBuffers = &scene_storage_dev;
+            tri_info.numVertices = load_info.hdr.numVertices;
+            tri_info.vertexFormat = OPTIX_VERTEX_FORMAT_FLOAT3;
+            tri_info.vertexStrideInBytes = sizeof(Vertex);
+            tri_info.indexBuffer = index_ptr;
+            tri_info.numIndexTriplets = mesh_info.numTriangles;
+            tri_info.indexFormat = OPTIX_INDICES_FORMAT_UNSIGNED_INT3;
+            tri_info.indexStrideInBytes = 0;
+            tri_info.preTransform = 0;
+            tri_info.flags = &tri_build_flag;
+            tri_info.numSbtRecords = 1;
+            tri_info.sbtIndexOffsetBuffer = 0;
+            tri_info.sbtIndexOffsetSizeInBytes = 0;
+            tri_info.sbtIndexOffsetStrideInBytes = 0;
+            tri_info.primitiveIndexOffset = 0;
+            tri_info.transformFormat = OPTIX_TRANSFORM_FORMAT_NONE;
+
+            geometry_infos.push_back(geometry_info);
+        }
 
         OptixAccelBufferSizes buffer_sizes;
         REQ_OPTIX(optixAccelComputeMemoryUsage(ctx_, &accel_options,
-                                               &geometry_info, 1,
+                                               geometry_infos.data(),
+                                               geometry_infos.size(),
                                                &buffer_sizes));
 
         CUdeviceptr scratch_storage =
@@ -478,28 +469,62 @@ shared_ptr<Scene> OptixLoader::loadScene(SceneLoadData &&load_info)
         CUdeviceptr accel_storage =
             (CUdeviceptr)allocCU(buffer_sizes.outputSizeInBytes);
 
+        OptixTraversableHandle blas;
         REQ_OPTIX(optixAccelBuild(ctx_, stream_, &accel_options,
-                                  &geometry_info, 1,
+                                  geometry_infos.data(), geometry_infos.size(),
                                   scratch_storage, buffer_sizes.tempSizeInBytes,
                                   accel_storage, buffer_sizes.outputSizeInBytes,
-                                  &blases[mesh_idx], nullptr, 0));
+                                  &blas, nullptr, 0));
 
         REQ_CUDA(cudaStreamSynchronize(stream_));
 
         REQ_CUDA(cudaFree((void *)scratch_storage));
 
+        blases.push_back(blas);
         blas_storage.push_back(accel_storage);
     }
 
-    auto [tlas, tlas_inter] = buildTLAS(ctx_, load_info.envInit.transforms,
-        load_info.envInit.indexMap.size(), load_info.meshInfo,
+    auto [tlas, tlas_inter] = buildTLAS(ctx_, load_info.envInit.defaultInstances,
+        load_info.envInit.defaultTransforms,
+        load_info.envInit.defaultInstanceFlags,
         blases.data(), stream_);
 
+    InstanceTransform *default_transforms =
+        (InstanceTransform *)allocCU(sizeof(InstanceTransform) *
+                                  load_info.envInit.defaultTransforms.size());
+
+    cudaMemcpyAsync(default_transforms, load_info.envInit.defaultTransforms.data(),
+        sizeof(InstanceTransform) * load_info.envInit.defaultTransforms.size(),
+        cudaMemcpyHostToDevice, stream_);
+
+    // Based on indices in MaterialTextures build indexable list of handles
     vector<cudaTextureObject_t> texture_hdls;
-    texture_hdls.reserve(textures.size());
-    for (uint32_t tex_idx = 0; tex_idx < textures.size(); tex_idx++) {
-        const auto &tex_hdl = textures[tex_idx].getHandle();
-        texture_hdls[tex_idx] = tex_hdl;
+    texture_hdls.reserve(num_texture_hdls);
+    if (textures.envMap.has_value()) {
+        texture_hdls.push_back(textures.envMap->getHandle());
+    }
+    for (int mat_idx = 0; mat_idx < (int)load_info.hdr.numMaterials;
+         mat_idx++) {
+        const MaterialTextures &tex_indices =
+            load_info.textureIndices[mat_idx];
+
+        auto appendHandle = [&](uint32_t idx, const auto &texture_list) {
+            if (idx != ~0u) {
+                texture_hdls.push_back(texture_list[idx].getHandle());
+            } else {
+                texture_hdls.push_back(0);
+            }
+        };
+
+        appendHandle(tex_indices.baseColorIdx, textures.base);
+        appendHandle(tex_indices.metallicRoughnessIdx,
+                     textures.metallicRoughness);
+        appendHandle(tex_indices.specularIdx, textures.specular);
+        appendHandle(tex_indices.normalIdx, textures.normal);
+        appendHandle(tex_indices.emittanceIdx, textures.emittance);
+        appendHandle(tex_indices.transmissionIdx, textures.transmission);
+        appendHandle(tex_indices.clearcoatIdx, textures.clearcoat);
+        appendHandle(tex_indices.anisoIdx, textures.anisotropic);
     }
 
     cudaTextureObject_t *tex_gpu_ptr = (cudaTextureObject_t *)(
@@ -514,9 +539,19 @@ shared_ptr<Scene> OptixLoader::loadScene(SceneLoadData &&load_info)
         REQ_CUDA(cudaFreeHost(data_src));
     }
 
+    optional<ScenePhysicsData> physics;
+    if (need_physics_) {
+        physics.emplace(ScenePhysicsData::make(load_info.physics,
+                                               load_info.hdr, 
+                                               scene_storage,
+                                               scene_storage + sdf_ptr_offset,
+                                               stream_, texture_mgr_));
+    }
+
     return shared_ptr<OptixScene>(new OptixScene {
         {
             move(load_info.meshInfo),
+            move(load_info.objectInfo),
             move(load_info.envInit),
         },
         scene_storage_dev,
@@ -524,11 +559,15 @@ shared_ptr<Scene> OptixLoader::loadScene(SceneLoadData &&load_info)
         base_index_ptr,
         reinterpret_cast<const PackedMaterial *>(
             scene_storage + load_info.hdr.materialOffset),
+        reinterpret_cast<const PackedMeshInfo *>(
+            scene_storage + load_info.hdr.meshOffset),
         move(blas_storage),
         move(blases),
         move(tlas),
+        default_transforms,
         move(textures),
         tex_gpu_ptr,
+        move(physics),
     });
 }
 

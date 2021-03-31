@@ -5,6 +5,7 @@
 
 #include <glm/gtc/quaternion.hpp>
 #include <glm/gtx/transform.hpp>
+#include <glm/gtx/string_cast.hpp>
 
 using namespace std;
 
@@ -49,35 +50,47 @@ HabitatJSON::Scene habitatJSONLoad(string_view scene_path_name)
             LightType type;
             if (type_str == "point") {
                 type = LightType::Point;
+            } else if (type_str == "environment") {
+                type = LightType::Environment;
             } else {
                 cerr << scene_path_name << ": Unknown light type" << endl;
                 abort();
             }
 
-            uint32_t vec_idx = 0;
-            glm::vec3 position;
-            for (auto c : light["position"]) {
-                position[vec_idx++] = float(double(c));
-            }
+            if (type == LightType::Point) {
+                uint32_t vec_idx = 0;
+                glm::vec3 position;
+                for (auto c : light["position"]) {
+                    position[vec_idx++] = float(double(c));
+                }
 
-            float intensity = double(light["intensity"]);
-            if (intensity <= 0.f) {
-                cerr << "Warning: Skipping negative intensity light" << endl;
-                continue;
-            }
+                float intensity = double(light["intensity"]);
+                if (intensity <= 0.f) {
+                    cerr << "Warning: Skipping negative intensity light" << endl;
+                    continue;
+                }
 
-            vec_idx = 0;
-            glm::vec3 color;
-            for (auto c : light["color"]) {
-                color[vec_idx++] = float(double(c));
-            }
+                vec_idx = 0;
+                glm::vec3 color;
+                for (auto c : light["color"]) {
+                    color[vec_idx++] = float(double(c));
+                }
 
-            scene.lights.push_back({
-                type,
-                position,
-                intensity,
-                color,
-            });
+                scene.lights.push_back({
+                    type,
+                    position,
+                    intensity,
+                    color,
+                });
+            } else if (type == LightType::Environment) {
+                if (!scene.envMap.empty()) {
+                    cerr << "Can only specify one environment map per scene" <<
+                        endl;
+                    abort();
+                }
+
+                scene.envMap = light["path"];
+            }
         }
 
         simdjson::dom::parser inst_parser;
@@ -95,8 +108,6 @@ HabitatJSON::Scene habitatJSONLoad(string_view scene_path_name)
                 rotation[3 - idx++] = float(double(c));
             }
 
-            glm::mat4 txfm =
-                glm::translate(translation) * glm::mat4_cast(rotation);
 
             auto template_path =
                 root_path / string_view(inst["template_name"]);
@@ -109,8 +120,9 @@ HabitatJSON::Scene habitatJSONLoad(string_view scene_path_name)
 
             scene.additionalInstances.push_back({
                 inst_path,
+                translation,
+                rotation,
                 string_view(inst["motion_type"]) == "DYNAMIC",
-                glm::mat4x3(txfm),
             });
         }
     } catch (const simdjson_error &e) {
@@ -128,32 +140,61 @@ SceneDescription<VertexType, MaterialType> parseHabitatJSON(
     optional<string_view> texture_dir)
 {
     using namespace HabitatJSON;
+    using SceneDesc = SceneDescription<VertexType, MaterialType>;
 
     auto raw_scene = habitatJSONLoad(scene_path);
 
-    auto desc = parseGLTF<VertexType, MaterialType>(
-        raw_scene.stagePath, base_txfm, texture_dir);
+    SceneDesc desc = parseGLTF<VertexType, MaterialType>(
+            raw_scene.stagePath, base_txfm, texture_dir);
+    desc.envMap = raw_scene.envMap;
+
+    unordered_map<string, uint32_t> loaded_gltfs;
 
     for (const Instance &inst : raw_scene.additionalInstances) {
-        uint32_t mesh_offset = desc.meshes.size();
         uint32_t mat_offset = desc.materials.size();
+        
+        glm::vec3 inst_pos = base_txfm * glm::vec4(inst.pos, 1.f);
+        glm::quat inst_rot = glm::quat_cast(base_txfm) * inst.rotation;
 
-        auto inst_desc = parseGLTF<VertexType, MaterialType>(
-            inst.gltfPath, base_txfm * glm::mat4(inst.transform), texture_dir);
+        auto [iter, inserted] =
+            loaded_gltfs.emplace(inst.gltfPath, desc.defaultInstances.size());
 
-        for (const auto &mesh : inst_desc.meshes) {
-            desc.meshes.push_back(mesh);
-        }
+        if (!inserted) {
+            auto new_inst = desc.defaultInstances[iter->second];
+            new_inst.position = inst_pos;
+            new_inst.rotation = inst_rot;
+            new_inst.dynamic = inst.dynamic;
+            desc.defaultInstances.emplace_back(move(new_inst));
+        } else {
+            auto inst_desc = parseGLTF<VertexType, MaterialType>(
+                inst.gltfPath, glm::mat4(1.f),
+                texture_dir);
 
-        for (const auto &mat : inst_desc.materials) {
-            desc.materials.push_back(mat);
-        }
+            bool is_transparent = false;
+            for (const auto &child_inst : inst_desc.defaultInstances) {
+                if (child_inst.transparent) {
+                    is_transparent = true;
+                }
+            }
 
-        for (const auto &nested_inst : inst_desc.defaultInstances) {
+            for (const auto &mat : inst_desc.materials) {
+                desc.materials.push_back(mat);
+            }
+
+            // Merge sub GLTF into single object
+            auto [merged_obj, merged_mats] =
+                SceneDesc::mergeScene(move(inst_desc), mat_offset);
+
+            desc.objects.emplace_back(move(merged_obj));
+
             desc.defaultInstances.push_back({
-                nested_inst.meshIndex + mesh_offset,
-                nested_inst.materialIndex + mat_offset,
-                nested_inst.txfm,
+                uint32_t(desc.objects.size() - 1),
+                move(merged_mats),
+                inst_pos,
+                inst_rot,
+                glm::vec3(1.f),
+                inst.dynamic,
+                is_transparent,
             });
         }
     }

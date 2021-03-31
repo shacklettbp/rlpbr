@@ -25,6 +25,7 @@ struct ShaderBuffers {
     PackedEnv *envs;
     LaunchInput *launchInput;
     PackedInstance *instanceBuffer;
+    uint32_t *instanceMaterialBuffer;
     PackedLight *lightBuffer;
 };
 
@@ -32,6 +33,15 @@ struct RenderState {
     half *output;
     void *paramBuffer;
     std::array<ShaderBuffers, 2> shaderBuffers;
+};
+
+struct BSDFLookupTables {
+    Texture diffuseAverageAlbedo;
+    Texture diffuseDirectionalAlbedo;
+    Texture ggxAverageAlbedo;
+    Texture ggxDirectionalAlbedo;
+    Texture ggxDirectionalInverse;
+    BSDFPrecomputed deviceHandles;
 };
 
 class OptixBackend : public RenderBackend {
@@ -60,6 +70,8 @@ private:
     Pipeline pipeline_;
     SBT sbt_;
     TextureManager texture_mgr_;
+    BSDFLookupTables bsdf_luts_;
+    std::optional<PhysicsSimulator> physics_;
 };
 
 }

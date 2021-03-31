@@ -4,48 +4,12 @@
 
 #include <iostream>
 
+#include <glm/gtx/string_cast.hpp>
+
 using namespace std;
 
 namespace RLpbr {
 namespace SceneImport {
-
-Material Material::makeMetallicRoughness(
-    const string_view base_color_texture,
-    const string_view metallic_roughness_texture,
-    const glm::vec3 &base_color,
-    float base_metallic, float base_roughness)
-{
-    Material mat {};
-
-    mat.materialModel = MaterialModelType::MetallicRoughness;
-    mat.baseColorTexture = base_color_texture;
-    mat.metallicRoughnessTexture = metallic_roughness_texture;
-    mat.baseColor = base_color;
-    mat.baseMetallic = base_metallic;
-    mat.baseRoughness = base_roughness;
-
-    return mat;
-}
-
-Material Material::makeSpecularGlossiness(
-    const string_view diffuse_texture,
-    const string_view specular_texture,
-    const glm::vec3 &base_diffuse,
-    const glm::vec3 &base_specular,
-    float base_shininess)
-{
-    Material mat {};
-
-    mat.materialModel = MaterialModelType::SpecularGlossiness;
-    mat.diffuseTexture = diffuse_texture;
-    mat.specularTexture = specular_texture;
-    mat.baseDiffuse = base_diffuse;
-    mat.baseSpecular = base_specular;
-    mat.baseShininess = base_shininess;
-
-    return mat;
-}
-
 
 static bool isGLTF(string_view gltf_path)
 {
@@ -78,6 +42,46 @@ SceneDescription<VertexType, MaterialType>::parseScene(
 
     cerr << "Unsupported input format" << endl;
     abort();
+}
+
+template <typename VertexType, typename MaterialType>
+pair<Object<VertexType>, vector<uint32_t>> 
+SceneDescription<VertexType, MaterialType>::mergeScene(
+    SceneDescription desc, uint32_t mat_offset)
+{
+    Object<VertexType> merged_obj;
+    vector<uint32_t> merged_mats;
+    for (const auto &inst : desc.defaultInstances) {
+        auto &obj = desc.objects[inst.objectIndex];
+
+        glm::mat4 rot_mat = glm::mat4_cast(inst.rotation);
+
+        glm::mat4 txfm = glm::translate(inst.position) *
+            rot_mat * glm::scale(inst.scale);
+
+        glm::mat4 inv_txfm = glm::scale(1.f / inst.scale) *
+            glm::transpose(rot_mat) *
+            glm::translate(-inst.position);
+
+        for (auto &mesh : obj.meshes) {
+            for (auto &vert : mesh.vertices) {
+                vert.position = txfm * glm::vec4(vert.position, 1.f);
+                vert.normal =
+                    glm::transpose(glm::mat3(inv_txfm)) * vert.normal;
+                vert.normal = normalize(vert.normal);
+            }
+            merged_obj.meshes.emplace_back(move(mesh));
+        }
+
+        for (uint32_t mat_idx : inst.materials) {
+            merged_mats.push_back(mat_idx + mat_offset);
+        }
+    }
+
+    return {
+        move(merged_obj),
+        move(merged_mats),
+    };
 }
 
 template struct SceneDescription<Vertex, Material>;

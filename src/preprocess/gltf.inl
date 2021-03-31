@@ -5,6 +5,7 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #include <glm/gtx/transform.hpp>
+#include <glm/gtx/string_cast.hpp>
 
 #include <fstream>
 #include <iostream>
@@ -26,6 +27,48 @@ struct ChunkHeader {
     uint32_t chunkLength;
     uint32_t chunkType;
 };
+
+template <typename T>
+T jsonReadVec(const simdjson::dom::array &arr)
+{
+    T v;
+    float *data = glm::value_ptr(v);
+    int offset = 0;
+    for (double comp : arr) {
+        data[offset] = comp;
+        offset++;
+
+        if (offset >= T::length()) break;
+    }
+
+    return v;
+}
+    
+template <typename T, typename U>
+T jsonGetOr(const simdjson::simdjson_result<U> &e, T default_val)
+{
+    using ReadType = conditional_t<
+        is_same_v<T, float>, double, conditional_t<
+        is_same_v<T, uint32_t>, uint64_t, conditional_t<
+        is_same_v<T, glm::vec3>, simdjson::dom::array, conditional_t<
+        is_same_v<T, glm::vec4>, simdjson::dom::array, void
+    >>>>;
+
+    static_assert(!is_same_v<ReadType, void>);
+
+    ReadType tmp;
+    auto err = e.get(tmp);
+
+    if (!err) {
+        if constexpr (is_same_v<ReadType, simdjson::dom::array>) {
+            return jsonReadVec<T>(tmp);
+        } else {
+            return T(tmp);
+        }
+    } else {
+        return default_val;
+    }
+}
 
 GLTFScene gltfLoad(filesystem::path gltf_path) noexcept
 {
@@ -209,135 +252,212 @@ GLTFScene gltfLoad(filesystem::path gltf_path) noexcept
         cout << "textures" << endl;
 
         for (const auto &material : scene.root["materials"]) {
+            uint32_t tex_missing = scene.textures.size();
+            const auto &exts = material["extensions"];
+
             const auto &pbr = material["pbrMetallicRoughness"];
-            simdjson::dom::element base_tex;
-            uint64_t base_color_idx;
-            auto color_tex_err = pbr["baseColorTexture"]["index"].get(
-                base_color_idx);
-            if (color_tex_err) {
-                base_color_idx = scene.textures.size();
-            }
+            uint32_t base_color_idx = jsonGetOr(
+                pbr["baseColorTexture"]["index"], tex_missing);
 
-            uint64_t metallic_roughness_idx;
-            auto mr_tex_err = pbr["metallicRoughnessTexture"]["index"].get(
-                metallic_roughness_idx);
-            if (mr_tex_err) {
-                metallic_roughness_idx = scene.textures.size();
-            }
+            uint32_t metallic_roughness_idx = jsonGetOr(
+                pbr["metallicRoughnessTexture"]["index"], tex_missing);
 
-            uint64_t bc_coord;
-            auto bc_coord_err = pbr["baseColorTexture"]["texCoord"].get(
-                bc_coord);
-            if (bc_coord_err) {
-                bc_coord = 0;
-            }
+            uint32_t bc_coord =
+                jsonGetOr(pbr["baseColorTexture"]["texCoord"], 0u);
 
-            uint64_t mr_coord;
-            auto mr_coord_err = pbr["metallicRoughnessTexture"]["texCoord"].get(
-                mr_coord);
-            if (mr_coord_err) {
-                mr_coord = 0;
-            }
+
+            uint32_t mr_coord = 
+                jsonGetOr(pbr["metallicRoughnessTexture"]["texCoord"], 0u);
 
             if (bc_coord != 0 || mr_coord != 0) {
                 cerr << "Multiple UVs not supported" << endl;
                 abort();
             }
 
-            glm::vec4 base_color(1.f);
+            glm::vec4 base_color =
+                jsonGetOr(pbr["baseColorFactor"], glm::vec4(1.f));
             simdjson::dom::array base_color_json;
-            auto color_err = pbr["baseColorFactor"].get(base_color_json);
-            if (!color_err) {                       
-                float *base_color_data = glm::value_ptr(base_color);
-                for (double comp : base_color_json) {
-                    *base_color_data = comp;
-                    base_color_data++;
-                }
+
+            float metallic = jsonGetOr(pbr["metallicFactor"], 0.f);
+
+            float roughness = jsonGetOr(pbr["roughnessFactor"], 1.f);
+
+            auto transmission_ext =
+                exts["KHR_material_transmission"];
+
+            uint32_t transmission_idx = jsonGetOr(
+                transmission_ext["transmissionTexture"]["index"], tex_missing);
+
+            float transmission_factor =
+                jsonGetOr(transmission_ext["transmissionFactor"], 0.f);
+
+            auto specular_ext = exts["KHR_materials_specular"];
+
+            glm::vec3 base_specular = 
+                jsonGetOr(specular_ext["specularColorFactor"], glm::vec3(1.f));
+
+            float specular_factor =
+                jsonGetOr(specular_ext["specularFactor"], 1.f);
+
+            uint32_t spec_idx = jsonGetOr(
+                specular_ext["specularTexture"]["index"], tex_missing);
+
+            uint32_t spec_color_idx = jsonGetOr(
+                specular_ext["specularColorTexture"]["index"], tex_missing);
+
+            if (spec_idx != spec_color_idx) {
+                cerr << "Specular textures must be packed together" << endl;
+                abort();
             }
 
-            double metallic;
-            auto metallic_err = pbr["metallicFactor"].get(metallic);
-            if (metallic_err) {
-                metallic = 0;
+            float ior = jsonGetOr(
+                exts["KHR_materials_ior"]["ior"], 1.5f);
+
+            auto clearcoat_ext = exts["KHR_materials_clearcoat"];
+
+            float clearcoat = jsonGetOr(
+                clearcoat_ext["clearcoatFactor"], 0.f);
+
+            float clearcoat_roughness = jsonGetOr(
+                clearcoat_ext["clearcoatRoughnessFactor"], 0.f);
+
+            uint32_t clearcoat_idx = jsonGetOr(
+                clearcoat_ext["clearcoatTexture"]["index"], tex_missing);
+
+            uint32_t clearcoat_roughness_idx = jsonGetOr(
+                clearcoat_ext["clearcoatRoughnessTexture"]["index"],
+                tex_missing);
+
+            uint32_t clearcoat_normal_idx = jsonGetOr(
+                clearcoat_ext["clearcoatNormalTexture"]["index"], tex_missing);
+
+            if (clearcoat_idx != clearcoat_roughness_idx) {
+                cerr << "Clearcoat textures must be packed together" << endl;
+                abort();
             }
 
-            double roughness;
-            auto roughness_err = pbr["roughnessFactor"].get(roughness);
-            if (roughness_err) {
-                roughness = 1;
+            auto volume_ext = exts["KHR_materials_volume"];
+
+            float thickness = jsonGetOr(
+                volume_ext["thicknessFactor"], 0.f);
+            bool thinwalled = thickness == 0.f;
+
+            float attenuation_distance = jsonGetOr(
+                volume_ext["attenuationDistance"], INFINITY);
+            glm::vec3 attenuation_color = jsonGetOr(
+                volume_ext["attenuationColor"], glm::vec3(1.f));
+
+            auto aniso_ext = exts["KHR_materials_anisotropy"];
+
+            float aniso_scale = jsonGetOr(
+                aniso_ext["anisotropy"], 0.f);
+            glm::vec3 aniso_dir = jsonGetOr(
+                aniso_ext["anisotropyDirection"], glm::vec3(1.f, 0.f, 0.f));
+
+            uint32_t aniso_idx = jsonGetOr(
+                aniso_ext["anisotropyTexture"], tex_missing);
+
+            uint32_t aniso_rot_idx = jsonGetOr(
+                aniso_ext["anisotropyDirectionTexture"], tex_missing);
+
+            if (aniso_idx != aniso_rot_idx) {
+                cerr << "Anisotropy textures must be packed together" << endl;
+                abort();
             }
+
+            uint32_t normal_idx = jsonGetOr(
+                material["normalTexture"]["index"], tex_missing);
+
+            glm::vec3 base_emittance = jsonGetOr(
+                material["emissiveFactor"], glm::vec3(0.f));
+
+            uint32_t emissive_idx = jsonGetOr(
+                material["emissiveTexture"]["index"], tex_missing);
 
             scene.materials.push_back(GLTFMaterial {
-                false,
-                uint32_t(base_color_idx),
-                uint32_t(metallic_roughness_idx),
+                base_color_idx,
+                metallic_roughness_idx,
+                spec_idx,
+                normal_idx,
+                emissive_idx,
+                transmission_idx,
+                clearcoat_idx,
+                clearcoat_normal_idx,
+                aniso_idx,
                 base_color,
-                static_cast<float>(metallic),
-                static_cast<float>(roughness),
-                uint32_t(-1),
-                uint32_t(-1),
-                glm::vec3(),
-                glm::vec3(),
-                -1,
+                transmission_factor,
+                base_specular,
+                specular_factor,
+                metallic,
+                roughness,
+                ior,
+                clearcoat,
+                clearcoat_roughness,
+                attenuation_color,
+                attenuation_distance,
+                aniso_scale,
+                aniso_dir,
+                base_emittance,
+                thinwalled,
             });
         }
 
         cout << "materials" << endl;
 
         for (const auto &mesh : scene.root["meshes"]) {
-            simdjson::dom::array prims = mesh["primitives"];
-            if (prims.size() != 1) {
-                cerr << "GLTF loading '" << gltf_path << "' failed: "
-                          << "Only single primitive meshes supported"
-                          << endl;
-            }
+            simdjson::dom::array gltf_prims = mesh["primitives"];
+            vector<GLTFPrimitive> prims;
 
-            simdjson::dom::element prim = prims.at(0);
+            for (const simdjson::dom::element &prim : gltf_prims) {
+                simdjson::dom::element attrs = prim["attributes"];
 
-            simdjson::dom::element attrs = prim["attributes"];
+                optional<uint32_t> position_idx;
+                optional<uint32_t> normal_idx;
+                optional<uint32_t> uv_idx;
+                optional<uint32_t> color_idx;
 
-            optional<uint32_t> position_idx;
-            optional<uint32_t> normal_idx;
-            optional<uint32_t> uv_idx;
-            optional<uint32_t> color_idx;
+                uint64_t position_res;
+                auto position_error = attrs["POSITION"].get(position_res);
+                if (!position_error) {
+                    position_idx = position_res;
+                }
 
-            uint64_t position_res;
-            auto position_error = attrs["POSITION"].get(position_res);
-            if (!position_error) {
-                position_idx = position_res;
-            }
+                uint64_t normal_res;
+                auto normal_error = attrs["NORMAL"].get(normal_res);
+                if (!normal_error) {
+                    normal_idx = normal_res;
+                }
 
-            uint64_t normal_res;
-            auto normal_error = attrs["NORMAL"].get(normal_res);
-            if (!normal_error) {
-                normal_idx = normal_res;
-            }
+                uint64_t uv_res;
+                auto uv_error = attrs["TEXCOORD_0"].get(uv_res);
+                if (!uv_error) {
+                    uv_idx = uv_res;
+                }
 
-            uint64_t uv_res;
-            auto uv_error = attrs["TEXCOORD_0"].get(uv_res);
-            if (!uv_error) {
-                uv_idx = uv_res;
-            }
+                uint64_t color_res;
+                auto color_error = attrs["COLOR_0"].get(color_res);
+                if (!color_error) {
+                    color_idx = color_res;
+                }
+                
+                uint64_t material_idx;
+                auto mat_error = prim["material"].get(material_idx);
+                if (mat_error) {
+                    material_idx = 0;
+                }
 
-            uint64_t color_res;
-            auto color_error = attrs["COLOR_0"].get(color_res);
-            if (!color_error) {
-                color_idx = color_res;
-            }
-            
-            uint64_t material_idx;
-            auto mat_error = prim["material"].get(material_idx);
-            if (mat_error) {
-                material_idx = 0;
+                prims.push_back({
+                    position_idx,
+                    normal_idx,
+                    uv_idx,
+                    color_idx,
+                    static_cast<uint32_t>(prim["indices"].get_uint64()),
+                    static_cast<uint32_t>(material_idx),
+                });
             }
 
             scene.meshes.push_back(GLTFMesh {
-                position_idx,
-                normal_idx,
-                uv_idx,
-                color_idx,
-                static_cast<uint32_t>(prim["indices"].get_uint64()),
-                static_cast<uint32_t>(material_idx),
+                move(prims),
             });
         }
 
@@ -540,13 +660,55 @@ vector<MaterialType> gltfParseMaterials(const GLTFScene &scene,
     };
 
     for (const auto &gltf_mat : scene.materials) {
-        materials.push_back(MaterialType::makeMetallicRoughness(
+        float alpha_transparency = gltf_mat.baseColor.a;
+
+        // Hack: use alpha as proper transparency for assets with
+        // hardcoded alpha in the baseColorFactor
+        float transmission = gltf_mat.transmissionFactor;
+        if (transmission == 0.f) {
+            transmission = 1.f - alpha_transparency;
+        }
+
+        glm::vec3 base_color(gltf_mat.baseColor.r,
+                             gltf_mat.baseColor.g,
+                             gltf_mat.baseColor.b);
+
+        // FIXME: hack for floorplanner, should be removed
+        float metallic = gltf_mat.metallic;
+        if (transmission > 0.f) {
+            metallic = 0.f;
+            transmission = 1.f;
+            base_color = glm::vec3(1.f);
+        }
+
+        // FIXME
+        float aniso_rotation = atan2(gltf_mat.anisoDir.y, gltf_mat.anisoDir.x);
+
+        materials.push_back({
             extractTex(gltf_mat.baseColorIdx),
             extractTex(gltf_mat.metallicRoughnessIdx),
-            gltf_mat.baseColor,
-            gltf_mat.metallic,
-            gltf_mat.roughness
-        ));
+            extractTex(gltf_mat.specularIdx),
+            extractTex(gltf_mat.normalIdx),
+            extractTex(gltf_mat.emittanceIdx),
+            extractTex(gltf_mat.transmissionIdx),
+            extractTex(gltf_mat.clearcoatIdx),
+            extractTex(gltf_mat.anisoIdx),
+            base_color,
+            transmission,
+            gltf_mat.baseSpecular,
+            gltf_mat.specularFactor,
+            metallic,
+            gltf_mat.roughness,
+            gltf_mat.ior,
+            gltf_mat.clearcoat,
+            gltf_mat.clearcoatRoughness,
+            gltf_mat.attenuationColor,
+            gltf_mat.attenuationDistance,
+            gltf_mat.anisoScale,
+            aniso_rotation,
+            gltf_mat.baseEmittance,
+            gltf_mat.thinwalled,
+        });
     }
 
     return materials;
@@ -573,121 +735,135 @@ template <typename T>
 struct HasColor <T, decltype((void) T::color, 0)> : std::true_type { };
 
 template <typename VertexType>
-pair<vector<VertexType>, vector<uint32_t>> gltfParseMesh(
+static vector<Mesh<VertexType>> gltfParseMesh(
     const GLTFScene &scene,
     uint32_t mesh_idx)
 {
-    vector<VertexType> vertices;
-    vector<uint32_t> indices;
+    const GLTFMesh &gltf_mesh = scene.meshes[mesh_idx];
 
-    const GLTFMesh &mesh = scene.meshes[mesh_idx];
-    optional<StridedSpan<const glm::vec3>> position_accessor;
-    optional<StridedSpan<const glm::vec3>> normal_accessor;
-    optional<StridedSpan<const glm::vec2>> uv_accessor;
-    optional<StridedSpan<const glm::u8vec3>> color_accessor;
+    vector<Mesh<VertexType>> meshes;
 
-    constexpr bool has_position = HasPosition<VertexType>::value;
-    constexpr bool has_normal = HasNormal<VertexType>::value;
-    constexpr bool has_uv = HasUV<VertexType>::value;
-    constexpr bool has_color = HasColor<VertexType>::value;
+    for (const GLTFPrimitive &prim : gltf_mesh.primitives) {
+        vector<VertexType> vertices;
+        vector<uint32_t> indices;
 
-    if constexpr (has_position) {
-        position_accessor = getGLTFAccessorView<const glm::vec3>(
-            scene, mesh.positionIdx.value());
-    }
+        optional<StridedSpan<const glm::vec3>> position_accessor;
+        optional<StridedSpan<const glm::vec3>> normal_accessor;
+        optional<StridedSpan<const glm::vec2>> uv_accessor;
+        optional<StridedSpan<const glm::u8vec3>> color_accessor;
 
-    if constexpr (has_normal) {
-        if (mesh.normalIdx.has_value()) {
-            normal_accessor = getGLTFAccessorView<const glm::vec3>(
-                scene, mesh.normalIdx.value());
-        }
-    }
-
-    if constexpr (has_uv) {
-        if (mesh.uvIdx.has_value()) {
-            uv_accessor = getGLTFAccessorView<const glm::vec2>(scene,
-                mesh.uvIdx.value());
-        }
-    }
-
-    if constexpr (has_color) {
-        if (mesh.colorIdx.has_value()) {
-            color_accessor = getGLTFAccessorView<const glm::u8vec3>(
-                scene, mesh.colorIdx.value());
-        }
-    }
-
-    uint32_t max_idx = 0;
-
-    auto index_type = scene.accessors[mesh.indicesIdx].type;
-
-    if (index_type == GLTFComponentType::UINT32) {
-        auto idx_accessor =
-            getGLTFAccessorView<const uint32_t>(scene, mesh.indicesIdx);
-        indices.reserve(idx_accessor.size());
-
-        for (uint32_t idx : idx_accessor) {
-            if (idx > max_idx) {
-                max_idx = idx;
-            }
-
-            indices.push_back(idx);
-        }
-    } else if (index_type == GLTFComponentType::UINT16) {
-        auto idx_accessor =
-            getGLTFAccessorView<const uint16_t>(scene, mesh.indicesIdx);
-        indices.reserve(idx_accessor.size());
-
-        for (uint16_t idx : idx_accessor) {
-            if (idx > max_idx) {
-                max_idx = idx;
-            }
-
-            indices.push_back(idx);
-        }
-    } else {
-        cerr << "GLTF loading failed: unsupported index type"
-                  << endl;
-        abort();
-    }
-
-    assert(max_idx < position_accessor->size());
-
-    vertices.reserve(max_idx + 1);
-    for (uint32_t vert_idx = 0; vert_idx <= max_idx; vert_idx++) {
-        VertexType vert {};
+        constexpr bool has_position = HasPosition<VertexType>::value;
+        constexpr bool has_normal = HasNormal<VertexType>::value;
+        constexpr bool has_uv = HasUV<VertexType>::value;
+        constexpr bool has_color = HasColor<VertexType>::value;
 
         if constexpr (has_position) {
-            vert.position = (*position_accessor)[vert_idx];
+            position_accessor = getGLTFAccessorView<const glm::vec3>(
+                scene, prim.positionIdx.value());
         }
 
         if constexpr (has_normal) {
-            if (normal_accessor.has_value()) {
-                vert.normal = (*normal_accessor)[vert_idx];
+            if (prim.normalIdx.has_value()) {
+                normal_accessor = getGLTFAccessorView<const glm::vec3>(
+                    scene, prim.normalIdx.value());
             }
         }
 
         if constexpr (has_uv) {
-            if (uv_accessor.has_value()) {
-                vert.uv = (*uv_accessor)[vert_idx];
+            if (prim.uvIdx.has_value()) {
+                uv_accessor = getGLTFAccessorView<const glm::vec2>(scene,
+                    prim.uvIdx.value());
             }
         }
 
         if constexpr (has_color) {
-            if (color_accessor.has_value()) {
-                vert.color = glm::u8vec4((*color_accessor)[vert_idx], 255);
+            if (prim.colorIdx.has_value()) {
+                color_accessor = getGLTFAccessorView<const glm::u8vec3>(
+                    scene, prim.colorIdx.value());
             }
         }
 
-        vertices.push_back(vert);
+        uint32_t max_idx = 0;
+
+        auto index_type = scene.accessors[prim.indicesIdx].type;
+
+        if (index_type == GLTFComponentType::UINT32) {
+            auto idx_accessor =
+                getGLTFAccessorView<const uint32_t>(scene, prim.indicesIdx);
+            indices.reserve(idx_accessor.size());
+
+            for (uint32_t idx : idx_accessor) {
+                if (idx > max_idx) {
+                    max_idx = idx;
+                }
+
+                indices.push_back(idx);
+            }
+        } else if (index_type == GLTFComponentType::UINT16) {
+            auto idx_accessor =
+                getGLTFAccessorView<const uint16_t>(scene, prim.indicesIdx);
+            indices.reserve(idx_accessor.size());
+
+            for (uint16_t idx : idx_accessor) {
+                if (idx > max_idx) {
+                    max_idx = idx;
+                }
+
+                indices.push_back(idx);
+            }
+        } else {
+            cerr << "GLTF loading failed: unsupported index type"
+                      << endl;
+            abort();
+        }
+
+        assert(max_idx < position_accessor->size());
+
+        vertices.reserve(max_idx + 1);
+        for (uint32_t vert_idx = 0; vert_idx <= max_idx; vert_idx++) {
+            VertexType vert {};
+
+            if constexpr (has_position) {
+                vert.position = (*position_accessor)[vert_idx];
+            }
+
+            if constexpr (has_normal) {
+                if (normal_accessor.has_value()) {
+                    vert.normal = (*normal_accessor)[vert_idx];
+                }
+            }
+
+            if constexpr (has_uv) {
+                if (uv_accessor.has_value()) {
+                    vert.uv = (*uv_accessor)[vert_idx];
+                }
+            }
+
+            if constexpr (has_color) {
+                if (color_accessor.has_value()) {
+                    vert.color = glm::u8vec4((*color_accessor)[vert_idx], 255);
+                }
+            }
+
+            vertices.push_back(vert);
+        }
+
+        Mesh<VertexType> mesh {
+            move(vertices),
+            move(indices),
+        };
+
+        meshes.emplace_back(move(mesh));
     }
 
-    return {move(vertices), move(indices)};
+    return meshes;
 }
 
-std::vector<InstanceProperties> gltfParseInstances(
+template <typename MaterialType>
+static std::vector<InstanceProperties> gltfParseInstances(
     const GLTFScene &scene,
-    const glm::mat4 &coordinate_txfm)
+    const glm::mat4 &coordinate_txfm,
+    const vector<MaterialType> &materials)
 {
     vector<pair<uint32_t, glm::mat4>> node_stack;
     for (uint32_t root_node : scene.rootNodes) {
@@ -707,10 +883,50 @@ std::vector<InstanceProperties> gltfParseInstances(
         }
 
         if (cur_node.meshIdx < scene.meshes.size()) {
+            // Decompose transform
+            glm::vec3 position(cur_txfm[3]);
+
+            glm::vec3 scale(glm::length(cur_txfm[0]),
+                            glm::length(cur_txfm[1]),
+                            glm::length(cur_txfm[2]));
+
+            if (glm::dot(glm::cross(glm::vec3(cur_txfm[0]),
+                                    glm::vec3(cur_txfm[1])),
+                         glm::vec3(cur_txfm[2])) < 0.f) {
+                scale.x *= -1.f;
+            }
+
+            glm::vec3 v1 = glm::normalize(cur_txfm[0] / scale.x);
+            glm::vec3 v2 = cur_txfm[1] / scale.y;
+            glm::vec3 v3 = cur_txfm[2] / scale.z;
+
+            v2 = glm::normalize(v2 - dot(v2, v1) * v1);
+            v3 = v3 - glm::dot(v3, v1) * v1;
+            v3 -= glm::dot(v3, v2) * v2;
+            v3 = glm::normalize(v3);
+
+            glm::mat3 rot(v1, v2, v3);
+
+            glm::quat rot_quat = glm::quat_cast(rot);
+
+            bool is_transparent = false;
+            vector<uint32_t> instance_materials;
+            for (const auto &prim : scene.meshes[cur_node.meshIdx].primitives) {
+                instance_materials.push_back(prim.materialIdx);
+
+                if (materials[prim.materialIdx].baseTransmission > 0.f) {
+                    is_transparent = true;
+                }
+            }
+
             instances.push_back({
                 cur_node.meshIdx,
-                scene.meshes[cur_node.meshIdx].materialIdx,
-                cur_txfm,
+                move(instance_materials),
+                position,
+                rot_quat,
+                scale,
+                false,
+                is_transparent,
             });
         }
     }
@@ -728,27 +944,29 @@ SceneDescription<VertexType, MaterialType> parseGLTF(
     vector<MaterialType> materials =
         gltfParseMaterials<MaterialType>(raw_scene, texture_dir);
 
-    vector<Mesh<VertexType>> geometry;
+    vector<Object<VertexType>> geometry;
 
     for (uint32_t mesh_idx = 0; mesh_idx < raw_scene.meshes.size();
          mesh_idx++) {
-        auto [vertices, indices] =
+        vector<Mesh<VertexType>> meshes =
             gltfParseMesh<VertexType>(raw_scene, mesh_idx);
 
-        geometry.push_back({
-            move(vertices),
-            move(indices),
-        });
+        Object<VertexType> obj {
+            move(meshes),
+        };
+
+        geometry.emplace_back(move(obj));
     }
 
     vector<InstanceProperties> instances =
-        gltfParseInstances(raw_scene, base_txfm);
+        gltfParseInstances(raw_scene, base_txfm, materials);
 
     return SceneDescription<VertexType, MaterialType> {
         move(geometry),
         move(materials),
         move(instances),
         {},
+        "",
     };
 }
 

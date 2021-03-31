@@ -139,8 +139,18 @@ static Pipeline buildPipeline(OptixDeviceContext ctx, const RenderConfig &cfg,
         OPTIX_TRAVERSABLE_GRAPH_FLAG_ALLOW_SINGLE_LEVEL_INSTANCING;
 
     pipeline_compile_options.numAttributeValues = 2;
-    pipeline_compile_options.numPayloadValues = 5;
+    pipeline_compile_options.numPayloadValues = 3;
     pipeline_compile_options.pipelineLaunchParamsVariableName = "launchInput";
+
+    string sampling_define;
+    if (uint64_t(cfg.spp) * uint64_t(cfg.imgWidth) * uint64_t(cfg.imgHeight) >
+        uint64_t(~0u)) {
+        cout << "Warning, SPP too high, falling back to uniform sampling"
+             << endl;
+        sampling_define = "-DUNIFORM_SAMPLING";
+    } else {
+        sampling_define = "-DZSOBOL_SAMPLING";
+    }
 
     array extra_compile_options {
         string("-DSPP=(") + to_string(cfg.spp) + "u)",
@@ -151,8 +161,7 @@ static Pipeline buildPipeline(OptixDeviceContext ctx, const RenderConfig &cfg,
                to_string((uintptr_t)base_buffers.outputBuffer) + "ul)",
         string("-DENV_PTR=(") +
                to_string((uintptr_t)base_buffers.envs) + "ul)",
-        string("-DZSOBOL_SAMPLING"),
-        string("-DMETALLIC_ROUGHNESS"),
+        move(sampling_define),
     };
 
     vector<char> ptx = compileToPTX(STRINGIFY(OPTIX_SHADER),
@@ -297,6 +306,8 @@ static RenderState makeRenderState(const RenderConfig &cfg,
     uint64_t env_batch_bytes = sizeof(PackedEnv) * cfg.batchSize;
     uint64_t instance_bytes =
         sizeof(PackedInstance) * Config::maxInstances;
+    uint64_t instance_material_bytes =
+        sizeof(uint32_t) * Config::maxInstanceMaterials;
     uint64_t light_bytes =
         sizeof(PackedLight) * Config::maxLights;
 
@@ -305,8 +316,10 @@ static RenderState makeRenderState(const RenderConfig &cfg,
 
     uint64_t instance_offset = alignOffset(
         launch_input_offset + sizeof(LaunchInput) * num_frames, 16);
-    uint64_t light_offset = alignOffset(
+    uint64_t instance_material_offset = alignOffset(
         instance_offset + instance_bytes * num_frames, 16);
+    uint64_t light_offset = alignOffset(
+        instance_material_offset + instance_material_bytes * num_frames, 16);
 
     uint64_t total_param_bytes = light_offset + light_bytes * num_frames;
 
@@ -336,6 +349,9 @@ static RenderState makeRenderState(const RenderConfig &cfg,
         PackedInstance *instance_ptr = (PackedInstance *)(param_base +
             instance_offset + instance_bytes * frame_idx);
 
+        uint32_t *instance_material_ptr = (uint32_t *)(param_base +
+            instance_material_offset + instance_material_bytes * frame_idx);
+
         PackedLight *light_ptr = (PackedLight *)(param_base +
             light_offset + light_bytes * frame_idx);
 
@@ -344,6 +360,7 @@ static RenderState makeRenderState(const RenderConfig &cfg,
             env_ptr,
             launch_input_ptr,
             instance_ptr,
+            instance_material_ptr,
             light_ptr,
         };
     }
@@ -362,6 +379,104 @@ static cudaStream_t makeStream()
 static inline uint32_t getNumFrames(const RenderConfig &cfg)
 {
     return cfg.doubleBuffered ? 2 : 1;
+}
+
+static BSDFLookupTables loadBSDFLookupTables(TextureManager &tex_mgr,
+                                             cudaStream_t strm)
+{
+    const string dir = STRINGIFY(RLPBR_DATA_DIR);
+
+    string diffuse_avg_path = dir + "/diffuse_avg_albedo.bin";
+    constexpr glm::u32vec2 diffuse_avg_dims(16, 16);
+    array<float, diffuse_avg_dims.x * diffuse_avg_dims.y> diffuse_avg;
+    ifstream diffuse_avg_file(diffuse_avg_path);
+    diffuse_avg_file.read((char *)diffuse_avg.data(),
+                          diffuse_avg.size() * sizeof(float));
+
+    Texture diffuse_avg_tex = tex_mgr.load(diffuse_avg_path,
+        TextureFormat::R32_SFLOAT, cudaAddressModeClamp, strm,
+        [&](const auto &) {
+            return make_pair(diffuse_avg.data(), diffuse_avg_dims);
+        });
+
+    string diffuse_dir_path = dir + "/diffuse_dir_albedo.bin";
+    constexpr glm::u32vec3 diffuse_dir_dims(16, 16, 16);
+    array<float, diffuse_dir_dims.x * diffuse_dir_dims.y * diffuse_dir_dims.z> 
+        diffuse_dir;
+    ifstream diffuse_dir_file(diffuse_dir_path);
+    diffuse_dir_file.read((char *)diffuse_dir.data(),
+                          diffuse_dir.size() * sizeof(float));
+
+    Texture diffuse_dir_tex = tex_mgr.load(diffuse_dir_path,
+        TextureFormat::R32_SFLOAT, cudaAddressModeClamp, strm,
+        [&](const auto &) {
+            return make_pair(diffuse_dir.data(), diffuse_dir_dims);
+        });
+
+    string ggx_avg_path = dir + "/ggx_avg_albedo.bin";
+    constexpr glm::u32vec1 ggx_avg_dims(32);
+    array<float, ggx_avg_dims.x> ggx_avg;
+    ifstream ggx_avg_file(ggx_avg_path);
+    ggx_avg_file.read((char *)ggx_avg.data(),
+                        ggx_avg.size() * sizeof(float));
+
+    Texture ggx_avg_tex = tex_mgr.load(ggx_avg_path,
+        TextureFormat::R32_SFLOAT, cudaAddressModeClamp, strm,
+        [&](const auto &) {
+            return make_pair(ggx_avg.data(), ggx_avg_dims);
+        });
+
+    string ggx_dir_path = dir + "/ggx_dir_albedo.bin";
+    constexpr glm::u32vec2 ggx_dir_dims(32, 32);
+    array<float, ggx_dir_dims.x * ggx_dir_dims.y> ggx_dir;
+    ifstream ggx_dir_file(ggx_dir_path);
+    ggx_dir_file.read((char *)ggx_dir.data(),
+                      ggx_dir.size() * sizeof(float));
+
+    Texture ggx_dir_tex = tex_mgr.load(ggx_dir_path,
+        TextureFormat::R32_SFLOAT, cudaAddressModeClamp, strm,
+        [&](const auto &) {
+            return make_pair(ggx_dir.data(), ggx_dir_dims);
+        });
+
+    string ggx_inv_path = dir + "/ggx_dir_inv.bin";
+    constexpr glm::u32vec2 ggx_inv_dims(128, 32);
+    array<float, ggx_inv_dims.x * ggx_inv_dims.y> ggx_inv;
+    ifstream ggx_inv_file(ggx_inv_path);
+    ggx_inv_file.read((char *)ggx_inv.data(),
+                      ggx_inv.size() * sizeof(float));
+
+    Texture ggx_inv_tex = tex_mgr.load(ggx_inv_path,
+        TextureFormat::R32_SFLOAT, cudaAddressModeClamp, strm,
+        [&](const auto &) {
+            return make_pair(ggx_inv.data(), ggx_inv_dims);
+        });
+
+    BSDFPrecomputed device_hdls {
+        diffuse_avg_tex.getHandle(),
+        diffuse_dir_tex.getHandle(),
+        ggx_avg_tex.getHandle(),
+        ggx_dir_tex.getHandle(),
+        ggx_inv_tex.getHandle(),
+    };
+
+    return BSDFLookupTables {
+        move(diffuse_avg_tex),
+        move(diffuse_dir_tex),
+        move(ggx_avg_tex),
+        move(ggx_dir_tex),
+        move(ggx_inv_tex),
+        device_hdls,
+    };
+}
+
+static optional<PhysicsSimulator> makePhysicsSimulator(const RenderConfig &cfg)
+{
+    if (!cfg.enablePhysics) return optional<PhysicsSimulator>();
+
+    return PhysicsSimulator(PhysicsConfig {
+        cfg.batchSize,
+    });
 }
 
 OptixBackend::OptixBackend(const RenderConfig &cfg, bool validate)
@@ -386,7 +501,9 @@ OptixBackend::OptixBackend(const RenderConfig &cfg, bool validate)
       pipeline_(
           buildPipeline(ctx_, cfg, render_state_.shaderBuffers[0], validate)),
       sbt_(buildSBT(streams_[0], pipeline_)),
-      texture_mgr_()
+      texture_mgr_(),
+      bsdf_luts_(loadBSDFLookupTables(texture_mgr_, tlas_strm_)),
+      physics_(makePhysicsSimulator(cfg))
 {
     REQ_CUDA(cudaStreamSynchronize(streams_[0]));
 
@@ -399,11 +516,17 @@ OptixBackend::OptixBackend(const RenderConfig &cfg, bool validate)
         cerr << "Only power of 2 samples per pixel are supported" << endl;
         abort();
     }
+
+    for (int i = 0; i < (int)getNumFrames(cfg); i++) {
+        render_state_.shaderBuffers[i].launchInput->precomputed =
+            bsdf_luts_.deviceHandles;
+    }
 }
 
 LoaderImpl OptixBackend::makeLoader()
 {
-    OptixLoader *loader = new OptixLoader(ctx_, texture_mgr_);
+    OptixLoader *loader = new OptixLoader(ctx_, texture_mgr_,
+                                          physics_.has_value());
     return makeLoaderImpl<OptixLoader>(loader);
 }
 
@@ -434,6 +557,7 @@ static array<float4, 3> packCamera(const Camera &cam)
 
 static PackedEnv packEnv(const Environment &env,
                          PackedInstance **instance_buffer,
+                         uint32_t **instance_materials,
                          PackedLight **light_buffer)
 {
     const OptixEnvironment &env_backend =
@@ -443,15 +567,20 @@ static PackedEnv packEnv(const Environment &env,
     
     PackedInstance *cur_instance = *instance_buffer;
     PackedInstance *env_inst_start = cur_instance;
-    for (const auto &model_insts : env.getMaterials()) {
-        for (uint32_t mat_idx : model_insts) {
-            *cur_instance++ = PackedInstance {
-                mat_idx,
-            };
-        }
+    for (const auto &inst : env.getInstances()) {
+        *cur_instance++ = PackedInstance {
+            inst.materialOffset,
+            scene.objectInfo[inst.objectIndex].meshIndex,
+        };
     }
-
     *instance_buffer = cur_instance;
+
+    uint32_t *cur_inst_materials = *instance_materials;
+    uint32_t *env_mat_start = cur_inst_materials;
+    for (uint32_t mat_idx : env.getInstanceMaterials()) {
+        *cur_inst_materials++ = mat_idx;
+    }
+    *instance_materials = cur_inst_materials;
 
     uint32_t num_lights = env_backend.lights.size();
     PackedLight *light_ptr = *light_buffer;
@@ -466,29 +595,40 @@ static PackedEnv packEnv(const Environment &env,
         scene.indexPtr,
         scene.materialPtr,
         scene.texturePtr,
+        scene.meshPtr,
         env_inst_start,
+        env_mat_start,
         light_ptr,
+        (PackedTransforms *)env_backend.transformBuffer,
         num_lights,
     };
 }
 
 uint32_t OptixBackend::render(const Environment *envs)
 {
+    //physics_->simulate(envs);
+
     const ShaderBuffers &buffers = render_state_.shaderBuffers[active_idx_];
     PackedInstance *instance_buffer = buffers.instanceBuffer;
+    uint32_t *instance_material_buffer = buffers.instanceMaterialBuffer;
     PackedLight *light_buffer = buffers.lightBuffer;
 
-    for (uint32_t batch_idx = 0; batch_idx < batch_size_; batch_idx++) {
+    for (int batch_idx = 0; batch_idx < (int)batch_size_; batch_idx++) {
         buffers.envs[batch_idx] =
-            packEnv(envs[batch_idx], &instance_buffer, &light_buffer);
+            packEnv(envs[batch_idx], &instance_buffer,
+                    &instance_material_buffer, &light_buffer);
     }
 
     buffers.launchInput->baseBatchOffset = batch_size_ * active_idx_;
     buffers.launchInput->baseFrameCounter = frame_counter_;
 
+    REQ_CUDA(cudaStreamSynchronize(streams_[active_idx_]));
+
     REQ_OPTIX(optixLaunch(pipeline_.hdl, streams_[active_idx_],
         (CUdeviceptr)buffers.launchInput, sizeof(LaunchInput),
         &sbt_.hdl, img_dims_.x, img_dims_.y, batch_size_));
+
+    REQ_CUDA(cudaStreamSynchronize(streams_[active_idx_]));
 
     frame_counter_ += batch_size_;
 

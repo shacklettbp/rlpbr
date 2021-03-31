@@ -8,6 +8,9 @@
 #include <functional>
 #include <iostream>
 
+#include <glm/gtc/quaternion.hpp>
+#include <glm/gtx/transform.hpp>
+
 using namespace std;
 
 namespace RLpbr {
@@ -116,8 +119,9 @@ Environment::Environment(EnvironmentImpl &&backend,
     : backend_(move(backend)),
       scene_(scene),
       camera_(cam),
-      transforms_(scene_->envInit.transforms),
-      materials_(scene_->envInit.materials),
+      instances_(scene_->envInit.defaultInstances),
+      instance_materials_(scene->envInit.defaultInstanceMaterials),
+      transforms_(scene_->envInit.defaultTransforms),
       index_map_(scene_->envInit.indexMap),
       reverse_id_map_(scene_->envInit.reverseIDMap),
       free_ids_(),
@@ -165,48 +169,21 @@ Environment::Environment(EnvironmentImpl &&backend,
                          vertical_fov, aspect_ratio))
 {}
 
-uint32_t Environment::addInstance(uint32_t model_idx, uint32_t material_idx,
-                                  const glm::mat4x3 &model_matrix)
-{
-    transforms_[model_idx].emplace_back(model_matrix);
-    materials_[model_idx].emplace_back(material_idx);
-    uint32_t instance_idx = transforms_[model_idx].size() - 1;
-
-    uint32_t outer_id;
-    if (free_ids_.size() > 0) {
-        uint32_t free_id = free_ids_.back();
-        free_ids_.pop_back();
-        index_map_[free_id].first = model_idx;
-        index_map_[free_id].second = instance_idx;
-
-        outer_id = free_id;
-    } else {
-        index_map_.emplace_back(model_idx, instance_idx);
-        outer_id = index_map_.size() - 1;
-    }
-
-    reverse_id_map_[model_idx].emplace_back(outer_id);
-
-    return outer_id;
-}
 
 void Environment::deleteInstance(uint32_t inst_id)
 {
-    auto [model_idx, instance_idx] = index_map_[inst_id];
-    auto &transforms = transforms_[model_idx];
-    auto &materials = materials_[model_idx];
-    auto &reverse_ids = reverse_id_map_[model_idx];
-
-    if (transforms.size() > 1) {
+    // FIXME, deal with instance_materials_
+    uint32_t instance_idx = index_map_[inst_id];
+    if (instances_.size() > 1) {
         // Keep contiguous
-        transforms[instance_idx] = transforms.back();
-        materials[instance_idx] = materials.back();
-        reverse_ids[instance_idx] = reverse_ids.back();
-        index_map_[reverse_ids[instance_idx]] = { model_idx, instance_idx };
+        instances_[instance_idx] = instances_.back();
+        transforms_[instance_idx] = transforms_.back();
+        reverse_id_map_[instance_idx] = reverse_id_map_.back();
+        index_map_[reverse_id_map_[instance_idx]] = instance_idx;
     }
-    transforms.pop_back();
-    materials.pop_back();
-    reverse_ids.pop_back();
+    instances_.pop_back();
+    transforms_.pop_back();
+    reverse_id_map_.pop_back();
 
     free_ids_.push_back(inst_id);
 }

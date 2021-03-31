@@ -62,27 +62,43 @@ struct GLTFTexture {
 };
 
 struct GLTFMaterial {
-    bool specularGlossinessExtension;
     uint32_t baseColorIdx;
     uint32_t metallicRoughnessIdx;
-    glm::vec3 baseColor;
+    uint32_t specularIdx;
+    uint32_t normalIdx;
+    uint32_t emittanceIdx;
+    uint32_t transmissionIdx;
+    uint32_t clearcoatIdx;
+    uint32_t clearcoatNormalIdx;
+    uint32_t anisoIdx;
+    glm::vec4 baseColor;
+    float transmissionFactor;
+    glm::vec3 baseSpecular;
+    float specularFactor;
     float metallic;
     float roughness;
-
-    uint32_t diffuseIdx;
-    uint32_t specularIdx;
-    glm::vec3 baseDiffuse;
-    glm::vec3 baseSpecular;
-    float baseShininess;
+    float ior;
+    float clearcoat;
+    float clearcoatRoughness;
+    glm::vec3 attenuationColor;
+    float attenuationDistance;
+    float anisoScale;
+    glm::vec3 anisoDir;
+    glm::vec3 baseEmittance;
+    bool thinwalled;
 };
 
-struct GLTFMesh {
+struct GLTFPrimitive {
     std::optional<uint32_t> positionIdx;
     std::optional<uint32_t> normalIdx;
     std::optional<uint32_t> uvIdx;
     std::optional<uint32_t> colorIdx;
     uint32_t indicesIdx;
     uint32_t materialIdx;
+};
+
+struct GLTFMesh {
+    std::vector<GLTFPrimitive> primitives;
 };
 
 struct GLTFNode {
@@ -110,16 +126,6 @@ struct GLTFScene {
 };
 
 GLTFScene gltfLoad(const std::string_view gltf_path) noexcept;
-
-template <typename MaterialType>
-std::vector<MaterialType> gltfParseMaterials(const GLTFScene &scene);
-
-template <typename VertexType>
-std::pair<std::vector<VertexType>, std::vector<uint32_t>>
-gltfParseMesh(const GLTFScene &scene, uint32_t mesh_idx);
-
-std::vector<InstanceProperties> gltfParseInstances(
-    const GLTFScene &scene, const glm::mat4 &coordinate_txfm);
 
 template <typename VertexType, typename MaterialType>
 SceneDescription<VertexType, MaterialType> parseGLTF(
