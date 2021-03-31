@@ -20,7 +20,10 @@ struct pair {
 #define INV_PI (1.f / CUDART_PI_F)
 #define M_PI CUDART_PI_F
 #define M_1_PI INV_PI
+#define M_PI_4 CUDART_PIO4_F
+#define INFINITY CUDART_INF_F
 
+using namespace RLpbr;
 using namespace RLpbr::optix;
 using namespace cuda::std;
 
@@ -31,6 +34,7 @@ __constant__ LaunchInput launchInput;
 struct DeviceVertex {
     float3 position;
     float3 normal;
+    float4 tangentAndSign;
     float2 uv;
 };
 
@@ -43,44 +47,93 @@ struct Camera {
 
 struct Environment {
     OptixTraversableHandle tlas;
-    const PackedVertex *vertexBuffer;
+    const DevicePackedVertex *vertexBuffer;
     const uint32_t *indexBuffer;
     const PackedMaterial *materialBuffer;
     const cudaTextureObject_t *textureHandles;
+    const PackedMeshInfo *meshInfos;
     const PackedInstance *instances;
+    const uint32_t *instanceMaterials;
     const PackedLight *lights;
+    const PackedTransforms *transforms;
     uint32_t numLights;
 };
 
-struct Instance {
-    uint32_t materialIdx;
+struct MeshInfo {
+    uint32_t indexOffset;
 };
 
-#ifdef METALLIC_ROUGHNESS
-struct Material {
-    float3 baseColor;
-    float metallic;
-    float roughness;
-    uint32_t baseColorIdx;
-    uint32_t metallicRoughnessIdx;
+struct Instance {
+    uint32_t materialOffset;
+    uint32_t meshOffset;
 };
-#endif
+
+struct TransformMat {
+    float4 rows[3];
+};
 
 struct MaterialParams {
-    float3 diffuseAlbedo;
-    float3 specularAlbedo;
-    float alpha;
+    float3 baseColor;
+    float baseTransmission;
+    float3 baseSpecular;
+    float specularScale;
+    float ior;
+    float baseMetallic;
+    float baseRoughness;
+    uint32_t flags;
+
+    float clearcoat;
+    float clearcoatRoughness;
+    float3 attenuationColor;
+    float attenuationDistance;
+    float anisoScale;
+    float anisoRotation;
+    float3 baseEmittance;
+};
+
+struct Material {
+    float3 rho;
+    float transmission;
+    float3 rhoSpecular;
+    float specularScale;
+    float ior;
     float metallic;
     float roughness;
+    float transparencyMask;
+    float clearcoatScale;
+    float clearcoatRoughness;
+    float3 attenuationColor;
+    float attenuationDistance;
+    float anisoScale;
+    float anisoRotation;
+    float3 emittance;
 };
 
 struct BSDFParams {
-    float3 diffuseAlbedo;
-    float3 specularAlbedo;
+    float3 rhoDiffuse;
+    float transparencyMask;
+    float3 rhoTransmissive;
+    float transmission;
+    float3 sharedF0;
+    float sharedF90;
+    float3 transmissiveF0;
+    float transmissiveF90;
     float alpha;
     float roughness;
+    float clearcoatScale;
+    float clearcoatAlpha;
+    float diffuseLambertScale;
+    float diffuseLookupF0;
+    float diffuseAverageAlbedo;
+    float3 microfacetMSWeight;
+    float microfacetMSAvgAlbedoComplement;
+
+    // Sampling probabilities for each sub component of BSDF
+    float clearcoatProb;
     float diffuseProb;
-    float specularProb;
+    float microfacetProb;
+    float microfacetMSProb;
+    float transmissionProb;
 };
 
 struct Light {
@@ -117,10 +170,9 @@ __forceinline__ pair<Camera, Environment> unpackEnv(uint32_t batch_idx)
 {
     PackedEnv packed;
 
-    uint64_t lights_padded;
     asm ("{\n\t"
         ".reg .u64 t1;\n\t"
-        "mad.wide.u32 t1, %20, %21, %22;\n\t"
+        "mad.wide.u32 t1, %23, %24, %25;\n\t"
         "ld.global.v4.f32 {%0, %1, %2, %3}, [t1];\n\t"
         "ld.global.v4.f32 {%4, %5, %6, %7}, [t1 + 16];\n\t"
         "ld.global.v4.f32 {%8, %9, %10, %11}, [t1 + 32];\n\t"
@@ -128,6 +180,8 @@ __forceinline__ pair<Camera, Environment> unpackEnv(uint32_t batch_idx)
         "ld.global.v2.u64 {%14, %15}, [t1 + 64];\n\t"
         "ld.global.v2.u64 {%16, %17}, [t1 + 80];\n\t"
         "ld.global.v2.u64 {%18, %19}, [t1 + 96];\n\t"
+        "ld.global.v2.u64 {%20, %21}, [t1 + 112];\n\t"
+        "ld.global.u32 %22, [t1 + 128];\n\t"
         "}\n\t"
         : "=f" (packed.camData[0].x), "=f" (packed.camData[0].y),
           "=f" (packed.camData[0].z), "=f" (packed.camData[0].w),
@@ -137,8 +191,10 @@ __forceinline__ pair<Camera, Environment> unpackEnv(uint32_t batch_idx)
           "=f" (packed.camData[2].z), "=f" (packed.camData[2].w),
           "=l" (packed.tlas), "=l" (packed.vertexBuffer),
           "=l" (packed.indexBuffer), "=l" (packed.materialBuffer),
-          "=l" (packed.textureHandles), "=l" (packed.instances),
-          "=l" (packed.lights), "=l" (lights_padded)
+          "=l" (packed.textureHandles), "=l" (packed.meshInfos),
+          "=l" (packed.instances), "=l" (packed.instanceMaterials),
+          "=l" (packed.lights), "=l" (packed.transforms),
+          "=r" (packed.numLights)
         : "r" (batch_idx), "n" (sizeof(PackedEnv)), "n" (ENV_PTR)
     );
 
@@ -150,9 +206,12 @@ __forceinline__ pair<Camera, Environment> unpackEnv(uint32_t batch_idx)
             packed.indexBuffer,
             packed.materialBuffer,
             packed.textureHandles,
+            packed.meshInfos,
             packed.instances,
+            packed.instanceMaterials,
             packed.lights,
-            uint32_t(lights_padded),
+            packed.transforms,
+            packed.numLights,
         },
     };
 }
@@ -178,16 +237,119 @@ __forceinline__ void setOutput(uint32_t base_offset, float3 rgb)
     );
 }
 
-__forceinline__ Instance unpackInstance(const PackedInstance &packed)
+__forceinline__ MeshInfo unpackMeshInfo(const PackedMeshInfo &packed)
 {
-    return Instance {
-        packed.materialIdx,
+    return MeshInfo {
+        packed.data.x,
     };
 }
 
-__forceinline__ float rgbExtractY(float3 rgb)
+__forceinline__ Instance unpackInstance(const PackedInstance &packed)
 {
-    return 0.2126f * rgb.x + 0.7152f * rgb.y + 0.722f * rgb.z;
+    return Instance {
+        packed.materialOffset,
+        packed.meshOffset,
+    };
+}
+
+__forceinline__ pair<TransformMat, TransformMat> unpackTransforms(
+    const PackedTransforms &txfms)
+{
+    float4 o2w0 = txfms.data[0];
+    float4 o2w1 = txfms.data[1];
+    float4 o2w2 = txfms.data[2];
+    float4 w2o0 = txfms.data[3];
+    float4 w2o1 = txfms.data[4];
+    float4 w2o2 = txfms.data[5];
+
+    return {
+        TransformMat {
+            {
+                make_float4(o2w0.x, o2w0.w, o2w1.z, o2w2.y),
+                make_float4(o2w0.y, o2w1.x, o2w1.w, o2w2.z),
+                make_float4(o2w0.z, o2w1.y, o2w2.x, o2w2.w),
+            },
+        },
+        TransformMat {
+            {
+                make_float4(w2o0.x, w2o0.w, w2o1.z, w2o2.y),
+                make_float4(w2o0.y, w2o1.x, w2o1.w, w2o2.z),
+                make_float4(w2o0.z, w2o1.y, w2o2.x, w2o2.w),
+            },
+        },
+    };
+}
+
+__forceinline__ float unpackUnorm8(uint8_t x)
+{
+    return float(x) / 255.f;
+}
+
+__forceinline__ float unpackNonlinearUnorm8(uint8_t x)
+{
+    float f = unpackUnorm8(x); 
+    return f * f;
+}
+
+__forceinline__ bool checkMaterialFlag(uint32_t flags, MaterialFlags check)
+{
+    return flags & static_cast<uint32_t>(check);
+}
+
+__forceinline__ MaterialParams unpackMaterialParams(const PackedMaterial &packed)
+{
+    uint4 data0 = packed.data[0];
+
+    MaterialParams params;
+    params.baseColor = make_float3(
+        unpackNonlinearUnorm8(uint8_t(data0.x)),
+        unpackNonlinearUnorm8(uint8_t(data0.x >> 8)),
+        unpackNonlinearUnorm8(uint8_t(data0.x >> 16)));
+    params.baseTransmission = unpackUnorm8(uint8_t(data0.x >> 24));
+    params.specularScale = unpackUnorm8(uint8_t(data0.y));
+    params.ior = float(uint8_t(data0.y >> 8)) / 170.f + 1.f;
+    params.baseMetallic = unpackUnorm8(uint8_t(data0.y >> 16));
+    params.baseRoughness  = unpackUnorm8(uint8_t(data0.y >> 24));
+    params.baseSpecular = make_float3(
+        __half2float(__ushort_as_half(uint16_t(data0.z))),
+        __half2float(__ushort_as_half(uint16_t(data0.z >> 16))),
+        __half2float(__ushort_as_half(uint16_t(data0.w))));
+    params.flags = uint16_t(data0.w >> 16);
+
+    if (checkMaterialFlag(params.flags, MaterialFlags::Complex)) {
+        uint4 data1 = packed.data[1];
+
+        params.clearcoat = unpackUnorm8(uint8_t(data1.x));
+        params.clearcoatRoughness = unpackUnorm8(uint8_t(data1.x >> 8));
+        params.attenuationColor = make_float3(
+            unpackNonlinearUnorm8(uint8_t(data1.x >> 16)),
+            unpackNonlinearUnorm8(uint8_t(data1.x >> 24)),
+            unpackNonlinearUnorm8(uint8_t(data1.y)));
+        params.anisoScale = unpackUnorm8(uint8_t(data1.y >> 8));
+        params.anisoRotation = unpackUnorm8(uint8_t(data1.y >> 16));
+        // data1.y >> 24 currently unused
+        params.attenuationDistance =
+            __half2float(__ushort_as_half(uint16_t(data1.z)));
+        params.baseEmittance = make_float3(
+            __half2float(__ushort_as_half(uint16_t(data0.z >> 16))),
+            __half2float(__ushort_as_half(uint16_t(data0.w))),
+            __half2float(__ushort_as_half(uint16_t(data0.w >> 16))));
+    } else {
+        params.clearcoat = 0.f;
+        params.clearcoatRoughness = 0.f;
+        params.attenuationColor = make_float3(1.f, 1.f, 1.f);
+        params.anisoScale = 0.f;
+        params.anisoRotation = 0.f;
+        params.attenuationDistance = INFINITY;
+        params.baseEmittance = make_float3(0.f, 0.f, 0.f);
+    }
+
+    return params;
+}
+
+__forceinline__ float rgbToLuminance(float3 rgb)
+{
+    return 0.2126f * rgb.x + 0.7152f * rgb.y + 0.0722f * rgb.z;
 }
 
 template <typename T>
@@ -196,175 +358,287 @@ __forceinline__ T computeFresnel(T f0, T f90, float cos_theta)
     return f0 + (f90 - f0) * pow(max(1.f - cos_theta, 0.f), 5.f);
 }
 
-#ifdef METALLIC_ROUGHNESS
-__forceinline__ Material unpackMaterial(const PackedMaterial &packed)
+__forceinline__ Material processMaterial(const MaterialParams &params,
+                                         const cudaTextureObject_t *textures,
+                                         float2 uv)
 {
-    float4 data0 = packed.data[0];
-    float4 data1 = packed.data[1];
+    Material mat;
 
-    return Material {
-        make_float3(data0.x, data0.y, data0.z),
-        data0.w,
-        data1.x,
-        __float_as_uint(data1.y),
-        __float_as_uint(data1.z),
-    };
+    mat.rho = params.baseColor;
+    mat.transparencyMask = 1.f;
+    if (checkMaterialFlag(params.flags, MaterialFlags::HasBaseTexture)) {
+        cudaTextureObject_t tex = textures[TextureConstants::baseOffset];
+        float4 tex_value = tex2DLod<float4>(tex, uv.x, uv.y, 0);
+
+        mat.rho.x *= tex_value.x;
+        mat.rho.y *= tex_value.y;
+        mat.rho.z *= tex_value.z;
+        mat.transparencyMask *= tex_value.w;
+    }
+
+    mat.metallic = params.baseMetallic;
+    mat.roughness = params.baseRoughness;
+    if (checkMaterialFlag(params.flags, MaterialFlags::HasMRTexture)) {
+        cudaTextureObject_t tex = textures[TextureConstants::mrOffset];
+        float4 tex_value = tex2DLod<float4>(tex, uv.x, uv.y, 0);
+
+        mat.metallic *= tex_value.z;
+        mat.roughness *= tex_value.y;
+    }
+
+    mat.rhoSpecular = params.baseSpecular;
+    mat.specularScale = params.specularScale;
+    if (checkMaterialFlag(params.flags, MaterialFlags::HasSpecularTexture)) {
+        cudaTextureObject_t tex = textures[TextureConstants::specularOffset];
+        float4 tex_value = tex2DLod<float4>(tex, uv.x, uv.y, 0);
+
+        mat.rhoSpecular.x *= tex_value.x;
+        mat.rhoSpecular.y *= tex_value.y;
+        mat.rhoSpecular.z *= tex_value.z;
+        mat.specularScale *= tex_value.w;
+    }
+
+    mat.emittance = params.baseEmittance;
+    if (checkMaterialFlag(params.flags, MaterialFlags::HasEmittanceTexture)) {
+        cudaTextureObject_t tex = textures[TextureConstants::emittanceOffset];
+        float4 tex_value = tex2DLod<float4>(tex, uv.x, uv.y, 0);
+
+        mat.emittance.x *= tex_value.x;
+        mat.emittance.y *= tex_value.y;
+        mat.emittance.z *= tex_value.z;
+    }
+
+    mat.transmission = params.baseTransmission;
+    if (checkMaterialFlag(params.flags,
+                          MaterialFlags::HasTransmissionTexture)) {
+        cudaTextureObject_t tex =
+            textures[TextureConstants::transmissionOffset];
+        float tex_value = tex2DLod<float>(tex, uv.x, uv.y, 0);
+
+        mat.transmission *= tex_value;
+    }
+
+    mat.clearcoatScale = params.clearcoat;
+    mat.clearcoatRoughness = params.clearcoatRoughness;
+    if (checkMaterialFlag(params.flags,
+                          MaterialFlags::HasClearcoatTexture)) {
+        cudaTextureObject_t tex =
+            textures[TextureConstants::clearcoatOffset];
+        float2 tex_value = tex2DLod<float2>(tex, uv.x, uv.y, 0);
+
+        mat.clearcoatScale *= tex_value.x;
+        mat.clearcoatRoughness *= tex_value.y;
+    }
+
+    mat.anisoScale = params.anisoScale;
+    mat.anisoRotation = params.anisoRotation;
+    if (checkMaterialFlag(params.flags,
+                          MaterialFlags::HasAnisotropicTexture)) {
+        cudaTextureObject_t tex = textures[TextureConstants::anisoOffset];
+        float2 tex_value = tex2DLod<float2>(tex, uv.x, uv.y, 0);
+        float2 aniso_v = tex_value * 2.f - 1.f;
+
+        mat.anisoScale = length(aniso_v);
+        mat.anisoRotation = atan2f(aniso_v.y, aniso_v.x);
+    }
+
+    mat.ior = params.ior;
+    mat.attenuationColor = params.attenuationColor;
+    mat.attenuationDistance = params.attenuationDistance;
+
+    return mat;
 }
 
-__forceinline__ MaterialParams computeMaterialParams(const Material &mat,
-    const cudaTextureObject_t *textures, float2 uv)
+__forceinline__ float fetchDiffuseAverageAlbedo(float lookup_f0,
+                                                float roughness)
 {
-    float3 base_color = mat.baseColor;
-    if (mat.baseColorIdx != ~0u) {
-        cudaTextureObject_t tex = textures[mat.baseColorIdx];
-        float4 tex_value = tex2DLod<float4>(tex, uv.x, uv.y, 0);
+    return tex2DLod<float>(launchInput.precomputed.diffuseAverage,
+                           roughness, lookup_f0, 0);
+}
 
-        base_color.x *= tex_value.x;
-        base_color.y *= tex_value.y;
-        base_color.z *= tex_value.z;
-    }
+__forceinline__ float fetchDiffuseDirectionalAlbedo(float lookup_f0,
+                                                    float roughness,
+                                                    float cos_theta)
+{
+    return tex3DLod<float>(launchInput.precomputed.diffuseDirectional,
+                           cos_theta, roughness, lookup_f0, 0);
+}
 
-    float metallic = mat.metallic;
-    float roughness = mat.roughness;
+__forceinline__ float fetchMicrofacetMSAverageAlbedo(float roughness)
+{
+    return tex1DLod<float>(launchInput.precomputed.microfacetAverage,
+                           roughness, 0);
+}
 
-    if (mat.metallicRoughnessIdx != ~0u) {
-        cudaTextureObject_t tex = textures[mat.metallicRoughnessIdx];
-        float4 tex_value = tex2DLod<float4>(tex, uv.x, uv.y, 0);
+__forceinline__ float fetchMicrofacetMSDirectionalAlbedo(float roughness,
+                                                         float cos_theta)
+{
+    return tex2DLod<float>(launchInput.precomputed.microfacetDirectional,
+                           cos_theta, roughness, 0);
+}
 
-        metallic *= tex_value.z;
-        roughness *= tex_value.y;
-    }
+__forceinline__ float sampleMSMicrofacetAngle(float roughness, float u)
+{
+    return tex2DLod<float>(
+        launchInput.precomputed.microfacetDirectionalInverse, u, roughness, 0);
+}
 
-    float3 diffuse = lerp(base_color, make_float3(0), metallic);
-
-    float F0 = 0.04; // Assume constant IoR 1.5
-
-    float3 specular = lerp(make_float3(F0), base_color, metallic);
-
-    float alpha = roughness * roughness;
-
+__forceinline__ BSDFParams buildBSDF(const Material &material, float3 wo)
+{
     static constexpr float min_alpha = 0.0064f;
+
+    static constexpr float prior_ior = 1.f;
+    float ior_ratio = (material.ior - prior_ior) / (material.ior + prior_ior);
+    float base_f0 = ior_ratio * ior_ratio;
+
+    float3 dielectric_f0 = fminf(make_float3(1.f), base_f0 * 
+        material.rhoSpecular) * material.specularScale;
+    float dielectric_f90 = material.specularScale;
+
+    // Clearcoat params
+    float clearcoat_reflectance_estimate =
+        material.clearcoatScale * computeFresnel(0.04f, 1.f, wo.z);
+    float clearcoat_alpha =
+        material.clearcoatRoughness * material.clearcoatRoughness;
+    if (clearcoat_alpha < min_alpha) {
+        clearcoat_alpha = 0.f;
+    }
+
+    // Core weights
+    float transmission_weight = material.transmission;
+    float opaque_weight = (1.f - material.transmission);
+    float dielectric_weight = (1.f - material.metallic);
+
+    float3 base_dielectric = material.rho * dielectric_weight;
+
+    // Microfacet params
+    // Scale between specular and metallic fresnel
+    float3 shared_f0 = lerp(material.rho, dielectric_f0, dielectric_weight);
+    float shared_f90 = fmaf(dielectric_weight, dielectric_f90,
+                            material.metallic);
+
+    float3 ss_fresnel_estimate =
+        computeFresnel(shared_f0, make_float3(shared_f90), wo.z);
+    float3 ss_transmissive_fresnel_estimate =
+        1.f - computeFresnel(dielectric_f0, make_float3(dielectric_f90), wo.z);
+
+    float alpha = material.roughness * material.roughness;
     if (alpha < min_alpha) {
         alpha = 0.f;
     }
+    
+    // Multiscattering / energy conservation params
+    // FIXME, it is pretty ambiguous whether the lookup tables wants
+    // shared_f0 or dielectric_f0 here
+    float diffuse_lookup_f0 = max(shared_f0.x, max(shared_f0.y, shared_f0.z));
 
-    return MaterialParams {
-        diffuse,
-        specular,
-        alpha,
-        metallic,
-        roughness,
-    };
-}
-#endif
+    float ms_microfacet_avg_albedo =
+        fetchMicrofacetMSAverageAlbedo(material.roughness);
+    float3 ms_fresnel_avg = 1.f / 21.f * shared_f90 + 20.f / 21.f * shared_f0;
 
-__forceinline__ BSDFParams computeBSDFParams(const MaterialParams &mat_params,
-                                             float3 wo)
-{
-    float dielectric_weight = 1.f - mat_params.metallic;
+    float ms_avg_albedo_compl = 1.f - ms_microfacet_avg_albedo;
+    float ms_dir_albedo_compl =
+        (1.f - fetchMicrofacetMSDirectionalAlbedo(material.roughness, wo.z));
 
-    float3 specular_fresnel = computeFresnel(mat_params.specularAlbedo,
-                                             make_float3(1.f), wo.z);
+    float3 ms_fresnel =
+        (ms_fresnel_avg * ms_fresnel_avg * ms_microfacet_avg_albedo) /
+        (1.f - ms_fresnel_avg * ms_avg_albedo_compl);
 
-    float diffuse_luma = rgbExtractY(mat_params.diffuseAlbedo);
-    float specular_luma = rgbExtractY(specular_fresnel);
+    float3 ms_microfacet_weight = ms_fresnel * ms_dir_albedo_compl;
 
-    float diffuse_prob = diffuse_luma * dielectric_weight;
-    float specular_prob = specular_luma;
+    // Compute importance sampling weights
+    float clearcoat_prob = clearcoat_reflectance_estimate;
+    float not_clearcoat_prob = 1.f - clearcoat_prob;
+    float dielectric_luminance =
+        not_clearcoat_prob * rgbToLuminance(base_dielectric);
+    float diffuse_prob =
+        not_clearcoat_prob * dielectric_luminance * opaque_weight;
+    float microfacet_prob =
+        not_clearcoat_prob * rgbToLuminance(ss_fresnel_estimate);
+    float microfacet_ms_prob =
+        not_clearcoat_prob * rgbToLuminance(ms_fresnel);
+    float transmission_prob = not_clearcoat_prob * dielectric_luminance *
+        transmission_weight * rgbToLuminance(ss_transmissive_fresnel_estimate);
 
-    float total_prob = diffuse_prob + specular_prob;
-    if (total_prob > 0.f) {
-        diffuse_prob /= total_prob;
-        specular_prob /= total_prob;
+    float prob_sum = clearcoat_prob + diffuse_prob + microfacet_prob +
+        microfacet_ms_prob + transmission_prob;
+    if (prob_sum > 0.f) {
+        float inv_prob = 1.f / prob_sum;
+        clearcoat_prob *= inv_prob;
+        diffuse_prob *= inv_prob;
+        microfacet_prob *= inv_prob;
+        microfacet_ms_prob *= inv_prob;
+        transmission_prob *= inv_prob;
     }
 
-    BSDFParams out;
-    out.diffuseAlbedo = mat_params.diffuseAlbedo;
-    out.specularAlbedo = mat_params.specularAlbedo;
-    out.alpha = mat_params.alpha;
-    out.roughness = mat_params.roughness;
-    out.diffuseProb = diffuse_prob;
-    out.specularProb = specular_prob;
-
-    return out;
+    return BSDFParams {
+        base_dielectric * opaque_weight,
+        material.transparencyMask,
+        base_dielectric * transmission_weight,
+        transmission_weight,
+        shared_f0,
+        shared_f90,
+        dielectric_f0,
+        dielectric_f90,
+        alpha,
+        material.roughness,
+        material.clearcoatScale,
+        clearcoat_alpha,
+        material.specularScale,
+        diffuse_lookup_f0,
+        fetchDiffuseAverageAlbedo(diffuse_lookup_f0, material.roughness),
+        ms_microfacet_weight,
+        ms_avg_albedo_compl,
+        clearcoat_prob,
+        diffuse_prob,
+        microfacet_prob,
+        microfacet_ms_prob,
+        transmission_prob
+    };
 }
+
+enum class BSDFFlags : uint32_t {
+    Invalid = 1 << 0,
+    Delta = 1 << 1,
+    Diffuse = 1 << 2,
+    MicrofacetReflection = 1 << 3,
+    MicrofacetTransmission = 1 << 4,
+};
+
+BSDFFlags & operator|=(BSDFFlags &a, BSDFFlags b)
+{
+    a = BSDFFlags(static_cast<uint32_t>(a) | static_cast<uint32_t>(b));
+    return a;
+}
+
+bool operator&(BSDFFlags a, BSDFFlags b)
+{
+    return (static_cast<uint32_t>(a) & static_cast<uint32_t>(b)) > 0;
+}
+
+template <typename T>
+struct SampleResult {
+    float3 dir;
+    T weight;
+    BSDFFlags flags;
+};
 
 struct ShadeResult {
     float3 color;
     float3 bounceDir;
     float3 bounceProb;
+    BSDFFlags flags;
 };
 
-__forceinline__ float3 diffuseWeight(const BSDFParams &bsdf_params,
-                                     const float3 &wo, const float3 &wi,
-                                     const float3 &half_vec)
+__forceinline__ float3 cosineHemisphere(float2 uv)
 {
-    float cos_in_half = dot(wi, half_vec);
-    float bias = lerp(0.f, 0.5f, bsdf_params.roughness);
-    float energy_coeff = lerp(1.f, 1.f / 1.51f, bsdf_params.roughness);
-    float fd90 = bias + 2.f * cos_in_half * cos_in_half * bsdf_params.roughness;
-    constexpr float fd0 = 1.f;
-    float out_scatter = computeFresnel(fd0, fd90, wo.z);
-    float in_scatter = computeFresnel(fd0, fd90, wi.z);
+    const float r = sqrtf(uv.x);
+    const float phi = 2.0f * M_PI * uv.y;
+    float2 disk = r * make_float2(cosf(phi), sinf(phi));
+    float3 hemisphere = make_float3(disk.x, disk.y,
+        sqrtf(fmaxf(0.0f, 1.0f - dot(disk, disk))));
 
-    return bsdf_params.diffuseAlbedo * out_scatter * in_scatter * energy_coeff;
-}
-
-__forceinline__ float3 diffuseBSDF(const BSDFParams &bsdf_params,
-                                   const float3 &wo, const float3 &wi,
-                                   const float3 &half_vec)
-{
-    return diffuseWeight(bsdf_params, wo, wi, half_vec) * M_1_PI * wi.z;
-}
-
-__forceinline__ float ggxLambda(float cos_theta, float a2)
-{
-    if (cos_theta <= 0.f) return 0.f;
-
-    float cos2 = cos_theta * cos_theta;
-    float tan2 = max(1.f - cos2, 0.f) / cos2;
-    return 0.5f * (-1.f + sqrt(1.f + a2 * tan2));
-}
-
-__forceinline__ float ggxNDF(float alpha, float cos_theta)
-{
-    float a2 = alpha * alpha;
-    float d = ((cos_theta * a2 - cos_theta) * cos_theta + 1.f);
-    return a2 / (d * d * M_PI);
-}
-
-__forceinline__ float ggxMasking(float a2, float out_cos, float in_cos)
-{
-    float in_lambda = ggxLambda(in_cos, a2);
-    float out_lambda = ggxLambda(out_cos, a2);
-    return 1.f / (1.f + in_lambda + out_lambda);
-}
-
-__forceinline__ float3 specularBSDF(const BSDFParams &bsdf_params,
-                                    const float3 &wo, const float3 &wi,
-                                    const float3 &half_vec)
-{
-    float a2 = bsdf_params.alpha * bsdf_params.alpha;
-    float D = ggxNDF(bsdf_params.alpha, half_vec.z);
-    float G = ggxMasking(a2, wo.z, wi.z);
-
-    float cos_out_half = dot(wo, half_vec);
-
-    float3 F = computeFresnel(bsdf_params.specularAlbedo, make_float3(1.f),
-                              cos_out_half);
-
-    float3 specular = 0.25f * F * D * G / wo.z;
-
-    return (bsdf_params.diffuseProb == 0.f || bsdf_params.alpha == 0 ||
-            min(wo.z, wi.z) < 1e-6f) ? make_float3(0.f) : specular;
-}
-
-__forceinline__ float3 evalBSDF(const BSDFParams &bsdf_params,
-                                const float3 &wo, const float3 &wi)
-{
-    float3 half_vec = normalize(wo + wi);
-    return diffuseBSDF(bsdf_params, wo, wi, half_vec) +
-        specularBSDF(bsdf_params, wo, wi, half_vec);
+    return hemisphere;
 }
 
 __forceinline__ float3 concentricHemisphere(float2 uv)
@@ -392,37 +666,155 @@ __forceinline__ float3 concentricHemisphere(float2 uv)
     return make_float3(d.x, d.y, z);
 }
 
-__forceinline__ float3 cosineHemisphere(float2 uv)
+// Enterprise PBR diffuse BRDF
+// diffuseWeight and diffuseBSDF are separated to allow concentricHemisphere
+// sampling which divides out the M_1_PI * wi_dot_n factor when sampling
+__forceinline__ float3 diffuseWeight(const BSDFParams &params,
+                                     float wo_dot_n, float wi_dot_n)
 {
-    const float r = sqrtf(uv.x);
-    const float phi = 2.0f * M_PI * uv.y;
-    float2 disk = r * make_float2(cosf(phi), sinf(phi));
-    float3 hemisphere = make_float3(disk.x, disk.y,
-        sqrtf(fmaxf(0.0f, 1.0f - dot(disk, disk))));
+    float E_diffuse_o = fetchDiffuseDirectionalAlbedo(params.diffuseLookupF0,
+                                                      params.roughness,
+                                                      wo_dot_n);
 
-    return hemisphere;
+    float E_diffuse_i = fetchDiffuseDirectionalAlbedo(params.diffuseLookupF0,
+                                                      params.roughness,
+                                                      wi_dot_n);
+
+    float Bc = ((1.f - E_diffuse_o) * (1.f - E_diffuse_i)) /
+            (1.f - params.diffuseAverageAlbedo);
+
+    float weight = lerp(1.f, Bc, params.diffuseLambertScale);
+
+    if (min(wo_dot_n, wi_dot_n) < 1e-6f) {
+        return make_float3(0.f);
+    } else {
+        return weight * params.rhoDiffuse;
+    }
 }
 
-__forceinline__ pair<float3, float3> sampleDiffuse(const BSDFParams &bsdf_params,
-                                                   const float3 &wo,
-                                                   const float2 &sample_uv)
+__forceinline__ float3 diffuseBSDF(const BSDFParams &bsdf_params,
+                                   float wo_dot_n, float wi_dot_n)
+{
+    return diffuseWeight(bsdf_params, wo_dot_n, wi_dot_n) * M_1_PI * wi_dot_n;
+}
+
+__forceinline__ SampleResult<float3> sampleDiffuse(
+    const BSDFParams &bsdf_params, float3 wo, float2 sample_uv)
 {
     float3 wi = concentricHemisphere(sample_uv);
-    float3 h = normalize(wo + wi);
-    float3 weight = diffuseWeight(bsdf_params, wo, wi, h);
-
-    if (min(wo.z, wi.z) < 1e-6f) {
-        weight = make_float3(0.f);
-    } 
+    float3 weight = diffuseWeight(bsdf_params, wo.z, wi.z);
 
     return {
         wi,
         weight,
+        BSDFFlags::Diffuse,
     };
 }
 
-__forceinline__ float3 sampleGGX(float alpha, const float3 &wo,
-                                              const float2 &sample_uv)
+// Single scattering GGX Microfacet BRDF
+__forceinline__ float ggxLambda(float cos_theta, float a2)
+{
+    if (cos_theta <= 0.f) return 0.f;
+
+    float cos2 = cos_theta * cos_theta;
+    float tan2 = max(1.f - cos2, 0.f) / cos2;
+    return 0.5f * (-1.f + sqrt(1.f + a2 * tan2));
+}
+
+__forceinline__ float ggxNDF(float alpha, float cos_theta)
+{
+    float a2 = alpha * alpha;
+    float d = ((cos_theta * a2 - cos_theta) * cos_theta + 1.f);
+    return a2 / (d * d * M_PI);
+}
+
+__forceinline__ float ggxMasking(float a2, float out_cos, float in_cos)
+{
+    float in_lambda = ggxLambda(in_cos, a2);
+    float out_lambda = ggxLambda(out_cos, a2);
+    return 1.f / (1.f + in_lambda + out_lambda);
+}
+
+template <typename T> __forceinline__ T makeZeroVec();
+
+template <>
+float makeZeroVec()
+{
+    return 0.f;
+}
+
+template <>
+float3 makeZeroVec()
+{
+    return make_float3(0.f);
+}
+
+template <typename T>
+__forceinline__ T evalGGX(float wo_dot_n, float wi_dot_n, float n_dot_h,
+                          T F, float alpha)
+{
+    float a2 = alpha * alpha;
+    float D = ggxNDF(alpha, n_dot_h);
+    float G = ggxMasking(a2, wo_dot_n, wi_dot_n);
+
+    T specular = 0.25f * F * D * G / wo_dot_n;
+
+    return (alpha == 0.f || min(wo_dot_n, wi_dot_n) < 1e-6f) ?
+        makeZeroVec<T>() : specular;
+}
+
+__forceinline__ float3 microfacetBSDF(const BSDFParams &params,
+                                      float wo_dot_n, float wi_dot_n,
+                                      float n_dot_h, float dir_dot_h)
+{
+    float3 F = computeFresnel(params.sharedF0, make_float3(params.sharedF90),
+                              dir_dot_h);
+
+    return evalGGX(wo_dot_n, wi_dot_n, n_dot_h, F, params.alpha);
+}
+
+__forceinline__ pair<float, float> clearcoatBSDF(
+    const BSDFParams &params, float wo_dot_n, float wi_dot_n,
+    float n_dot_h, float dir_dot_h)
+{
+    float F = computeFresnel(0.04f, 1.f, dir_dot_h);
+
+    float response = evalGGX(wo_dot_n, wi_dot_n, n_dot_h, F,
+                             params.clearcoatAlpha);
+
+    float max_fresnel_n = max(computeFresnel(0.04f, 1.f, wo_dot_n),
+                              computeFresnel(0.04f, 1.f, wi_dot_n));
+
+    return {
+        response * params.clearcoatScale,
+        1.f - params.clearcoatScale * max_fresnel_n,
+    };
+}
+
+__forceinline__ float3 microfacetTransmissiveBSDF(const BSDFParams &params,
+                                                  float3 wo,
+                                                  float3 wi)
+{
+    wi.z *= -1.f;
+
+    float wi_dot_wo = dot(wo, wi);
+
+    float len_sq_io = 2.f + 2.f * wi_dot_wo;
+    float rlen_io = rsqrtf(len_sq_io);
+
+    float n_dot_h = (wo.z + wi.z) * rlen_io;
+    float dir_dot_h = rlen_io + rlen_io * wi_dot_wo;
+
+    float3 F = 1.f - computeFresnel(params.transmissiveF0,
+                                    make_float3(params.transmissiveF90),
+                                    dir_dot_h);
+    float3 microfacet_response = evalGGX(wo.z, wi.z,
+        n_dot_h, F, params.alpha);
+
+    return microfacet_response * params.rhoTransmissive;
+}
+
+__forceinline__ float3 sampleGGX(float alpha, float3 wo, float2 sample_uv)
 {
     float3 Vh = normalize(make_float3(alpha * wo.x, alpha * wo.y, wo.z));
 
@@ -446,120 +838,279 @@ __forceinline__ float3 sampleGGX(float alpha, const float3 &wo,
     return h;
 }
 
-__forceinline__ pair<float3, float3> sampleSpecular(const BSDFParams &bsdf_params,
-                                                    const float3 &wo,
-                                                    const float2 &sample_uv)
+template <typename T, bool transmission = false>
+__forceinline__ SampleResult<T> sampleMicrofacet(
+    float3 wo, float2 sample_uv, T F0, T F90, float alpha)
 {
     float3 wi;
-    float3 weight;
+    T weight;
+    BSDFFlags flags {};
 
     if (wo.z < 1e-6f) {
         wi = make_float3(0.f);
-        weight = make_float3(0.f);
-    } else if (bsdf_params.alpha == 0.f) {
+        weight = makeZeroVec<T>();
+
+        flags |= BSDFFlags::Invalid;
+    } else if (alpha == 0.f) {
         wi = make_float3(-wo.x, -wo.y, wo.z);
-        weight = computeFresnel(bsdf_params.specularAlbedo, make_float3(1.f), wo.z);
+        T F = computeFresnel(F0, F90, wo.z);
+        if constexpr (transmission) {
+            weight = 1.f - F;
+        } else {
+            weight = F;
+        }
+
+        flags |= BSDFFlags::Delta;
     } else {
-        float3 h = sampleGGX(bsdf_params.alpha, wo, sample_uv);
+        float3 h = sampleGGX(alpha, wo, sample_uv);
         float cos_half_out = dot(wo, h);
         wi = 2.f * cos_half_out * h - wo;
 
         if (wi.z < 1e-6f) {
-            weight = make_float3(0.f);
+            weight = makeZeroVec<T>();
         } else {
-            float a2 = bsdf_params.alpha * bsdf_params.alpha;
+            float a2 = alpha * alpha;
 
             float G = ggxMasking(a2, wo.z, wi.z);
             float GG1_out = G * (1.f + ggxLambda(wo.z, a2));
-            float3 F = computeFresnel(bsdf_params.specularAlbedo, make_float3(1.f),
-                                      cos_half_out);
+            T F = computeFresnel(F0, F90, cos_half_out);
 
-            weight = F * GG1_out;
+            if constexpr (transmission) {
+                weight = (1.f - F) * GG1_out;
+            } else {
+                weight = F * GG1_out;
+            }
         }
     }
 
-    return {
-        wi,
-        weight,
-    };
-}
-
-__forceinline__ pair<float3, float3> sampleBSDF(Sampler &sampler,
-                                                const BSDFParams &bsdf_params,
-                                                const float3 &wo)
-{
-    float3 wi;
-    float3 weight;
-    float selector = sampler.get1D();
-    float2 sample2D = sampler.get2D();
-
-    if (selector < bsdf_params.diffuseProb) {
-        tie(wi, weight) = sampleDiffuse(bsdf_params, wo, sample2D);
-        weight /= bsdf_params.diffuseProb;
-    } else if (selector < bsdf_params.diffuseProb + bsdf_params.specularProb) {
-        tie(wi, weight) = sampleSpecular(bsdf_params, wo, sample2D);
-        weight /= bsdf_params.specularProb;
+    if constexpr (transmission) {
+        flags |= BSDFFlags::MicrofacetTransmission;
     } else {
-        wi = make_float3(0.f);
-        weight = make_float3(0.f);
+        flags |= BSDFFlags::MicrofacetReflection;
     }
 
     return {
         wi,
         weight,
+        flags,
     };
 }
 
-__forceinline__ float3 worldToLocal(float3 vec, float3 normal, float3 tangent,
-                                    float3 bitangent)
+__forceinline__ SampleResult<float3> sampleMicrofacetShared(
+    const BSDFParams &params, float3 wo, float2 sample_uv)
 {
-    return make_float3(dot(vec, tangent), dot(vec, bitangent),
-        dot(vec, normal));
+    return sampleMicrofacet(wo, sample_uv, params.sharedF0,
+                            make_float3(params.sharedF90), params.alpha);
 }
 
-__forceinline__ float3 localToWorld(float3 vec, float3 normal, float3 tangent,
-                                  float3 bitangent)
+__forceinline__ SampleResult<float3> sampleClearcoat(
+    const BSDFParams &params, float3 wo, float2 sample_uv)
 {
-    return vec.x * tangent + vec.y * bitangent + vec.z * normal;
+    SampleResult<float> sample = sampleMicrofacet(wo, sample_uv,
+        0.04f, 1.f, params.clearcoatAlpha);
+    sample.weight *= params.clearcoatScale;
+
+    return {
+        sample.dir,
+        make_float3(sample.weight),
+        sample.flags,
+    };
 }
 
-__forceinline__ ShadeResult shade(Sampler &sampler, const Material &mat,
-                                  const cudaTextureObject_t *textures, const Light &light, 
-                                  float3 outgoing, float3 to_light,
-                                  float dist_to_light2, float inv_light_pdf,
-                                  float2 uv, float3 normal,
-                                  float3 tangent, float3 bitangent)
+__forceinline__ SampleResult<float3> sampleMicrofacetTransmission(
+    const BSDFParams &params, float3 wo, float2 sample_uv)
 {
-    float3 wo = worldToLocal(outgoing, normal, tangent, bitangent);
-    float3 wi = worldToLocal(to_light, normal, tangent, bitangent);
+    SampleResult<float3> sample = sampleMicrofacet<float3, true>(wo, sample_uv,
+        params.transmissiveF0, make_float3(params.transmissiveF90),
+        params.alpha);
 
-    // FIXME, make divergence less bad here
-    if (wi.z < 0.f) {
+    // Reflect back for transmission
+    sample.dir.z *= -1.f;
+    sample.weight *= params.rhoTransmissive;
+
+    return sample;
+}
+
+__forceinline__ float3 microfacetMSBSDF(const BSDFParams &params,
+                                        float wo_dot_n, float wi_dot_n)
+{
+    float3 ms_contrib =
+        (1.f - fetchMicrofacetMSDirectionalAlbedo(params.roughness, wi_dot_n)) *
+        params.microfacetMSWeight * M_1_PI * wi_dot_n /
+        params.microfacetMSAvgAlbedoComplement;
+
+    return (params.alpha == 0.f || min(wo_dot_n, wi_dot_n) < 1e-6f) ?
+        make_float3(0.f) : ms_contrib;
+}
+
+__forceinline__ SampleResult<float3> sampleMSMicrofacet(
+    const BSDFParams &params, float3 wo, float2 sample_uv)
+{
+    float theta = sampleMSMicrofacetAngle(params.roughness, sample_uv.x);
+    float phi = 2 * M_PI * sample_uv.y;
+    float2 circle_dir = make_float2(cosf(phi), sinf(phi));
+    float xy_mag = sqrtf(1.f - theta * theta);
+
+    float3 wi = make_float3(circle_dir.x * xy_mag,
+                            circle_dir.y * xy_mag, theta);
+
+    // 1/(2pi) factor cancels out the 2 from the theta PDF
+    float3 weight = params.microfacetMSWeight;
+
+    if (min(wo.z, wi.z) < 1e-6f) {
         return {
             make_float3(0.f),
             make_float3(0.f),
-            make_float3(0.f),
+            BSDFFlags::Invalid,
         };
-    }
-
-    MaterialParams mat_params = computeMaterialParams(mat, textures, uv);
-    BSDFParams bsdf_params = computeBSDFParams(mat_params, wo);
-
-    float3 bsdf = evalBSDF(bsdf_params, wo, wi);
-
-    // Lighting FIXME move light calculations to before this function
-    float3 irradiance = light.rgb / dist_to_light2;
-    float3 nee = bsdf * irradiance * inv_light_pdf;
-
-    // Compute bounce
-    auto [sample_dir, sample_prob] = sampleBSDF(sampler, bsdf_params, wo);
-
-    return {
-        nee,
-        localToWorld(sample_dir, normal, tangent, bitangent),
-        sample_prob,
+    } else {
+        return {
+            wi,
+            weight,
+            BSDFFlags::MicrofacetReflection,
+        };
     };
 }
+
+__forceinline__ float3 evalBSDF(const BSDFParams &params,
+                                float3 wo, float3 wi)
+{
+    // Hammon 2017
+    float wi_dot_wo = dot(wo, wi);
+
+    float len_sq_io = 2.f + 2.f * wi_dot_wo;
+    float rlen_io = rsqrtf(len_sq_io);
+
+    float n_dot_h = (wo.z + wi.z) * rlen_io;
+    float dir_dot_h = rlen_io + rlen_io * wi_dot_wo;
+
+    float3 diffuse = diffuseBSDF(params, wo.z, wi.z);
+
+    float3 microfacet =
+        microfacetBSDF(params, wo.z, wi.z, n_dot_h, dir_dot_h) +
+        microfacetMSBSDF(params, wo.z, wi.z);
+
+    float3 transmissive =
+        microfacetTransmissiveBSDF(params, wo, wi);
+
+    float3 base = diffuse + microfacet + transmissive;
+
+    auto [clearcoat_response, base_scale] =
+        clearcoatBSDF(params, wo.z, wi.z, n_dot_h, dir_dot_h);
+
+    return base * base_scale + clearcoat_response;
+}
+
+__forceinline__ SampleResult<float3> sampleBSDF(Sampler &sampler,
+                                                const BSDFParams &params,
+                                                float3 wo)
+{
+    float selector = sampler.get1D();
+    float2 uv = sampler.get2D();
+
+    float cdf[] {
+        params.clearcoatProb,
+        params.diffuseProb,
+        params.microfacetProb,
+        params.microfacetMSProb,
+        params.transmissionProb,
+    };
+
+    cdf[1] += cdf[0];
+    cdf[2] += cdf[1];
+    cdf[3] += cdf[2];
+    cdf[4] += cdf[3];
+
+    SampleResult<float3> sample;
+    if (selector < cdf[0]) {
+        sample = sampleClearcoat(params, wo, uv);
+        sample.weight /= params.clearcoatProb;
+    } else if (selector < cdf[1]) {
+        sample = sampleDiffuse(params, wo, uv);
+        sample.weight /= params.diffuseProb;
+    } else if (selector < cdf[2]) {
+        sample = sampleMicrofacetShared(params, wo, uv);
+        sample.weight /= params.microfacetProb;
+    } else if (selector < cdf[3]) {
+        sample = sampleMSMicrofacet(params, wo, uv);
+        sample.weight /= params.microfacetMSProb;
+    } else if (selector < cdf[4]) {
+        sample = sampleMicrofacetTransmission(params, wo, uv);
+        sample.weight /= params.transmissionProb;
+    } else {
+        sample.dir = make_float3(0.f);
+        sample.weight = make_float3(0.f);
+        sample.flags = BSDFFlags::Invalid;
+    }
+
+    return sample;
+}
+
+// Ray Tracing Gems Chapter 6 (avoid self intersections)
+inline float3 offsetRayOrigin(const float3 &o, const float3 &geo_normal)
+{
+    constexpr float global_origin = 1.f / 32.f;
+    constexpr float float_scale = 1.f / 65536.f;
+    constexpr float int_scale = 256.f;
+
+    int3 int_offset = make_int3(geo_normal.x * int_scale,
+        geo_normal.y * int_scale, geo_normal.z * int_scale);
+
+    float3 o_integer = make_float3(
+        __int_as_float(
+            __float_as_int(o.x) + ((o.x < 0) ? -int_offset.x : int_offset.x)),
+        __int_as_float(
+            __float_as_int(o.y) + ((o.y < 0) ? -int_offset.y : int_offset.y)),
+        __int_as_float(
+            __float_as_int(o.z) + ((o.z < 0) ? -int_offset.z : int_offset.z)));
+
+    return make_float3(
+        fabsf(o.x) < global_origin ?
+            o.x + float_scale * geo_normal.x : o_integer.x,
+        fabsf(o.y) < global_origin ?
+            o.y + float_scale * geo_normal.y : o_integer.y,
+        fabsf(o.z) < global_origin ?
+            o.z + float_scale * geo_normal.z : o_integer.z);
+}
+
+float sign(float x)
+{
+    return x >= 0.f ? 1.f : -1.f;
+}
+
+// Ray Tracing Gems 16.5.4.2
+float3 octSphereMap(float2 u)
+{
+    u = u * 2.f - 1.f;
+
+    // Compute radius r (branchless)
+    float d = 1.f - (fabsf(u.x) + fabsf(u.y));
+    float r = 1.f - fabsf(d);
+
+    // Compute phi in the first quadrant (branchless, except for the
+    // division-by-zero test), using sign(u) to map the result to the
+    // correct quadrant below
+    float phi = (r == 0.f) ? 0.f :
+        M_PI_4 * ((fabsf(u.y) - fabsf(u.x)) / r + 1.f);
+
+    float f = r * sqrtf(2.f - r * r);
+    float x = f * sign(u.x) * cosf(phi);
+    float y = f * sign(u.y) * sinf(phi);
+    float z = sign(d) * (1.f - r * r);
+
+    return make_float3(x, y, z);
+}
+
+struct LightSample {
+    float3 toLight;
+    float3 weight; // Irradiance / PDF
+};
+
+struct LightInfo {
+    LightSample sample;
+    float3 shadowRayOrigin;
+    float shadowRayLength;
+};
 
 __forceinline__ Light unpackLight(const PackedLight &packed)
 {
@@ -569,6 +1120,161 @@ __forceinline__ Light unpackLight(const PackedLight &packed)
     return Light {
         make_float3(data0.x, data0.y, data0.z),
         make_float3(data0.w, data1.x, data1.y),
+    };
+}
+
+__forceinline__ float2 dirToLatLong(float3 dir)
+{
+    float3 n = normalize(dir);
+    
+    return make_float2(
+        atan2f(n.x, -n.z) * (M_1_PI / 2.f) + 0.5f,
+        acosf(n.y) * M_1_PI);
+}
+
+__forceinline__ float3 evalEnvMap(cudaTextureObject_t env_tex,
+                                  float3 dir)
+{
+    float2 uv = dirToLatLong(dir);
+
+    float4 v = tex2DLod<float4>(env_tex, uv.x, uv.y, 0.f);
+
+    v *= 90.f;
+
+    return make_float3(v.x, v.y, v.z);
+}
+
+__forceinline__ LightSample sampleEnvMap(cudaTextureObject_t env_tex,
+    float2 uv, float inv_selection_pdf)
+{
+    float3 dir = octSphereMap(uv);
+
+    float3 irradiance = evalEnvMap(env_tex, dir);
+
+    const float inv_pdf = 4.f * M_PI;
+
+    return LightSample {
+        dir,
+        irradiance * inv_pdf * inv_selection_pdf,
+    };
+}
+
+__forceinline__ pair<LightSample, float> samplePointLight(
+    const Light &light, float3 origin, float inv_selection_pdf)
+{
+    float3 to_light = light.position - origin;
+
+    float dist_to_light2 = dot(to_light, to_light);
+
+    float3 irradiance = light.rgb / dist_to_light2;
+
+    float3 weight = irradiance * inv_selection_pdf;
+
+    return {
+        LightSample {
+            normalize(to_light),
+            weight,
+        },
+        dist_to_light2,
+    };
+}
+
+__forceinline__ LightInfo sampleLights(Sampler &sampler,
+    const Environment &env, cudaTextureObject_t env_tex, 
+    float3 origin, float3 base_normal)
+{
+    // include env map
+    uint32_t total_lights = env.numLights + 1;
+
+    uint32_t light_idx = min(uint32_t(sampler.get1D() * total_lights),
+                             total_lights - 1);
+
+    light_idx = env.numLights;
+
+    float2 light_sample_uv = sampler.get2D();
+
+    float inv_selection_pdf = float(total_lights);
+    inv_selection_pdf = 1.f;
+
+    LightSample light_sample;
+    Light point_light;
+    float3 dir_check;
+    if (light_idx < env.numLights) {
+        point_light = unpackLight(env.lights[light_idx]);
+        dir_check = point_light.position - origin;
+    } else {
+        light_sample = sampleEnvMap(env_tex, light_sample_uv, inv_selection_pdf);
+        dir_check = light_sample.toLight;
+    }
+
+    float3 shadow_offset_normal =
+        dot(dir_check, base_normal) > 0 ? base_normal : -base_normal;
+
+    float3 shadow_origin =
+        offsetRayOrigin(origin, shadow_offset_normal);
+
+    float shadow_len;
+    if (light_idx < env.numLights) {
+        float shadow_len2;
+        tie(light_sample, shadow_len2) =
+            samplePointLight(point_light, shadow_origin, inv_selection_pdf);
+
+        shadow_len = sqrtf(shadow_len2);
+    } else {
+        shadow_len = 10000.f;
+    }
+
+    return LightInfo {
+        light_sample,
+        shadow_origin,
+        shadow_len,
+    };
+}
+
+struct TangentFrame {
+    float3 tangent;
+    float3 bitangent;
+    float3 normal;
+};
+
+__forceinline__ float3 worldToLocal(float3 vec, const TangentFrame &frame) 
+{
+    return make_float3(dot(vec, frame.tangent), dot(vec, frame.bitangent),
+        dot(vec, frame.normal));
+}
+
+__forceinline__ float3 localToWorld(float3 vec, const TangentFrame &frame)
+{
+    return vec.x * frame.tangent + vec.y * frame.bitangent +
+        vec.z * frame.normal;
+}
+
+__forceinline__ ShadeResult shade(Sampler &sampler, const Material &material,
+                                  const LightSample &light_sample,
+                                  float3 outgoing,
+                                  const TangentFrame &frame)
+{
+    // These normalizations shouldn't be necessary, but z component
+    // needs to be accurate for cos angle
+    float3 wo = normalize(worldToLocal(outgoing, frame));
+    float3 wi = normalize(worldToLocal(light_sample.toLight, frame));
+
+    BSDFParams bsdf = buildBSDF(material, wo);
+
+    float3 bsdf_response = evalBSDF(bsdf, wo, wi);
+
+    float3 nee = bsdf_response * light_sample.weight;
+
+    // Compute bounce
+    SampleResult<float3> bounce = sampleBSDF(sampler, bsdf, wo);
+
+    float3 bounce_dir = localToWorld(bounce.dir, frame);
+
+    return {
+        nee,
+        bounce_dir,
+        bounce.weight,
+        bounce.flags,
     };
 }
 
@@ -582,8 +1288,8 @@ __forceinline__ pair<float3, float3> computeCameraRay(
     float2 screen = make_float2((2.f * jittered_raster.x) / dim.x - 1,
                                 (2.f * jittered_raster.y) / dim.y - 1);
 
-    float3 direction = camera.right * screen.x + camera.up * screen.y +
-        camera.view;
+    float3 direction = normalize(
+        camera.right * screen.x + camera.up * screen.y + camera.view);
 
     return {
         camera.origin,
@@ -614,33 +1320,108 @@ __forceinline__ float2 unormFloat2From32(uint32_t a)
      return make_float2(a >> 16, a & 0xffff) * (1.f / 65535.f);
 }
 
-__forceinline__ void setHitPayload(float2 barycentrics,
-                                   uint32_t triangle_index,
-                                   OptixTraversableHandle inst_hdl,
-                                   uint32_t instance_index)
+struct RayPayload {
+    float3 barycentrics;
+    uint32_t triIndex;
+    uint32_t instanceIndex;
+    uint32_t meshIndex;
+};
+
+__forceinline__ void packHitPayload(float2 barycentrics,
+                                    uint32_t triangle_index,
+                                    uint32_t instance_index,
+                                    uint32_t mesh_index)
 {
+    triangle_index <<= 8;
+    triangle_index |= ((mesh_index >> 8) & 0xFF);
+
+    instance_index <<= 8;
+    instance_index |= (mesh_index & 0xFF);
+
     optixSetPayload_0(unormFloat2To32(barycentrics));
     optixSetPayload_1(triangle_index);
-    optixSetPayload_2(inst_hdl >> 32);
-    optixSetPayload_3(inst_hdl & 0xFFFFFFFF);
-    optixSetPayload_4(instance_index);
+    optixSetPayload_2(instance_index);
+}
+
+__forceinline__ RayPayload unpackHitPayload(uint32_t payload_0,
+                                            uint32_t payload_1,
+                                            uint32_t payload_2)
+{
+    float2 raw_barys = unormFloat2From32(payload_0);
+    float3 barys = computeBarycentrics(raw_barys);
+    uint32_t raw_tri = payload_1;
+    uint32_t raw_inst = payload_2;
+    uint32_t tri_idx = raw_tri >> 8;
+    uint32_t instance_idx = raw_inst >> 8;
+    uint32_t mesh_idx = raw_inst & 0xff | ((raw_tri & 0xFF) << 8);
+
+    return {
+        barys,
+        tri_idx,
+        instance_idx,
+        mesh_idx,
+    };
+}
+
+__forceinline__ pair<float3, float4> decodeNormalTangent(uint3 packed)
+{
+    auto octDecode = [](float2 f) {
+        f = f * 2.f - 1.f;
+        // https://twitter.com/Stubbesaurus/status/937994790553227264
+        float3 n = make_float3(f.x, f.y, 1.f - fabsf(f.x) - fabsf(f.y));
+        float t = __saturatef(-n.z);
+        n.x += n.x >= 0.f ? -t : t;
+        n.y += n.y >= 0.f ? -t : t;
+        return normalize(n);
+    };
+
+    float3 normal {
+        __half2float(__ushort_as_half(packed.x & 0xFFFF)),
+        __half2float(__ushort_as_half(packed.x >> 16)),
+        __half2float(__ushort_as_half(packed.y & 0xFFFF)),
+    };
+
+    float sign = __half2float(__ushort_as_half(packed.y >> 16));
+
+    int2 snormtan {
+        int16_t(packed.z & 0xFFFF),
+        int16_t(packed.z >> 16),
+    };
+
+    float2 oct_tan = clamp(
+        make_float2(__int2float_rn(snormtan.x), __int2float_rn(snormtan.y)) *
+            3.0518509475997192297128208258309e-5f,
+        -1.f, 1.f);
+
+    float3 tangent = octDecode(oct_tan);
+
+    return {
+        normal,
+        make_float4(tangent.x, tangent.y, tangent.z, sign),
+    };
 }
 
 __forceinline__ DeviceVertex unpackVertex(
-    const PackedVertex &packed)
+    const DevicePackedVertex &packed)
 {
     float4 a = packed.data[0];
     float4 b = packed.data[1];
 
+    uint3 packed_normal_tangent = make_uint3(
+        __float_as_uint(a.w), __float_as_uint(b.x), __float_as_uint(b.y));
+    auto [normal, tangent_and_sign] =
+        decodeNormalTangent(packed_normal_tangent);
+
     return DeviceVertex {
         make_float3(a.x, a.y, a.z),
-        make_float3(a.w, b.x, b.y),
+        normal,
+        tangent_and_sign,
         make_float2(b.z, b.w),
     };
 }
 
 __forceinline__ Triangle fetchTriangle(
-    const PackedVertex *vertex_buffer,
+    const DevicePackedVertex *vertex_buffer,
     const uint32_t *index_start)
 {
     return Triangle {
@@ -660,6 +1441,9 @@ __forceinline__ DeviceVertex interpolateTriangle(
         tri.a.normal * barys.x +
             tri.b.normal * barys.y +
             tri.c.normal * barys.z,
+        tri.a.tangentAndSign * barys.x +
+            tri.b.tangentAndSign * barys.y +
+            tri.c.tangentAndSign * barys.z,
         tri.a.uv * barys.x +
             tri.b.uv * barys.y +
             tri.c.uv * barys.z,
@@ -675,11 +1459,50 @@ inline float3 computeGeometricNormal(const Triangle &tri)
     return cross(v1, v2);
 }
 
-__forceinline__ float3 transformNormal(const float4 *w2o, float3 n)
+inline TangentFrame computeTangentFrame(const DeviceVertex &v,
+                                        const MaterialParams &mat_params,
+                                        const cudaTextureObject_t *textures)
 {
-    float4 r1 = w2o[0];
-    float4 r2 = w2o[1];
-    float4 r3 = w2o[2];
+    float3 n = v.normal;
+    float3 t = make_float3(v.tangentAndSign.x, v.tangentAndSign.y,
+                           v.tangentAndSign.z);
+
+    float bitangent_sign = v.tangentAndSign.w;
+    float3 b = cross(n, t) * bitangent_sign;
+
+    float3 perturb;
+    if (checkMaterialFlag(mat_params.flags, MaterialFlags::HasNormalMap)) {
+        float2 xy = tex2DLod<float2>(textures[TextureConstants::normalOffset],
+                                     v.uv.x, v.uv.y, 0);
+        float2 centered = xy * 2.f - 1.f;
+        float length2 = clamp(dot(centered, centered), 0.f, 1.f);
+
+        perturb = make_float3(
+            centered.x,
+            centered.y,
+            sqrtf(1.f - length2));
+    } else {
+        perturb = make_float3(0.f, 0.f, 1.f);
+    }
+
+    // Perturb normal
+    n = normalize(t * perturb.x + b * perturb.y + n * perturb.z);
+    // Ensure perpendicular (if new normal is parallel to old tangent... boom)
+    t = normalize(t - n * dot(n, t));
+    b = cross(n, t) * bitangent_sign;
+
+    return {
+        t,
+        b,
+        n,
+    };
+}
+
+__forceinline__ float3 transformNormal(const TransformMat &w2o, float3 n)
+{
+    float4 r1 = w2o.rows[0];
+    float4 r2 = w2o.rows[1];
+    float4 r3 = w2o.rows[2];
 
     return make_float3(
         r1.x * n.x + r2.x * n.y + r3.x * n.z,
@@ -688,11 +1511,11 @@ __forceinline__ float3 transformNormal(const float4 *w2o, float3 n)
 
 }
 
-__forceinline__ float3 transformPosition(const float4 *o2w, float3 p)
+__forceinline__ float3 transformPosition(const TransformMat &o2w, float3 p)
 {
-    float4 r1 = o2w[0];
-    float4 r2 = o2w[1];
-    float4 r3 = o2w[2];
+    float4 r1 = o2w.rows[0];
+    float4 r2 = o2w.rows[1];
+    float4 r3 = o2w.rows[2];
 
     return make_float3(
         r1.x * p.x + r1.y * p.y + r1.z * p.z + r1.w,
@@ -700,36 +1523,34 @@ __forceinline__ float3 transformPosition(const float4 *o2w, float3 p)
         r3.x * p.x + r3.y * p.y + r3.z * p.z + r3.w);
 }
 
+__forceinline__ float3 transformVector(const TransformMat &o2w, float3 v)
+{
+    float4 r1 = o2w.rows[0];
+    float4 r2 = o2w.rows[1];
+    float4 r3 = o2w.rows[2];
+
+    return make_float3(
+        r1.x * v.x + r1.y * v.y + r1.z * v.z,
+        r2.x * v.x + r2.y * v.y + r2.z * v.z,
+        r3.x * v.x + r3.y * v.y + r3.z * v.z);
+}
+
 inline float3 faceforward(const float3 &n, const float3 &i, const float3 &nref)
 {
   return n * copysignf(1.0f, dot(i, nref));
 }
 
-// Ray Tracing Gems Chapter 6 (avoid self intersections)
-inline float3 offsetRayOrigin(const float3 &o, const float3 &geo_normal)
+inline TangentFrame tangentFrameToWorld(const TransformMat &o2w,
+                                        const TransformMat &w2o,
+                                        TangentFrame frame,
+                                        float3 ray_dir)
 {
-    constexpr float global_origin = 1.f / 32.f;
-    constexpr float float_scale = 1.f / 65536.f;
-    constexpr float int_scale = 256.f;
-
-    int3 int_offset = make_int3(geo_normal.x * int_scale,
-        geo_normal.y * int_scale, geo_normal.z * int_scale);
-
-    float3 o_integer = make_float3(
-        __int_as_float(
-            __float_as_int(o.x) + ((o.x < 0) ? -int_offset.x : int_offset.x)),
-        __int_as_float(
-            __float_as_int(o.y) + ((o.y < 0) ? -int_offset.y : int_offset.y)),
-        __int_as_float(
-            __float_as_int(o.z) + ((o.z < 0) ? -int_offset.z : int_offset.z)));
-
-    return make_float3(
-        fabsf(o.x) < global_origin ?
-            o.x + float_scale * geo_normal.x : o_integer.x,
-        fabsf(o.y) < global_origin ?
-            o.y + float_scale * geo_normal.y : o_integer.y,
-        fabsf(o.z) < global_origin ?
-            o.z + float_scale * geo_normal.z : o_integer.z);
+    frame.tangent = normalize(transformVector(o2w, frame.tangent));
+    frame.bitangent = normalize(transformVector(o2w, frame.bitangent));
+    frame.normal = normalize(transformNormal(w2o, frame.normal));
+    frame.normal = faceforward(frame.normal, -ray_dir, frame.normal);
+                                                               
+    return frame;                                              
 }
 
 extern "C" __global__ void __raygen__rg()
@@ -744,10 +1565,9 @@ extern "C" __global__ void __raygen__rg()
         3 * (batch_idx * dim.y * dim.x + idx.y * dim.x + idx.x);
 
     const auto [cam, env] = unpackEnv(batch_idx);
+    cudaTextureObject_t env_tex = env.textureHandles[0];
     
     float3 pixel_radiance = make_float3(0.f);
-
-    const float intensity = 10.f;
 
 #if SPP != (1u)
 #pragma unroll 1
@@ -762,6 +1582,8 @@ extern "C" __global__ void __raygen__rg()
         auto [ray_origin, ray_dir] =
             computeCameraRay(cam, idx, dim, sampler);
 
+        bool specular_bounce = false;
+
 #if MAX_DEPTH != (1u)
 #pragma unroll 1
 #endif
@@ -774,13 +1596,9 @@ extern "C" __global__ void __raygen__rg()
 
             // Trace shade ray
             unsigned int payload_0;
-            unsigned int payload_1;
+            // Overwrite payload_1, miss sets it to ~0u
+            unsigned int payload_1 = 0;
             unsigned int payload_2;
-
-            // Need to overwrite the register so miss detection works
-            // payload_3 is guaranteed to not be 0 on a hit
-            unsigned int payload_3 = 0;
-            unsigned int payload_4;
 
             // FIXME Min T for both shadow and this ray
             optixTrace(
@@ -790,87 +1608,72 @@ extern "C" __global__ void __raygen__rg()
                     0.f, // Min intersection distance
                     1e16f,               // Max intersection distance
                     0.0f,                // rayTime -- used for motion blur
-                    OptixVisibilityMask(0xff), // Specify always visible
+                    OptixVisibilityMask(3), // Specify always visible
                     OPTIX_RAY_FLAG_NONE,
                     0,                   // SBT offset   -- See SBT discussion
                     0,                   // SBT stride   -- See SBT discussion
                     0,                   // missSBTIndex -- See SBT discussion
                     payload_0,
                     payload_1,
-                    payload_2,
-                    payload_3,
-                    payload_4);
+                    payload_2);
 
             // Miss, hit env map
-            if (payload_3 == 0) {
-                //sample_radiance += intensity * path_prob;
+            if (payload_1 == ~0u) {
+                if (path_depth == 0 || specular_bounce) {
+                    sample_radiance += evalEnvMap(env_tex, ray_dir) * path_prob;
+                }
                 break;
             }
 
-            float2 raw_barys = unormFloat2From32(payload_0);
-            uint32_t index_offset = payload_1;
-            OptixTraversableHandle inst_hdl = (OptixTraversableHandle)(
-                (uint64_t)payload_2 << 32 | (uint64_t)payload_3);
+            auto [barys, tri_idx, instance_idx, mesh_idx] =
+                unpackHitPayload(payload_0, payload_1, payload_2);
 
-            uint32_t instance_idx = payload_4;
             Instance inst = unpackInstance(env.instances[instance_idx]);
 
-            const float4 *o2w =
-                optixGetInstanceTransformFromHandle(inst_hdl);
-            const float4 *w2o =
-                optixGetInstanceInverseTransformFromHandle(inst_hdl);
+            MeshInfo mesh_info =
+                unpackMeshInfo(env.meshInfos[inst.meshOffset + mesh_idx]);
 
-            float3 barys = computeBarycentrics(raw_barys);
+            uint32_t material_idx =
+                env.instanceMaterials[inst.materialOffset + mesh_idx];
 
+            MaterialParams material_params =
+                unpackMaterialParams(env.materialBuffer[material_idx]);
+            const cudaTextureObject_t *textures = env.textureHandles + 1 +
+                material_idx * TextureConstants::numTexturesPerMaterial;
+
+            auto [o2w, w2o] = unpackTransforms(env.transforms[instance_idx]);
+
+            uint32_t index_offset = mesh_info.indexOffset + tri_idx * 3;
             Triangle hit_tri = fetchTriangle(env.vertexBuffer,
                                              env.indexBuffer + index_offset);
             DeviceVertex interpolated = interpolateTriangle(hit_tri, barys);
+            TangentFrame obj_tangent_frame =
+                computeTangentFrame(interpolated, material_params, textures);
             float3 obj_geo_normal = computeGeometricNormal(hit_tri);
 
             float3 world_position =
                 transformPosition(o2w, interpolated.position);
-            float3 world_normal =
-                transformNormal(w2o, interpolated.normal);
+            TangentFrame world_tangent_frame =
+                tangentFrameToWorld(o2w, w2o, obj_tangent_frame, ray_dir);
             float3 world_geo_normal =
                 transformNormal(w2o, obj_geo_normal);
-
-            world_normal = faceforward(world_normal, -ray_dir, world_normal);
-
-            world_normal = normalize(world_normal);
             world_geo_normal = normalize(world_geo_normal);
 
-            float3 up = make_float3(0, 0, 1);
-            float3 up_alt = make_float3(0, 1, 0);
+            Material material =
+                processMaterial(material_params, textures, interpolated.uv);
 
-            float3 binormal = cross(world_normal, up);
-            if (length(binormal) < 1e-3f) {
-                binormal = cross(world_normal, up_alt);
-            }
-            binormal = normalize(binormal);
+            LightInfo light_info = sampleLights(sampler, env, env_tex,
+                world_position, world_geo_normal);
 
-            float3 tangent = normalize(cross(binormal, world_normal));
-
-            float3 shadow_origin =
-                offsetRayOrigin(world_position, world_geo_normal);
-
-            uint32_t light_idx = sampler.get1D() * env.numLights;
-
-            Light light = unpackLight(env.lights[light_idx]);
-
-            float3 to_light = light.position - shadow_origin;
-            float3 to_light_norm = normalize(to_light);
-            float light_dist2 = dot(to_light, to_light);
-            float light_dist = sqrtf(light_dist2);
-
-            payload_0 = 1;
+            payload_1 = 0;
             optixTrace(
                     env.tlas,
-                    shadow_origin,
-                    to_light_norm,
+                    light_info.shadowRayOrigin,
+                    light_info.sample.toLight,
                     0.f,                // Min intersection distance
-                    light_dist,               // Max intersection distance
+                    light_info.shadowRayLength, // Max intersection distance
                     0.0f,                // rayTime -- used for motion blur
-                    OptixVisibilityMask(0xff), // Specify always visible
+                    OptixVisibilityMask(1), // Skip transparent
                     OPTIX_RAY_FLAG_DISABLE_CLOSESTHIT |
                         OPTIX_RAY_FLAG_TERMINATE_ON_FIRST_HIT |
                         OPTIX_RAY_FLAG_DISABLE_ANYHIT,
@@ -879,28 +1682,37 @@ extern "C" __global__ void __raygen__rg()
                     0,                   // missSBTIndex -- See SBT discussion
                     payload_0,
                     payload_1,
-                    payload_2,
-                    payload_3,
-                    payload_4);
+                    payload_2);
 
-            Material mat =
-                unpackMaterial(env.materialBuffer[inst.materialIdx]);
+            auto [color, bounce_dir, bounce_prob, bounce_flags] =
+                shade(sampler, material, light_info.sample, -ray_dir,
+                      world_tangent_frame);
 
-            auto [color, bounce_dir, bounce_prob] =
-                shade(sampler, mat, env.textureHandles, light, -ray_dir, to_light_norm,
-                      light_dist2, env.numLights,
-                      interpolated.uv, world_normal, tangent, binormal);
+            specular_bounce = (bounce_flags & BSDFFlags::Delta);
 
+            float alpha_check = sampler.get1D();
+            bool pass_through = material.transparencyMask == 0.f ||
+                alpha_check > material.transparencyMask;
 
-            if (payload_0 == 0) {
+            bool unoccluded = payload_1 == ~0u;
+
+            if (unoccluded && !pass_through) {
                 sample_radiance += path_prob * color;
             }
 
-            // Start setup for next bounce
-            ray_origin = shadow_origin;
-            ray_dir = bounce_dir;
+            float3 next_dir = pass_through ? ray_dir : bounce_dir;
 
-            path_prob *= bounce_prob;
+            float3 bounce_offset_normal =
+                dot(next_dir, world_geo_normal) > 0 ?
+                    world_geo_normal : -world_geo_normal;
+            ray_origin = offsetRayOrigin(world_position, bounce_offset_normal);
+
+            // Start setup for next bounce
+            if (!pass_through) {
+                path_prob *= bounce_prob;
+            }
+
+            ray_dir = next_dir;
         }
 
         pixel_radiance += sample_radiance / SPP;
@@ -911,13 +1723,11 @@ extern "C" __global__ void __raygen__rg()
 
 extern "C" __global__ void __miss__ms()
 {
-    optixSetPayload_0(0);
+    optixSetPayload_1(~0u);
 }
 
 extern "C" __global__ void __closesthit__ch()
 {
-    uint32_t base_index = optixGetInstanceId() + 3 * optixGetPrimitiveIndex();
-    setHitPayload(optixGetTriangleBarycentrics(), base_index,
-                  optixGetTransformListHandle(0),
-                  optixGetInstanceIndex());
+    packHitPayload(optixGetTriangleBarycentrics(), optixGetPrimitiveIndex(),
+                   optixGetInstanceIndex(), optixGetSbtGASIndex());
 }

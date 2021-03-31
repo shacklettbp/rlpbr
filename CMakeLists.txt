@@ -31,6 +31,8 @@ find_package(Threads REQUIRED)
 find_package(CUDAToolkit REQUIRED)
 find_package(glm 0.9.9.8 REQUIRED)
 
+add_compile_definitions("RLPBR_DATA_DIR=${CMAKE_CURRENT_SOURCE_DIR}/data")
+
 add_subdirectory(external)
 add_subdirectory(src)
 

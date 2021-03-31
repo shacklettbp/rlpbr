@@ -13,46 +13,63 @@ struct Mesh {
     std::vector<uint32_t> indices;
 };
 
-struct Material {
-    MaterialModelType materialModel;
+template <typename VertexType>
+struct Object {
+    std::vector<Mesh<VertexType>> meshes;
+};
 
+struct Material {
     std::string baseColorTexture;
     std::string metallicRoughnessTexture;
+    std::string specularTexture;
+    std::string normalMapTexture;
+    std::string emittanceTexture;
+    std::string transmissionTexture;
+    std::string clearcoatTexture;
+    std::string anisoTexture;
     glm::vec3 baseColor;
+    float baseTransmission;
+    glm::vec3 baseSpecular;
+    float specularScale;
     float baseMetallic;
     float baseRoughness;
+    float ior;
+    float clearcoat;
+    float clearcoatRoughness;
+    glm::vec3 attenuationColor;
+    float attenuationDistance;
+    float anisoScale;
+    float anisoRotation;
+    glm::vec3 baseEmittance;
+    bool thinwalled;
+};
 
-    std::string diffuseTexture;
-    std::string specularTexture;
-    glm::vec3 baseDiffuse;
-    glm::vec3 baseSpecular;
-    float baseShininess;
-
-    static Material makeMetallicRoughness(
-        const std::string_view base_color_texture,
-        const std::string_view metallic_roughness_texture,
-        const glm::vec3 &base_color,
-        float base_metallic, float base_roughness);
-
-    static Material makeSpecularGlossiness(
-        const std::string_view diffuse_texture,
-        const std::string_view specular_texture,
-        const glm::vec3 &base_diffuse,
-        const glm::vec3 &base_specular,
-        float base_shininess);
+struct InstanceProperties {
+    uint32_t objectIndex;
+    std::vector<uint32_t> materials;
+    glm::vec3 position;
+    glm::quat rotation;
+    glm::vec3 scale;
+    bool dynamic;
+    bool transparent;
 };
 
 template <typename VertexType, typename MaterialType>
 struct SceneDescription {
-    std::vector<Mesh<VertexType>> meshes;
+    std::vector<Object<VertexType>> objects;
     std::vector<MaterialType> materials;
 
     std::vector<InstanceProperties> defaultInstances;
     std::vector<LightProperties> defaultLights;
 
+    std::string envMap;
+
     static SceneDescription parseScene(std::string_view scene_path,
         const glm::mat4 &base_txfm,
         std::optional<std::string_view> texture_dir);
+
+    static std::pair<Object<VertexType>, std::vector<uint32_t>> mergeScene(
+        SceneDescription desc, uint32_t mat_offset=0);
 };
 
 }

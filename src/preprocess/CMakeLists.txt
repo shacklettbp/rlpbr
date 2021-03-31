@@ -2,7 +2,8 @@ add_library(rlpbr_preprocess SHARED
     gltf.hpp gltf.inl
     habitat_json.hpp habitat_json.inl
     import.hpp import.cpp
-    ../../include/rlpbr/preprocess.hpp preprocess.cpp
+    ../../include/rlpbr/preprocess.hpp preprocess.hpp preprocess.cpp
+    physics.hpp physics.inl
 )
 
 target_link_libraries(rlpbr_preprocess
@@ -10,6 +11,8 @@ target_link_libraries(rlpbr_preprocess
         rlpbr_core
         meshoptimizer
         simdjson
+        libigl
+        mikktspace
 )
 
 target_include_directories(rlpbr_preprocess

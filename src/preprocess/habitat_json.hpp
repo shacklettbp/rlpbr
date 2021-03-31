@@ -14,6 +14,7 @@ namespace HabitatJSON {
 
 enum class LightType {
     Point,
+    Environment,
 };
 
 struct Light {
@@ -25,14 +26,16 @@ struct Light {
 
 struct Instance {
     std::filesystem::path gltfPath;
+    glm::vec3 pos;
+    glm::quat rotation;
     bool dynamic;
-    glm::mat4x3 transform;
 };
 
 struct Scene {
     std::filesystem::path stagePath;
     std::vector<Instance> additionalInstances;
     std::vector<Light> lights;
+    std::string envMap;
 };
 
 }

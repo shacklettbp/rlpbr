@@ -68,15 +68,27 @@ int main(int argc, char *argv[]) {
     }
 
     Renderer renderer({0, 1, batch_size, out_dim.x, out_dim.y, spp, depth,
-                       false, BackendSelect::Optix});
+                       false, false, BackendSelect::Optix});
 
     auto loader = renderer.makeLoader();
     auto scene = loader.loadScene(argv[1]);
     vector<Environment> envs;
 
-    glm::vec3 eye(12.796778, 1.331334, -0.135939);
-    glm::vec3 look(12.622172, 1.227377, 0.843202);
-    glm::vec3 up(-0.101932, 0.990977, 0.087038);
+    // Vase
+    glm::vec3 eye(10.573854, 1.332727, -2.085712);
+    glm::vec3 look(11.193787, 1.303279, -1.301609);
+    glm::vec3 up(-0.018044, 0.998499, 0.051766);
+
+
+    // Mirror table
+    //glm::vec3 eye(-6.207120, 0.825648, 0.911869);
+    //glm::vec3 look(-6.698653, 0.796494, 0.041498);
+    //glm::vec3 up(-0.030218, 0.999409, -0.016411);
+
+    // workout
+    //glm::vec3 eye(-0.933040, 0.442653, -1.826718);
+    //glm::vec3 look(-1.161190, 0.458737, -0.853224);
+    //glm::vec3 up(-0.035431, 0.999065, -0.024810);
 
     glm::vec3 to_look = look - eye;
     

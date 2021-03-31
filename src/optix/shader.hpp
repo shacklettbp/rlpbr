@@ -11,24 +11,34 @@
 #include <array>
 #endif
 
+#include <rlpbr_core/device.hpp>
+
 namespace RLpbr {
 namespace optix {
 
-struct PackedVertex {
+struct DevicePackedVertex {
     float4 data[2];
 };
 
 struct PackedMaterial {
-    // Actually a mix of integers and floats
-    float4 data[2];
+    uint4 data[2];
+};
+
+struct PackedMeshInfo {
+    uint4 data;
 };
 
 struct PackedInstance {
-    uint32_t materialIdx;
+    uint32_t materialOffset;
+    uint32_t meshOffset;
 };
 
 struct PackedLight {
     float4 data[2];
+};
+
+struct PackedTransforms {
+    float4 data[6];
 };
 
 struct alignas(16) PackedEnv {
@@ -38,22 +48,34 @@ struct alignas(16) PackedEnv {
     std::array<float4, 3> camData;
 #endif
     OptixTraversableHandle tlas;
-    const PackedVertex *vertexBuffer;
+    const DevicePackedVertex *vertexBuffer;
     const uint32_t *indexBuffer;
     const PackedMaterial *materialBuffer;
     const cudaTextureObject_t *textureHandles;
+    const PackedMeshInfo *meshInfos;
 
     // FIXME Turn instance and light pointers
     // into uint32_t offsets into constant 64 bit
     // pointer
     const PackedInstance *instances;
+    const uint32_t *instanceMaterials;
     const PackedLight *lights;
+    const PackedTransforms *transforms;
     uint32_t numLights;
+};
+
+struct BSDFPrecomputed {
+    cudaTextureObject_t diffuseAverage;
+    cudaTextureObject_t diffuseDirectional;
+    cudaTextureObject_t microfacetAverage;
+    cudaTextureObject_t microfacetDirectional;
+    cudaTextureObject_t microfacetDirectionalInverse;
 };
 
 struct alignas(16) LaunchInput {
     uint32_t baseBatchOffset;
     uint32_t baseFrameCounter;
+    BSDFPrecomputed precomputed;
 };
 
 }

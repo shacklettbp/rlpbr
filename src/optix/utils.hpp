@@ -73,7 +73,13 @@ inline void *allocCU(size_t num_bytes)
     return ptr;
 }
 
+inline void *allocCUHost(size_t num_bytes, int flags = 0)
+{
+    void *ptr;
+    REQ_CUDA(cudaHostAlloc(&ptr, num_bytes, flags));
+
+    return ptr;
+}
 
 }
 }
-

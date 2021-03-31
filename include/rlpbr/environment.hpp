@@ -11,6 +11,16 @@ namespace RLpbr {
 
 struct EnvironmentInit;
 
+struct ObjectInstance {
+    uint32_t objectIndex;
+    uint32_t materialOffset;
+};
+
+struct InstanceTransform {
+    glm::mat4x3 mat;
+    glm::mat4x3 inv;
+};
+
 struct Camera {
     inline Camera(const glm::vec3 &eye, const glm::vec3 &target,
                   const glm::vec3 &up_vec, float vertical_fov,
@@ -76,23 +86,22 @@ public:
     Environment & operator=(Environment &&) = default;
 
     // Instance transformations
-    inline uint32_t addInstance(uint32_t model_idx, uint32_t material_idx,
-                                const glm::mat4 &model_matrix);
-
-    uint32_t addInstance(uint32_t model_idx, uint32_t material_idx,
-                         const glm::mat4x3 &model_matrix);
+    template <int N>
+    uint32_t addInstance(uint32_t obj_idx,
+                         const std::array<uint32_t, N> &material_idxs,
+                         const glm::vec3 &position, 
+                         const glm::quat &rotation,
+                         bool dynamic = true,
+                         bool kinematic = false);
 
     void deleteInstance(uint32_t inst_id);
 
-    inline const glm::mat4x3 & getInstanceTransform(uint32_t inst_id) const;
+    inline void moveInstance(uint32_t inst_id, const glm::vec3 &delta);
+    inline void rotateInstance(uint32_t inst_id, const glm::quat &rot);
 
-    inline void updateInstanceTransform(uint32_t inst_id,
-                                        const glm::mat4 &model_matrix);
-
-    inline void updateInstanceTransform(uint32_t inst_id,
-                                        const glm::mat4x3 &model_matrix);
-
-    inline void setInstanceMaterial(uint32_t inst_id, uint32_t material_idx);
+    template <int N>
+    inline void setInstanceMaterial(uint32_t inst_id,
+                                    const std::array<uint32_t, N> &material_idxs);
 
     inline void setCameraView(const glm::vec3 &eye, const glm::vec3 &target,
                               const glm::vec3 &up);
@@ -111,11 +120,14 @@ public:
     inline const EnvironmentBackend *getBackend() const;
     inline const Camera &getCamera() const;
 
-    inline const std::vector<std::vector<glm::mat4x3>> &
-        getTransforms() const;
+    inline const std::vector<ObjectInstance> &
+        getInstances() const;
 
-    inline const std::vector<std::vector<uint32_t>> &
-        getMaterials() const;
+    inline const std::vector<uint32_t> &
+        getInstanceMaterials() const;
+
+    inline const std::vector<InstanceTransform> &
+        getTransforms() const;
 
     inline uint32_t getNumInstances() const;
 
@@ -133,11 +145,12 @@ private:
 
     Camera camera_;
 
-    std::vector<std::vector<glm::mat4x3>> transforms_;
-    std::vector<std::vector<uint32_t>> materials_;
+    std::vector<ObjectInstance> instances_;
+    std::vector<uint32_t> instance_materials_;
+    std::vector<InstanceTransform> transforms_;
 
-    std::vector<std::pair<uint32_t, uint32_t>> index_map_;
-    std::vector<std::vector<uint32_t>> reverse_id_map_;
+    std::vector<uint32_t> index_map_;
+    std::vector<uint32_t> reverse_id_map_;
     std::vector<uint32_t> free_ids_;
 
     std::vector<uint32_t> free_light_ids_;

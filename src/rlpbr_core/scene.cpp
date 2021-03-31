@@ -1,8 +1,12 @@
 #include "scene.hpp"
 #include "common.hpp"
+#include <rlpbr_core/utils.hpp>
+#include <rlpbr_core/physics.hpp>
 
 #include <fstream>
 #include <iostream>
+
+#include <glm/gtx/string_cast.hpp>
 
 using namespace std;
 
@@ -28,18 +32,26 @@ SceneLoadData SceneLoadData::loadFromDisk(string_view scene_path_name)
         abort();
     }
 
+    auto alignSkip = [&](uint32_t pad = 256) {
+        auto cur_pos = scene_file.tellg();
+        auto alignment = cur_pos % pad;
+        if (alignment != 0) {
+            scene_file.seekg(pad - alignment, ios::cur);
+        }
+    };
+
     StagingHeader hdr;
     scene_file.read(reinterpret_cast<char *>(&hdr), sizeof(StagingHeader));
 
-    auto cur_pos = scene_file.tellg();
-    auto post_hdr_alignment = cur_pos % 256;
-    if (post_hdr_alignment != 0) {
-        scene_file.seekg(256 - post_hdr_alignment, ios::cur);
-    }
+    alignSkip();
 
     vector<MeshInfo> mesh_infos(hdr.numMeshes);
     scene_file.read(reinterpret_cast<char *>(mesh_infos.data()),
                     sizeof(MeshInfo) * hdr.numMeshes);
+
+    vector<ObjectInfo> obj_infos(hdr.numObjects);
+    scene_file.read(reinterpret_cast<char *>(obj_infos.data()),
+                    sizeof(ObjectInfo) * hdr.numObjects);
 
     uint32_t num_lights = read_uint();
     vector<LightProperties> light_props(num_lights);
@@ -54,81 +66,133 @@ SceneLoadData SceneLoadData::loadFromDisk(string_view scene_path_name)
     textures.textureDir = scene_dir / name_buffer.data();
     name_buffer.clear();
 
-    uint32_t num_diffuse = read_uint();
-    for (uint32_t tex_idx = 0; tex_idx < num_diffuse; tex_idx++) {
-        do {
-            name_buffer.push_back(scene_file.get());
-        } while (name_buffer.back() != 0);
+    do {
+        name_buffer.push_back(scene_file.get());
+    } while (name_buffer.back() != 0);
+    textures.envMap = name_buffer.data();
+    name_buffer.clear();
 
-        textures.diffuse.emplace_back(name_buffer.data());
-        name_buffer.clear();
-    }
-    uint32_t num_specular = read_uint();
-    for (uint32_t tex_idx = 0; tex_idx < num_specular; tex_idx++) {
-        do {
-            name_buffer.push_back(scene_file.get());
-        } while (name_buffer.back() != 0);
+    auto readTextureNames = [&]() {
+        uint32_t num_tex = read_uint();
 
-        textures.specular.emplace_back(name_buffer.data());
-        name_buffer.clear();
-    }
+        vector<string> names;
+        for (int tex_idx = 0; tex_idx < (int)num_tex; tex_idx++) {
+            do {
+                name_buffer.push_back(scene_file.get());
+            } while (name_buffer.back() != 0);
+
+            names.emplace_back(name_buffer.data());
+            name_buffer.clear();
+        }
+
+        return names;
+    };
+
+    textures.base = readTextureNames();
+    textures.metallicRoughness = readTextureNames();
+    textures.specular = readTextureNames();
+    textures.normal = readTextureNames();
+    textures.emittance = readTextureNames();
+    textures.transmission = readTextureNames();
+    textures.clearcoat = readTextureNames();
+    textures.anisotropic = readTextureNames();
+
+    vector<MaterialTextures> texture_indices(hdr.numMaterials);
+    scene_file.read(reinterpret_cast<char *>(texture_indices.data()),
+                    sizeof(MaterialTextures) * hdr.numMaterials);
+
+    uint32_t num_instance_materials = read_uint();
+
+    vector<uint32_t> instance_materials(num_instance_materials);
+    scene_file.read(reinterpret_cast<char *>(instance_materials.data()),
+                    sizeof(uint32_t) * num_instance_materials);
 
     uint32_t num_instances = read_uint();
 
-    // FIXME this should just be baked in...
-    vector<InstanceProperties> instances;
-    instances.reserve(num_instances);
+    vector<ObjectInstance> instances(num_instances);
+    scene_file.read(reinterpret_cast<char *>(instances.data()),
+                    sizeof(ObjectInstance) * num_instances);
 
-    for (uint32_t inst_idx = 0; inst_idx < num_instances; inst_idx++) {
-        uint32_t mesh_index = read_uint();
-        uint32_t material_index = read_uint();
-        glm::mat4x3 txfm;
-        scene_file.read(reinterpret_cast<char *>(&txfm), sizeof(glm::mat4x3));
-        instances.push_back({
-            mesh_index,
-            material_index,
-            txfm,
-        });
+    vector<InstanceTransform> default_transforms(num_instances);
+    scene_file.read(reinterpret_cast<char *>(default_transforms.data()),
+                    sizeof(InstanceTransform) * num_instances);
+
+    vector<InstanceFlags> default_inst_flags(num_instances);
+    scene_file.read(reinterpret_cast<char *>(default_inst_flags.data()),
+                    sizeof(InstanceFlags) * num_instances);
+
+    uint32_t num_static = read_uint();
+    uint32_t num_dynamic = read_uint();
+
+    DynArray<PhysicsInstance> static_instances(num_static);
+    scene_file.read(reinterpret_cast<char *>(static_instances.data()),
+                    sizeof(PhysicsInstance) * num_static);
+
+    DynArray<PhysicsInstance> dynamic_instances(num_dynamic);
+    scene_file.read(reinterpret_cast<char *>(dynamic_instances.data()),
+                    sizeof(PhysicsInstance) * num_dynamic);
+
+
+    DynArray<PhysicsTransform> dynamic_transforms(num_dynamic);
+    scene_file.read(reinterpret_cast<char *>(dynamic_transforms.data()),
+                    sizeof(PhysicsTransform) * num_dynamic);
+
+    uint32_t num_sdfs = read_uint();
+    vector<string> sdf_paths;
+    sdf_paths.reserve(num_sdfs);
+    for (int sdf_idx = 0; sdf_idx < (int)num_sdfs; sdf_idx++) {
+        do {
+            name_buffer.push_back(scene_file.get());
+        } while (name_buffer.back() != 0);
+
+        sdf_paths.emplace_back(name_buffer.data());
+        name_buffer.clear();
     }
 
-    cur_pos = scene_file.tellg();
-    auto post_inst_alignment = cur_pos % 256;
-    if (post_inst_alignment != 0) {
-        scene_file.seekg(256 - post_inst_alignment, ios::cur);
-    }
+    alignSkip();
 
     return SceneLoadData {
         hdr,
         move(mesh_infos),
+        move(obj_infos),
         move(textures),
-        EnvironmentInit(move(instances), move(light_props), hdr.numMeshes),
+        move(texture_indices),
+        EnvironmentInit(move(instances), 
+                        move(instance_materials),
+                        move(default_transforms),
+                        move(default_inst_flags),
+                        move(light_props)),
+        PhysicsMetadata {
+            move(sdf_paths),
+            move(static_instances),
+            move(dynamic_instances),
+            move(dynamic_transforms),
+        },
         variant<ifstream, vector<char>>(move(scene_file)),
     };
 }
 
-EnvironmentInit::EnvironmentInit(const vector<InstanceProperties> &instances,
-                                 const vector<LightProperties> &l,
-                                 uint32_t num_meshes)
-    : transforms(num_meshes),
-      materials(num_meshes),
+EnvironmentInit::EnvironmentInit(vector<ObjectInstance> instances,
+    vector<uint32_t> instance_materials,
+    vector<InstanceTransform> transforms,
+    vector<InstanceFlags> instance_flags,
+    vector<LightProperties> l)
+    : defaultInstances(move(instances)),
+      defaultInstanceMaterials(move(instance_materials)),
+      defaultTransforms(move(transforms)),
+      defaultInstanceFlags(move(instance_flags)),
       indexMap(),
-      reverseIDMap(num_meshes),
-      lights(l),
+      reverseIDMap(),
+      lights(move(l)),
       lightIDs(),
       lightReverseIDs()
 {
     indexMap.reserve(instances.size());
+    reverseIDMap.reserve(instances.size());
 
     for (uint32_t cur_id = 0; cur_id < instances.size(); cur_id++) {
-        const auto &inst = instances[cur_id];
-        uint32_t mesh_idx = inst.meshIndex;
-
-        uint32_t inst_idx = transforms[mesh_idx].size();
-
-        transforms[mesh_idx].push_back(inst.txfm);
-        materials[mesh_idx].push_back(inst.materialIndex);
-        reverseIDMap[mesh_idx].push_back(cur_id);
-        indexMap.emplace_back(mesh_idx, inst_idx);
+        indexMap.emplace_back(cur_id);
+        reverseIDMap.push_back(cur_id);
     }
 
     lightIDs.reserve(lights.size());

@@ -1,6 +1,8 @@
 #pragma once
 
 #include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtx/transform.hpp>
+#include <glm/gtc/quaternion.hpp>
 
 namespace RLpbr {
 
@@ -114,37 +116,75 @@ void Camera::updateView(const glm::vec3 &position_vec,
     right = right_vec;
 }
 
-uint32_t Environment::addInstance(uint32_t model_idx, uint32_t material_idx,
-                                  const glm::mat4x4 &matrix)
+template <int N>
+uint32_t Environment::addInstance(uint32_t obj_idx,
+                                  const std::array<uint32_t, N> &material_idxs,
+                                  const glm::vec3 &position,
+                                  const glm::quat &rotation,
+                                  bool dynamic,
+                                  bool kinematic)
 {
-    return addInstance(model_idx, material_idx, glm::mat4x3(matrix));
+    // FIXME
+    (void)dynamic;
+    (void)kinematic;
+
+    glm::mat4 rot_matrix = glm::mat4_cast(rotation);
+
+    glm::mat4 model_matrix = glm::translate(position) * rot_matrix;
+    glm::mat4 inv_model = glm::transpose(rot_matrix) *
+        glm::translate(-position);
+
+    instances_.push_back({
+        obj_idx,
+        uint32_t(instance_materials_.size()),
+    });
+
+    for (int i = 0; i < N; i++) {
+        instance_materials_.push_back(material_idxs[i]);
+    }
+
+    transforms_.push_back({model_matrix, inv_model});
+
+    uint32_t instance_idx = instances_.size() - 1;
+
+    uint32_t outer_id;
+    if (free_ids_.size() > 0) {
+        uint32_t free_id = free_ids_.back();
+        free_ids_.pop_back();
+        index_map_[free_id] = instance_idx;
+
+        outer_id = free_id;
+    } else {
+        index_map_.push_back(instance_idx);
+        outer_id = index_map_.size() - 1;
+    }
+
+    reverse_id_map_.emplace_back(outer_id);
+
+    return outer_id;
 }
 
-const glm::mat4x3 & Environment::getInstanceTransform(uint32_t inst_id) const
+void Environment::moveInstance(uint32_t inst_id, const glm::vec3 &delta)
 {
-
-    const auto &p = index_map_[inst_id];
-    return transforms_[p.first][p.second];
+    (void)inst_id;
+    (void)delta;
 }
 
-void Environment::updateInstanceTransform(uint32_t inst_id,
-                                          const glm::mat4x3 &mat)
+void Environment::rotateInstance(uint32_t inst_id, const glm::quat &rot)
 {
-    const auto &p = index_map_[inst_id];
-    transforms_[p.first][p.second] = mat;
+    (void)inst_id;
+    (void)rot;
 }
 
-void Environment::updateInstanceTransform(uint32_t inst_id,
-                                          const glm::mat4 &mat)
-{
-    updateInstanceTransform(inst_id, glm::mat4x3(mat));
-}
-
+template <int N>
 void Environment::setInstanceMaterial(uint32_t inst_id,
-                                      uint32_t material_idx)
+                                      const std::array<uint32_t, N> &material_idxs)
 {
-    const auto &p = index_map_[inst_id];
-    materials_[p.first][p.second] = material_idx;
+    uint32_t idx = index_map_[inst_id];
+    uint32_t *mats = &instance_materials_[instances_[idx].materialOffset];
+    for (int i = 0; i < N; i++) {
+        mats[i] = material_idxs[i];
+    }
 }
 
 void Environment::setCameraView(const glm::vec3 &eye, const glm::vec3 &target,
@@ -181,21 +221,27 @@ const Camera &Environment::getCamera() const
     return camera_;
 }
 
-const std::vector<std::vector<glm::mat4x3>> &
+const std::vector<ObjectInstance> &
+    Environment::getInstances() const
+{
+    return instances_;
+}
+
+const std::vector<uint32_t> &
+    Environment::getInstanceMaterials() const
+{
+    return instance_materials_;
+}
+
+const std::vector<InstanceTransform> &
     Environment::getTransforms() const
 {
     return transforms_;
 }
 
-const std::vector<std::vector<uint32_t>> &
-    Environment::getMaterials() const
-{
-    return materials_;
-}
-
 uint32_t Environment::getNumInstances() const
 {
-    return index_map_.size();
+    return instances_.size();
 }
 
 bool Environment::isDirty() const

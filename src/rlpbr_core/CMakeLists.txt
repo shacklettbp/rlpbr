@@ -5,6 +5,7 @@ add_library(rlpbr_core SHARED
     ${MAIN_INCLUDE_DIR}/rlpbr/backend.hpp
     scene.hpp scene.cpp
     utils.hpp
+    physics.hpp
 )
 
 target_include_directories(rlpbr_core

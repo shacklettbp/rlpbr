@@ -5,64 +5,15 @@
 #include <rlpbr_core/utils.hpp>
 
 #include "shader.hpp"
+#include "physics.hpp"
+#include "texture.hpp"
 
 #include <cuda.h>
 #include <cuda_runtime.h>
 #include <optix.h>
 
-#include <atomic>
-#include <mutex>
-#include <unordered_map>
-
 namespace RLpbr {
 namespace optix {
-
-class TextureManager;
-
-struct TextureBacking {
-    TextureBacking(cudaArray_t m, cudaTextureObject_t h);
-
-    cudaArray_t mem;
-    cudaTextureObject_t hdl;
-
-    std::atomic_uint32_t refCount;
-};
-
-using TextureRefType =
-    std::unordered_map<std::string, TextureBacking>::iterator;
-
-class Texture {
-public:
-    Texture(TextureManager &mgr, const TextureRefType &r,
-            cudaTextureObject_t hdl);
-    Texture(const Texture &) = delete;
-    Texture(Texture &&);
-    ~Texture();
-
-    inline cudaTextureObject_t getHandle() const { return hdl_; }
-
-private:
-    TextureManager &mgr_;
-    TextureRefType ref_;
-    cudaTextureObject_t hdl_;
-};
-
-class TextureManager {
-public:
-    TextureManager();
-    ~TextureManager();
-
-    std::vector<Texture> load(
-        const TextureInfo &tex_info, cudaStream_t copy_strm);
-
-private:
-    void decrementTextureRef(const TextureRefType &tex_ref);
-
-    std::mutex cache_lock_;
-    std::unordered_map<std::string, TextureBacking> loaded_;
-
-    friend class Texture;
-};
 
 struct TLASIntermediate {
     void *instanceTransforms;
@@ -78,22 +29,40 @@ struct TLAS {
     OptixTraversableHandle *instanceBLASes;
 };
 
+struct LoadedTextures {
+    std::vector<Texture> base;
+    std::vector<Texture> metallicRoughness;
+    std::vector<Texture> specular;
+    std::vector<Texture> normal;
+    std::vector<Texture> emittance;
+    std::vector<Texture> transmission;
+    std::vector<Texture> clearcoat;
+    std::vector<Texture> anisotropic;
+    std::optional<Texture> envMap;
+};
+
+
 struct OptixScene : public Scene {
     OptixScene(const OptixScene &) = delete;
     OptixScene(OptixScene &&) = delete;
     ~OptixScene();
 
     CUdeviceptr sceneStorage;
-    const PackedVertex *vertexPtr;
+    const DevicePackedVertex *vertexPtr;
     const uint32_t *indexPtr;
     const PackedMaterial *materialPtr;
+    const PackedMeshInfo *meshPtr;
 
     std::vector<CUdeviceptr> blasStorage;
     std::vector<OptixTraversableHandle> blases;
-    TLAS defaultTLAS;
 
-    std::vector<Texture> textures;
+    TLAS defaultTLAS;
+    InstanceTransform *defaultTransformBuffer;
+
+    LoadedTextures textures;
     const cudaTextureObject_t *texturePtr;
+
+    std::optional<ScenePhysicsData> physics;
 };
 
 class OptixEnvironment : public EnvironmentBackend {
@@ -111,18 +80,23 @@ public:
 
     void removeLight(uint32_t light_idx);
 
-    TLASIntermediate queueTLASRebuild(const Environment &env, OptixDeviceContext ctx,
-                          cudaStream_t strm);
+    TLASIntermediate queueTLASRebuild(const Environment &env,
+        OptixDeviceContext ctx, cudaStream_t strm);
 
     CUdeviceptr tlasStorage;
     OptixTraversableHandle tlas;
+    InstanceTransform *transformBuffer;
 
     std::vector<PackedLight> lights;
+    std::vector<InstanceFlags> instanceFlags;
+
+    std::optional<PhysicsEnvironment> physics;
 };
 
 class OptixLoader : public LoaderBackend {
 public:
-    OptixLoader(OptixDeviceContext ctx, TextureManager &texture_mgr);
+    OptixLoader(OptixDeviceContext ctx, TextureManager &texture_mgr,
+                bool need_physics);
 
     std::shared_ptr<Scene> loadScene(SceneLoadData &&load_info);
 
@@ -130,6 +104,8 @@ private:
     cudaStream_t stream_;
     OptixDeviceContext ctx_;
     TextureManager &texture_mgr_;
+
+    bool need_physics_;
 };
 
 }

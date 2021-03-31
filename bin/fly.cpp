@@ -152,7 +152,7 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    Renderer renderer({0, 1, 1, img_dims.x, img_dims.y, spp, depth, true,
+    Renderer renderer({0, 1, 1, img_dims.x, img_dims.y, spp, depth, true, false,
                        BackendSelect::Optix});
 
     array<cudaStream_t, 2> copy_streams;
@@ -200,6 +200,8 @@ int main(int argc, char *argv[]) {
     envs.back().addLight(glm::vec3(1.762336, 1.211801, -4.574429), glm::vec3(10.f));
     envs.back().addLight(glm::vec3(8.107919, 1.345027, -1.867001), glm::vec3(10.f));
     envs.back().addLight(glm::vec3(12.499360, 2.102839, 1.691340), glm::vec3(10.f));
+    envs.back().addLight(glm::vec3(1.f, 10.f, 1.f), glm::vec3(10.f));
+    envs.back().addLight(glm::vec3(-1.f, 10.f, -1.f), glm::vec3(10.f));
 
     glfwSetKeyCallback(window, windowKeyHandler);
 

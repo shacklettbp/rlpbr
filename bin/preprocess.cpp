@@ -9,7 +9,8 @@ using namespace std;
 
 int main(int argc, const char *argv[]) {
     if (argc < 3) {
-        cerr << argv[0] << " SRC DST [X_AXIS Y_AXIS Z_AXIS] [TEXTURE_DIR]"
+        cerr << argv[0] << " SRC DST [X_AXIS Y_AXIS Z_AXIS] [DATA_DIR]"
+             << " [--dump-textures] [--dump-sdfs]"
              << endl;
         exit(EXIT_FAILURE);
     }
@@ -54,14 +55,34 @@ int main(int argc, const char *argv[]) {
         base_txfm[2] = convertArg(z);
     }
 
-    optional<string_view> texture_dir;
+    optional<string_view> data_dir;
     if (argc > 6) {
-        texture_dir.emplace(argv[6]);
+        data_dir.emplace(argv[6]);
+    }
+
+    bool dump_textures = false;
+    bool dump_sdfs = false;
+
+    auto setDumpArgs = [&](const char *argument) {
+        if (!strcmp(argument, "--dump-textures")) {
+            dump_textures = true;
+        }
+        if (!strcmp(argument, "--dump-sdfs")) {
+            dump_sdfs = true;
+        }
+    };
+
+    if (argc > 7) {
+        setDumpArgs(argv[7]);
+    }
+    if (argc > 8) {
+        setDumpArgs(argv[8]);
     }
 
     cout << "Transform:\n" << glm::to_string(base_txfm) << endl;
 
-    RLpbr::ScenePreprocessor dumper(argv[1], base_txfm, texture_dir);
+    RLpbr::ScenePreprocessor dumper(argv[1], base_txfm, data_dir,
+                                    dump_textures, dump_sdfs);
 
     dumper.dump(argv[2]);
 

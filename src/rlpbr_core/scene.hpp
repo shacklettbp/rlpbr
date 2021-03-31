@@ -1,8 +1,12 @@
 #pragma once
 
 #include "common.hpp"
+#include "utils.hpp"
+#include "physics.hpp"
+#include "device.hpp"
 
 #include <glm/glm.hpp>
+#include <glm/gtc/quaternion.hpp>
 
 #include <filesystem>
 #include <fstream>
@@ -15,34 +19,50 @@ namespace RLpbr {
 
 struct LoaderBackend;
 
+enum class InstanceFlags : uint32_t {
+    Transparent = 1 << 0,
+};
+
+inline InstanceFlags & operator|=(InstanceFlags &a, InstanceFlags b)
+{
+    a = InstanceFlags(static_cast<uint32_t>(a) | static_cast<uint32_t>(b));
+    return a;
+}
+
+inline bool operator&(InstanceFlags a, InstanceFlags b)
+{
+    return (static_cast<uint32_t>(a) & static_cast<uint32_t>(b)) > 0;
+}
+
 struct alignas(16) Vertex {
     glm::vec3 position;
     glm::vec3 normal;
     glm::vec2 uv;
 };
 
-enum class MaterialModelType : uint32_t {
-    MetallicRoughness,
-    SpecularGlossiness,
+struct alignas(16) PackedVertex {
+    glm::vec3 position;
+    glm::vec3 normalTangentPacked;
+    glm::vec2 uv;
 };
 
-struct alignas(16) MetallicRoughnessParams {
-    glm::vec3 baseColor;
-    float baseMetallic;
-    float baseRoughness;
-    uint32_t colorIdx;
-    uint32_t roughnessMetallicIdx;
-};
+struct alignas(16) MaterialParams {
+    glm::u8vec3 baseColor; // 0 - 1
+    uint8_t baseTransmission; // 0 - 1
+    uint8_t specularScale; // 0 - 1
+    uint8_t ior; // 1.0 - 2.5 (float(i) / 170.f + 1.f)
+    uint8_t baseMetallic;
+    uint8_t baseRoughness;
+    glm::u16vec3 baseSpecular; // fp16, could cut down to RGBM
+    uint16_t flags;
 
-struct alignas(16) SpecularGlossinessParams {
-    glm::vec4 baseDiffuseAndIndices;
-    glm::vec4 baseSpecularGlossiness;
-};
-
-struct InstanceProperties {
-    uint32_t meshIndex;
-    uint32_t materialIndex;
-    glm::mat4x3 txfm;
+    uint8_t clearcoat; 
+    uint8_t clearcoatRoughness;
+    glm::u8vec3 attenuationColor;
+    uint8_t anisoScale;
+    uint8_t anisoRotation;
+    uint16_t attenuationDistance;
+    glm::u16vec3 baseEmittance;
 };
 
 struct LightProperties {
@@ -51,21 +71,31 @@ struct LightProperties {
 };
 
 struct EnvironmentInit {
-    EnvironmentInit(const std::vector<InstanceProperties> &instances,
-                    const std::vector<LightProperties> &lights,
-                    uint32_t num_meshes);
+    EnvironmentInit(std::vector<ObjectInstance> instances,
+                    std::vector<uint32_t> instance_materials,
+                    std::vector<InstanceTransform> transforms,
+                    std::vector<InstanceFlags> instance_flags,
+                    std::vector<LightProperties> lights);
 
-    std::vector<std::vector<glm::mat4x3>> transforms;
-    std::vector<std::vector<uint32_t>> materials;
-    std::vector<std::pair<uint32_t, uint32_t>> indexMap;
-    std::vector<std::vector<uint32_t>> reverseIDMap;
+    std::vector<ObjectInstance> defaultInstances;
+    std::vector<uint32_t> defaultInstanceMaterials;
+    std::vector<InstanceTransform> defaultTransforms;
+    std::vector<InstanceFlags> defaultInstanceFlags;
+
+    std::vector<uint32_t> indexMap;
+    std::vector<uint32_t> reverseIDMap;
 
     std::vector<LightProperties> lights;
     std::vector<uint32_t> lightIDs;
     std::vector<uint32_t> lightReverseIDs;
 };
 
-struct MeshInfo {
+struct ObjectInfo {
+    uint32_t meshIndex;
+    uint32_t numMeshes;
+};
+
+struct alignas(16) MeshInfo {
     uint32_t indexOffset;
     uint32_t numTriangles;
     uint32_t numVertices;
@@ -73,35 +103,59 @@ struct MeshInfo {
 
 struct TextureInfo {
     std::string textureDir;
-    std::vector<std::string> diffuse;
+    std::vector<std::string> base;
+    std::vector<std::string> metallicRoughness;
     std::vector<std::string> specular;
+    std::vector<std::string> normal;
+    std::vector<std::string> emittance;
+    std::vector<std::string> transmission;
+    std::vector<std::string> clearcoat;
+    std::vector<std::string> anisotropic;
+    std::string envMap;
+};
+
+struct MaterialTextures {
+    uint32_t baseColorIdx; // SRGB 4 Component (RGB + transmission)
+    uint32_t metallicRoughnessIdx; // Linear 2 Component (BC 5)
+    uint32_t specularIdx; // SRGB 4 Component
+    uint32_t normalIdx; // Linear 2 Component (BC 5)
+    uint32_t emittanceIdx; // SRGB 3 Component
+    uint32_t transmissionIdx; // Linear 1 Component
+    uint32_t clearcoatIdx; // Linear 2 Component (BC 5)
+    uint32_t anisoIdx; // Linear 2 Component (BC 5) (Vector Map)
 };
 
 struct MaterialMetadata {
     TextureInfo textureInfo;
-    std::vector<MetallicRoughnessParams> metallicRoughness;
-    std::vector<SpecularGlossinessParams> specularGlossiness;
+    std::vector<MaterialParams> materialParams;
+    std::vector<MaterialTextures> materialTextures;
 };
 
 struct StagingHeader {
     uint32_t numMeshes;
+    uint32_t numObjects;
     uint32_t numVertices;
     uint32_t numIndices;
     uint32_t numMaterials;
 
     uint64_t indexOffset;
+    uint64_t meshOffset;
+    uint64_t objectOffset;
     uint64_t materialOffset;
+
+    uint64_t physicsOffset;
     
     uint64_t totalBytes;
-
-    uint32_t materialModel; 
 };
 
 struct SceneLoadData {
     StagingHeader hdr;
     std::vector<MeshInfo> meshInfo;
+    std::vector<ObjectInfo> objectInfo;
     TextureInfo textureInfo;
+    std::vector<MaterialTextures> textureIndices;
     EnvironmentInit envInit;
+    PhysicsMetadata physics;
 
     std::variant<std::ifstream, std::vector<char>> data;
 
@@ -110,6 +164,7 @@ struct SceneLoadData {
 
 struct Scene {
     std::vector<MeshInfo> meshInfo;
+    std::vector<ObjectInfo> objectInfo;
     EnvironmentInit envInit;
 };
 

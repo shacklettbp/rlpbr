@@ -50,7 +50,7 @@ int main(int argc, char *argv[]) {
         };
     }
 
-    Renderer renderer({0, 1, batch_size, res, res, 4, 4, false,
+    Renderer renderer({0, 1, batch_size, res, res, 4, 4, false, true,
                        BackendSelect::Optix});
 
     auto loader = renderer.makeLoader();
@@ -60,9 +60,9 @@ int main(int argc, char *argv[]) {
 
     for (uint32_t batch_idx = 0; batch_idx < batch_size; batch_idx++) {
         envs.emplace_back(renderer.makeEnvironment(scene,
-            glm::vec3(-1.421800, 1.424235, -0.937237),
-            glm::vec3(-1.121980, 0.842151, -0.181401),
-            glm::vec3(0.225326, 0.813076, 0.536784)));
+            glm::vec3(10.184777, 0.994812, -2.762561),
+            glm::vec3(10.812518, 0.927049, -1.987069),
+            glm::vec3(-0.000107, 0.996203, 0.087133)));
     }
 
     auto start = chrono::steady_clock::now();
@@ -72,9 +72,9 @@ int main(int argc, char *argv[]) {
     //uint32_t cur_view = 0;
 
     for (uint32_t i = 0; i < num_iters; i++) {
-        for (auto &env : envs) {
-            env.setDirty();
-        }
+        //for (auto &env : envs) {
+        //    env.setDirty();
+        //}
         renderer.render(envs.data());
         renderer.waitForFrame();
     }

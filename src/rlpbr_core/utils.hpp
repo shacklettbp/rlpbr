@@ -2,6 +2,7 @@
 
 #include <rlpbr/utils.hpp>
 
+#include <cassert>
 #include <memory>
 
 namespace RLpbr {
