@@ -278,7 +278,7 @@ GLTFScene gltfLoad(filesystem::path gltf_path) noexcept
                 jsonGetOr(pbr["baseColorFactor"], glm::vec4(1.f));
             simdjson::dom::array base_color_json;
 
-            float metallic = jsonGetOr(pbr["metallicFactor"], 0.f);
+            float metallic = jsonGetOr(pbr["metallicFactor"], 1.f);
 
             float roughness = jsonGetOr(pbr["roughnessFactor"], 1.f);
 
