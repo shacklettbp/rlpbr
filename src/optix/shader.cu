@@ -219,6 +219,10 @@ __forceinline__ pair<Camera, Environment> unpackEnv(uint32_t batch_idx)
 // Similarly to unpackEnv, work around broken 64bit constant pointer support
 __forceinline__ void setOutput(uint32_t base_offset, float3 rgb)
 {
+    // FP16 cannot represent numbers over this, and get converted
+    // to infinity, clamp instead
+    rgb = min(rgb, 65504.f);
+
     uint16_t r = __half_as_ushort(__float2half(rgb.x));
     uint16_t g = __half_as_ushort(__float2half(rgb.y));
     uint16_t b = __half_as_ushort(__float2half(rgb.z));
