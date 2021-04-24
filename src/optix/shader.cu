@@ -221,7 +221,7 @@ __forceinline__ void setOutput(uint32_t base_offset, float3 rgb)
 {
     // FP16 cannot represent numbers over this, and get converted
     // to infinity, clamp instead
-    rgb = min(rgb, 65504.f);
+    rgb = fminf(rgb, make_float3(65504.f));
 
     uint16_t r = __half_as_ushort(__float2half(rgb.x));
     uint16_t g = __half_as_ushort(__float2half(rgb.y));
