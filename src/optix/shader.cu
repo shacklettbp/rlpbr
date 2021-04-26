@@ -384,10 +384,10 @@ __forceinline__ Material processMaterial(const MaterialParams &params,
     mat.roughness = params.baseRoughness;
     if (checkMaterialFlag(params.flags, MaterialFlags::HasMRTexture)) {
         cudaTextureObject_t tex = textures[TextureConstants::mrOffset];
-        float4 tex_value = tex2DLod<float4>(tex, uv.x, uv.y, 0);
+        float2 tex_value = tex2DLod<float2>(tex, uv.x, uv.y, 0);
 
-        mat.metallic *= tex_value.z;
-        mat.roughness *= tex_value.y;
+        mat.roughness *= tex_value.x;
+        mat.metallic *= tex_value.y;
     }
 
     mat.rhoSpecular = params.baseSpecular;
