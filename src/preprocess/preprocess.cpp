@@ -622,12 +622,14 @@ static MaterialMetadata stageMaterials(const vector<Material> &materials,
     vector<string> aniso_textures;
     unordered_map<string, size_t> tracker;
 
-    auto getTexIndex = [&](const string &tex, vector<string> &tex_list) {
+    auto mapTexName = [&](const string &orig_tex, vector<string> &tex_list) {
+        string new_name = orig_tex.substr(0, orig_tex.rfind(".")) +
+            string(".tex");
         auto [iter, inserted] =
-            tracker.emplace(tex, tex_list.size());
+            tracker.emplace(new_name, tex_list.size());
 
         if (inserted) {
-            tex_list.emplace_back(tex);
+            tex_list.emplace_back(new_name);
         }
 
         return iter->second;
@@ -641,14 +643,14 @@ static MaterialMetadata stageMaterials(const vector<Material> &materials,
         uint32_t base_color_idx = -1;
         if (!material.baseColorTexture.empty()) {
             base_color_idx =
-                getTexIndex(material.baseColorTexture, base_textures);
+                mapTexName(material.baseColorTexture, base_textures);
 
             mat_flags |= uint16_t(MaterialFlags::HasBaseTexture);
         }
 
         uint32_t mr_idx = -1;
         if (!material.metallicRoughnessTexture.empty()) {
-            mr_idx = getTexIndex(material.metallicRoughnessTexture,
+            mr_idx = mapTexName(material.metallicRoughnessTexture,
                                  mr_textures);
 
             mat_flags |= uint16_t(MaterialFlags::HasMRTexture);
@@ -656,7 +658,7 @@ static MaterialMetadata stageMaterials(const vector<Material> &materials,
 
         uint32_t spec_idx = -1;
         if (!material.specularTexture.empty()) {
-            spec_idx = getTexIndex(material.specularTexture,
+            spec_idx = mapTexName(material.specularTexture,
                                    spec_textures);
 
             mat_flags |= uint16_t(MaterialFlags::HasSpecularTexture);
@@ -664,35 +666,35 @@ static MaterialMetadata stageMaterials(const vector<Material> &materials,
 
         uint32_t normal_idx = -1;
         if (!material.normalMapTexture.empty()) {
-            normal_idx = getTexIndex(material.normalMapTexture,
+            normal_idx = mapTexName(material.normalMapTexture,
                                      normal_textures);
             mat_flags |= uint16_t(MaterialFlags::HasNormalMap);
         }
 
         uint32_t emittance_idx = -1;
         if (!material.emittanceTexture.empty()) {
-            emittance_idx = getTexIndex(material.emittanceTexture,
+            emittance_idx = mapTexName(material.emittanceTexture,
                                         emittance_textures);
             mat_flags |= uint16_t(MaterialFlags::HasEmittanceTexture);
         }
 
         uint32_t transmission_idx = -1;
         if (!material.transmissionTexture.empty()) {
-            transmission_idx = getTexIndex(material.transmissionTexture,
+            transmission_idx = mapTexName(material.transmissionTexture,
                                            transmission_textures);
             mat_flags |= uint16_t(MaterialFlags::HasTransmissionTexture);
         }
 
         uint32_t clearcoat_idx = -1;
         if (!material.clearcoatTexture.empty()) {
-            clearcoat_idx = getTexIndex(material.clearcoatTexture,
+            clearcoat_idx = mapTexName(material.clearcoatTexture,
                                         clearcoat_textures);
             mat_flags |= uint16_t(MaterialFlags::HasClearcoatTexture);
         }
 
         uint32_t aniso_idx = -1;
         if (!material.anisoTexture.empty()) {
-            aniso_idx = getTexIndex(material.anisoTexture,
+            aniso_idx = mapTexName(material.anisoTexture,
                                     aniso_textures);
             mat_flags |= uint16_t(MaterialFlags::HasAnisotropicTexture);
         }

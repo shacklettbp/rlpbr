@@ -396,7 +396,7 @@ static BSDFLookupTables loadBSDFLookupTables(TextureManager &tex_mgr,
     Texture diffuse_avg_tex = tex_mgr.load(diffuse_avg_path,
         TextureFormat::R32_SFLOAT, cudaAddressModeClamp, strm,
         [&](const auto &) {
-            return make_pair(diffuse_avg.data(), diffuse_avg_dims);
+            return make_tuple(diffuse_avg.data(), diffuse_avg_dims, 1);
         });
 
     string diffuse_dir_path = dir + "/diffuse_dir_albedo.bin";
@@ -410,7 +410,7 @@ static BSDFLookupTables loadBSDFLookupTables(TextureManager &tex_mgr,
     Texture diffuse_dir_tex = tex_mgr.load(diffuse_dir_path,
         TextureFormat::R32_SFLOAT, cudaAddressModeClamp, strm,
         [&](const auto &) {
-            return make_pair(diffuse_dir.data(), diffuse_dir_dims);
+            return make_tuple(diffuse_dir.data(), diffuse_dir_dims, 1);
         });
 
     string ggx_avg_path = dir + "/ggx_avg_albedo.bin";
@@ -423,7 +423,7 @@ static BSDFLookupTables loadBSDFLookupTables(TextureManager &tex_mgr,
     Texture ggx_avg_tex = tex_mgr.load(ggx_avg_path,
         TextureFormat::R32_SFLOAT, cudaAddressModeClamp, strm,
         [&](const auto &) {
-            return make_pair(ggx_avg.data(), ggx_avg_dims);
+            return make_tuple(ggx_avg.data(), ggx_avg_dims, 1);
         });
 
     string ggx_dir_path = dir + "/ggx_dir_albedo.bin";
@@ -436,7 +436,7 @@ static BSDFLookupTables loadBSDFLookupTables(TextureManager &tex_mgr,
     Texture ggx_dir_tex = tex_mgr.load(ggx_dir_path,
         TextureFormat::R32_SFLOAT, cudaAddressModeClamp, strm,
         [&](const auto &) {
-            return make_pair(ggx_dir.data(), ggx_dir_dims);
+            return make_tuple(ggx_dir.data(), ggx_dir_dims, 1);
         });
 
     string ggx_inv_path = dir + "/ggx_dir_inv.bin";
@@ -449,7 +449,7 @@ static BSDFLookupTables loadBSDFLookupTables(TextureManager &tex_mgr,
     Texture ggx_inv_tex = tex_mgr.load(ggx_inv_path,
         TextureFormat::R32_SFLOAT, cudaAddressModeClamp, strm,
         [&](const auto &) {
-            return make_pair(ggx_inv.data(), ggx_inv_dims);
+            return make_tuple(ggx_inv.data(), ggx_inv_dims, 1);
         });
 
     BSDFPrecomputed device_hdls {

@@ -8,7 +8,7 @@ using namespace std;
 namespace RLpbr {
 namespace optix {
 
-TextureBacking::TextureBacking(cudaArray_t m, cudaTextureObject_t h)
+TextureBacking::TextureBacking(TextureMemory m, cudaTextureObject_t h)
     : mem(m),
       hdl(h),
       refCount(0)
@@ -54,7 +54,11 @@ void TextureManager::decrementTextureRef(const TextureRefType &tex_ref)
 
     if (tex.refCount.fetch_sub(1, memory_order_acq_rel) == 1) {
         cudaDestroyTextureObject(tex.hdl);
-        cudaFreeArray(tex.mem);
+        if (tex.mem.mipmapped) {
+            cudaFreeMipmappedArray(tex.mem.mipArr);
+        } else {
+            cudaFreeArray(tex.mem.arr);
+        }
 
         cache_lock_.lock();
 

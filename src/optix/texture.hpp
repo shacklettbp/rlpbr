@@ -15,10 +15,16 @@ namespace optix {
 
 class TextureManager;
 
-struct TextureBacking {
-    TextureBacking(cudaArray_t m, cudaTextureObject_t h);
+struct TextureMemory {
+    bool mipmapped;
+    cudaArray_t arr;
+    cudaMipmappedArray_t mipArr;
+};
 
-    cudaArray_t mem;
+struct TextureBacking {
+    TextureBacking(TextureMemory m, cudaTextureObject_t h);
+
+    TextureMemory mem;
     cudaTextureObject_t hdl;
 
     std::atomic_uint32_t refCount;
@@ -50,6 +56,8 @@ enum class TextureFormat {
     R8_UNORM,
     R32G32B32A32_SFLOAT,
     R32_SFLOAT,
+    BC7,
+    BC5,
 };
 
 class TextureManager {

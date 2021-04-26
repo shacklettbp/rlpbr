@@ -263,46 +263,42 @@ static LoadedTextures loadTextures(const TextureInfo &texture_info,
         vector<Texture> gpu_textures;
         gpu_textures.reserve(texture_names.size());
 
-        int num_components;
-        if (fmt == TextureFormat::R8G8B8A8_SRGB) {
-            num_components = 4;
-        } else if (fmt == TextureFormat::R8G8B8A8_UNORM) {
-            num_components = 4;
-        } else if (fmt == TextureFormat::R8G8_UNORM) {
-            num_components = 2;
-        } else if (fmt == TextureFormat::R8_UNORM) {
-            num_components = 1;
-        } else {
-            num_components = 0; // FIXME
-        }
-
         for (const auto &tex_name : texture_names) {
             string full_path = texture_info.textureDir + tex_name;
 
             Texture tex = mgr.load(full_path, fmt, cudaAddressModeWrap,
                 cpy_strm, [&](const string &tex_path) {
-                    int x, y, n;
-                    uint8_t *img_data =
-                        stbi_load(tex_path.c_str(), &x, &y, &n, 4);
-                    host_tex_data.push_back(img_data);
+                    ifstream tex_file(tex_path, ios::in | ios::binary);
 
-                    // FIXME passing in num_components < 3 to stbi_load
-                    // doesn't work properly
-                    if (num_components < 4) {
-                        for (int i = 0; i < x*y; i++) {
-                            img_data[i * num_components] = img_data[i * 4];
-                            if (num_components > 1) {
-                                img_data[i * num_components + 1] =
-                                    img_data[i * 4 + 1];
-                            }
-                            if (num_components > 2) {
-                                img_data[i * num_components + 2] =
-                                    img_data[i * 4 + 2];
-                            }
-                        }
+                    auto read_uint = [&tex_file]() {
+                        uint32_t v;
+                        tex_file.read((char *)&v, sizeof(uint32_t));
+                        return v;
+                    };
+
+                    auto magic = read_uint();
+                    if (magic != 0x50505050) {
+                        cerr << "Invalid texture file" << endl;
+                        abort();
                     }
 
-                    return make_pair(img_data, glm::u32vec2(x, y));
+                    auto num_levels = read_uint();
+                    auto x = read_uint();
+                    auto y = read_uint();
+                    tex_file.ignore(sizeof(uint32_t) * 3);
+                    auto num_blocks = read_uint();
+                    for (int i = 1; i < (int)num_levels; i++) {
+                        tex_file.ignore(sizeof(uint32_t) * 5);
+                        num_blocks += read_uint();
+                    }
+
+                    void *img_data = malloc(16 * num_blocks);
+                    tex_file.read((char *)img_data, 16 * num_blocks);
+
+                    host_tex_data.push_back(img_data);
+
+                    return make_tuple(img_data, glm::u32vec2(x, y),
+                                      num_levels);
                 });
 
             gpu_textures.emplace_back(move(tex));
@@ -313,21 +309,21 @@ static LoadedTextures loadTextures(const TextureInfo &texture_info,
 
     LoadedTextures loaded;
     loaded.base = loadTextureList(texture_info.base,
-                                  TextureFormat::R8G8B8A8_SRGB);
+                                  TextureFormat::BC7);
     loaded.metallicRoughness = loadTextureList(texture_info.metallicRoughness,
-                                               TextureFormat::R8G8B8A8_UNORM);
+                                               TextureFormat::BC5);
     loaded.specular = loadTextureList(texture_info.specular,
-                                      TextureFormat::R8G8B8A8_SRGB);
+                                      TextureFormat::BC7);
     loaded.normal = loadTextureList(texture_info.normal,
-                                    TextureFormat::R8G8_UNORM);
+                                    TextureFormat::BC5);
     loaded.emittance = loadTextureList(texture_info.emittance,
                                        TextureFormat::R32G32B32A32_SFLOAT);
     loaded.transmission = loadTextureList(texture_info.transmission,
                                           TextureFormat::R8_UNORM);
     loaded.clearcoat = loadTextureList(texture_info.clearcoat,
-                                       TextureFormat::R8G8_UNORM);
+                                       TextureFormat::BC5);
     loaded.anisotropic = loadTextureList(texture_info.anisotropic,
-                                         TextureFormat::R8G8_UNORM);
+                                         TextureFormat::BC5);
 
     if (!texture_info.envMap.empty()) {
         loaded.envMap.emplace(mgr.load(
@@ -338,14 +334,14 @@ static LoadedTextures loadTextures(const TextureInfo &texture_info,
                 float *img_data =
                     stbi_loadf(tex_path.c_str(), &x, &y, &n, 4);
                 host_tex_data.push_back(img_data);
-                return make_pair(img_data, glm::u32vec2(x, y));
+                return make_tuple(img_data, glm::u32vec2(x, y), 1);
             }));
     }
 
     REQ_CUDA(cudaStreamSynchronize(cpy_strm));
 
     for (void *ptr : host_tex_data) {
-        stbi_image_free(ptr);
+        free(ptr);
     }
 
     return loaded;
