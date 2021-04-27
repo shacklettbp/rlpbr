@@ -41,6 +41,11 @@ struct PackedTransforms {
     float4 data[6];
 };
 
+struct TextureSize {
+    uint32_t width;
+    uint32_t height;
+};
+
 struct alignas(16) PackedEnv {
 #ifdef __CUDACC__
     float4 camData[3];
@@ -52,6 +57,7 @@ struct alignas(16) PackedEnv {
     const uint32_t *indexBuffer;
     const PackedMaterial *materialBuffer;
     const cudaTextureObject_t *textureHandles;
+    const TextureSize *textureDims;
     const PackedMeshInfo *meshInfos;
 
     // FIXME Turn instance and light pointers

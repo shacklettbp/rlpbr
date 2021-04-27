@@ -187,10 +187,10 @@ static std::pair<TextureMemory, cudaTextureObject_t> load2DTexture(
     tex_desc.readMode = normalized && !compressed ?
         cudaReadModeNormalizedFloat : cudaReadModeElementType;
     tex_desc.normalizedCoords = true;
-    tex_desc.sRGB = srgb;
     if (num_levels > 1 && !compressed) {
         tex_desc.mipmapFilterMode = cudaFilterModeLinear;
     }
+    tex_desc.sRGB = srgb;
 
     cudaTextureObject_t hdl;
     REQ_CUDA(cudaCreateTextureObject(&hdl, &res_desc, &tex_desc,
@@ -279,27 +279,41 @@ Texture TextureManager::load(const std::string &lookup_key,
 
         auto [host_ptr, dims, num_levels] = load_fn(lookup_key);
 
+        uint32_t width = 0;
+        uint32_t height = 0;
+        uint32_t depth = 0;
+
         TextureMemory tex_mem;
         cudaTextureObject_t tex_hdl;
         if constexpr (is_same_v<decltype(dims), glm::u32vec3>) {
             tie(tex_mem, tex_hdl) =
                 load3DTexture(host_ptr, dims, num_levels, fmt, edge_mode,
                               copy_strm);
+
+            width = dims.x;
+            height = dims.y;
+            depth = dims.z;
         } else if constexpr (is_same_v<decltype(dims), glm::u32vec1>) {
             tie(tex_mem, tex_hdl) =
                 load1DTexture(host_ptr, dims.x, num_levels, fmt, edge_mode,
                               copy_strm);
+
+            width = dims.x;
         } else {
             tie(tex_mem, tex_hdl) =
                 load2DTexture(host_ptr, dims, num_levels, fmt, edge_mode,
                               copy_strm);
+
+            width = dims.x;
+            height = dims.y;
         }
 
         cache_lock_.lock();
 
         auto res = loaded_.emplace(piecewise_construct,
                                    forward_as_tuple(lookup_key),
-                                   forward_as_tuple(tex_mem, tex_hdl));
+                                   forward_as_tuple(tex_mem, tex_hdl, width,
+                                                    height, depth));
         iter = res.first;
         iter->second.refCount.fetch_add(1, memory_order_acq_rel);
 
@@ -320,7 +334,8 @@ Texture TextureManager::load(const std::string &lookup_key,
         cache_lock_.unlock();
     }
 
-    return Texture(*this, iter, iter->second.hdl);
+    return Texture(*this, iter, iter->second.hdl, iter->second.width,
+                   iter->second.height, iter->second.depth);
 }
 
 }
