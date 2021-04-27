@@ -19,6 +19,7 @@
 #include "import.hpp"
 #include "physics.hpp"
 #include "physics.inl"
+#include "rlpbr_core/scene.hpp"
 
 using namespace std;
 
@@ -768,10 +769,116 @@ static MaterialMetadata stageMaterials(const vector<Material> &materials,
     };
 }
 
+static vector<LightProperties> processLights(
+    const vector<LightProperties> &initial_lights,
+    const ProcessedGeometry<PackedVertex> &geo,
+    const vector<InstanceProperties> &instances)
+{
+    vector<LightProperties> lights = initial_lights;
+
+    for (const auto &inst : instances) {
+        if (inst.transparent) {
+            const auto &object_info = geo.objectInfos[inst.objectIndex];
+            for (int mesh_offset = 0; mesh_offset < (int)object_info.numMeshes;
+                 mesh_offset++) {
+                int mesh_idx = object_info.meshIndex + mesh_offset;
+                const auto &mesh = geo.meshInfos[mesh_idx];
+                glm::vec3 bbox_min(INFINITY, INFINITY, INFINITY);
+                glm::vec3 bbox_max(-INFINITY, -INFINITY, -INFINITY);
+                for (int i = 0; i < (int)(mesh.numTriangles * 3); i++) {
+                    const PackedVertex vert =
+                        geo.vertices[geo.indices[mesh.indexOffset + i]];
+
+                    const glm::vec3 &p = vert.position;
+                    if (p.x < bbox_min.x) {
+                        bbox_min.x = p.x;
+                    }
+                    if (p.y < bbox_min.y) {
+                        bbox_min.y = p.y;
+                    }
+
+                    if (p.z < bbox_min.z) {
+                        bbox_min.z = p.z;
+                    }
+
+                    if (p.x > bbox_max.x) {
+                        bbox_max.x = p.x;
+                    }
+
+                    if (p.y > bbox_max.y) {
+                        bbox_max.y = p.y;
+                    }
+
+                    if (p.z > bbox_max.z) {
+                        bbox_max.z = p.z;
+                    }
+                }
+
+                glm::vec3 delta = bbox_max - bbox_min;
+                float min_comp = delta.x;
+                int min_idx = 0;
+                if (delta.y < min_comp) {
+                    min_comp = delta.y;
+                    min_idx = 1;
+                }
+                if (delta.z < min_comp) {
+                    min_comp = delta.z;
+                    min_idx = 2;
+                }
+
+                int left_idx;
+                int up_idx;
+                if (min_idx == 0) {
+                    left_idx = 1;
+                    up_idx = 2;
+                } else if (min_idx == 1) {
+                    left_idx = 0;
+                    up_idx = 2;
+                } else {
+                    left_idx = 0;
+                    up_idx = 1;
+                }
+
+                LightProperties portal;
+                portal.type = LightType::Portal;
+                portal.corners[0][0] = bbox_min.x;
+                portal.corners[0][1] = bbox_min.y;
+                portal.corners[0][2] = bbox_min.z;
+
+                portal.corners[1][0] = bbox_min.x;
+                portal.corners[1][1] = bbox_min.y;
+                portal.corners[1][2] = bbox_min.z;
+
+                portal.corners[1][up_idx] += delta[up_idx];
+
+                portal.corners[2][0] = bbox_min.x;
+                portal.corners[2][1] = bbox_min.y;
+                portal.corners[2][2] = bbox_min.z;
+
+                portal.corners[2][left_idx] += delta[left_idx];
+                portal.corners[2][up_idx] += delta[up_idx];
+
+                portal.corners[3][0] = bbox_min.x;
+                portal.corners[3][1] = bbox_min.y;
+                portal.corners[3][2] = bbox_min.z;
+
+                portal.corners[3][left_idx] += delta[left_idx];
+
+                lights.push_back(portal);
+            }
+        }
+    }
+
+    return lights;
+}
+
 void ScenePreprocessor::dump(string_view out_path_name)
 {
     auto [processed_geometry, processed_instances] =
         processScene(scene_data_->desc);
+
+    auto processed_lights = processLights(scene_data_->desc.defaultLights,
+        processed_geometry, processed_instances);
 
     auto processed_physics_state =
         ProcessedPhysicsState::make(processed_geometry, !scene_data_->dumpSDFs);
@@ -1037,6 +1144,7 @@ void ScenePreprocessor::dump(string_view out_path_name)
 
     auto write_scene = [&](const auto &geometry,
                            const auto &instances,
+                           const auto &lights,
                            const auto &desc,
                            const auto &data_dir) {
         const auto &materials = desc.materials;
@@ -1049,7 +1157,7 @@ void ScenePreprocessor::dump(string_view out_path_name)
 
         write_objects(geometry);
 
-        write_lights(desc.defaultLights);
+        write_lights(lights);
 
         write_materials(material_metadata);
 
@@ -1063,8 +1171,8 @@ void ScenePreprocessor::dump(string_view out_path_name)
 
     // Header: magic
     write(uint32_t(0x55555555));
-    write_scene(processed_geometry, processed_instances, scene_data_->desc,
-                scene_data_->dataDir);
+    write_scene(processed_geometry, processed_instances, processed_lights,
+                scene_data_->desc, scene_data_->dataDir);
     out.close();
 }
 

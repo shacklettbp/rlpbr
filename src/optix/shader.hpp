@@ -34,7 +34,7 @@ struct PackedInstance {
 };
 
 struct PackedLight {
-    float4 data[2];
+    float4 data[4];
 };
 
 struct PackedTransforms {
