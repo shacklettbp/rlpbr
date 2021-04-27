@@ -22,10 +22,14 @@ struct TextureMemory {
 };
 
 struct TextureBacking {
-    TextureBacking(TextureMemory m, cudaTextureObject_t h);
+    TextureBacking(TextureMemory m, cudaTextureObject_t handle,
+                   uint32_t w, uint32_t h, uint32_t d);
 
     TextureMemory mem;
     cudaTextureObject_t hdl;
+    uint32_t width;
+    uint32_t height;
+    uint32_t depth;
 
     std::atomic_uint32_t refCount;
 };
@@ -36,17 +40,24 @@ using TextureRefType =
 class Texture {
 public:
     Texture(TextureManager &mgr, const TextureRefType &r,
-            cudaTextureObject_t hdl);
+            cudaTextureObject_t hdl, uint32_t width,
+            uint32_t height, uint32_t depth);
     Texture(const Texture &) = delete;
     Texture(Texture &&);
     ~Texture();
 
     inline cudaTextureObject_t getHandle() const { return hdl_; }
+    inline uint32_t getWidth() const { return width_; }
+    inline uint32_t getHeight() const { return height_; }
+    inline uint32_t getDepth() const { return depth_; }
 
 private:
     TextureManager &mgr_;
     TextureRefType ref_;
     cudaTextureObject_t hdl_;
+    uint32_t width_;
+    uint32_t height_;
+    uint32_t depth_;
 };
 
 enum class TextureFormat {

@@ -358,18 +358,21 @@ shared_ptr<Scene> OptixLoader::loadScene(SceneLoadData &&load_info)
     }
     size_t texture_ptr_offset = alignOffset(load_info.hdr.totalBytes, 16);
     size_t texture_ptr_bytes = num_texture_hdls * sizeof(cudaTextureObject_t);
+    size_t texture_dim_offset =
+        alignOffset(texture_ptr_offset + texture_ptr_bytes, 16);
+    size_t texture_dim_bytes = num_texture_hdls * sizeof(TextureSize);
     size_t sdf_ptr_offset = 0;
     size_t sdf_ptr_bytes = 0;
     size_t total_device_bytes = 0;
     if (need_physics_) {
         sdf_ptr_offset =
-            alignOffset(texture_ptr_offset + texture_ptr_bytes, 16);
+            alignOffset(texture_dim_offset + texture_dim_bytes, 16);
         sdf_ptr_bytes =
             load_info.physics.sdfPaths.size() * sizeof(cudaTextureObject_t);
 
         total_device_bytes = sdf_ptr_offset + sdf_ptr_bytes;
     } else {
-        total_device_bytes = texture_ptr_offset + texture_ptr_bytes;
+        total_device_bytes = texture_dim_offset + texture_dim_bytes;
     }
 
     char *scene_storage = (char *)allocCU(total_device_bytes);
@@ -495,9 +498,15 @@ shared_ptr<Scene> OptixLoader::loadScene(SceneLoadData &&load_info)
 
     // Based on indices in MaterialTextures build indexable list of handles
     vector<cudaTextureObject_t> texture_hdls;
+    vector<TextureSize> texture_dims;
     texture_hdls.reserve(num_texture_hdls);
+    texture_dims.reserve(num_texture_hdls);
     if (textures.envMap.has_value()) {
         texture_hdls.push_back(textures.envMap->getHandle());
+        texture_dims.push_back({
+            textures.envMap->getWidth(),
+            textures.envMap->getHeight(),
+        });
     }
     for (int mat_idx = 0; mat_idx < (int)load_info.hdr.numMaterials;
          mat_idx++) {
@@ -507,8 +516,15 @@ shared_ptr<Scene> OptixLoader::loadScene(SceneLoadData &&load_info)
         auto appendHandle = [&](uint32_t idx, const auto &texture_list) {
             if (idx != ~0u) {
                 texture_hdls.push_back(texture_list[idx].getHandle());
+                texture_dims.push_back({
+                    texture_list[idx].getWidth(),
+                    texture_list[idx].getHeight(),
+                });
             } else {
                 texture_hdls.push_back(0);
+                texture_dims.push_back({
+                    0, 0,
+                });
             }
         };
 
@@ -526,6 +542,11 @@ shared_ptr<Scene> OptixLoader::loadScene(SceneLoadData &&load_info)
     cudaTextureObject_t *tex_gpu_ptr = (cudaTextureObject_t *)(
         scene_storage + texture_ptr_offset);
     cudaMemcpyAsync(tex_gpu_ptr, texture_hdls.data(), texture_ptr_bytes,
+                    cudaMemcpyHostToDevice, stream_);
+
+    TextureSize *tex_dims_ptr = (TextureSize *)(
+        scene_storage + texture_dim_offset);
+    cudaMemcpyAsync(tex_dims_ptr, texture_dims.data(), texture_dim_bytes,
                     cudaMemcpyHostToDevice, stream_);
 
     REQ_CUDA(cudaStreamSynchronize(stream_));
@@ -563,6 +584,7 @@ shared_ptr<Scene> OptixLoader::loadScene(SceneLoadData &&load_info)
         default_transforms,
         move(textures),
         tex_gpu_ptr,
+        tex_dims_ptr,
         move(physics),
     });
 }

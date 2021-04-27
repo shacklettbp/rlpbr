@@ -51,6 +51,7 @@ struct Environment {
     const uint32_t *indexBuffer;
     const PackedMaterial *materialBuffer;
     const cudaTextureObject_t *textureHandles;
+    const TextureSize *textureDims;
     const PackedMeshInfo *meshInfos;
     const PackedInstance *instances;
     const uint32_t *instanceMaterials;
@@ -170,9 +171,10 @@ __forceinline__ pair<Camera, Environment> unpackEnv(uint32_t batch_idx)
 {
     PackedEnv packed;
 
+    uint64_t lights_padded;
     asm ("{\n\t"
         ".reg .u64 t1;\n\t"
-        "mad.wide.u32 t1, %23, %24, %25;\n\t"
+        "mad.wide.u32 t1, %24, %25, %26;\n\t"
         "ld.global.v4.f32 {%0, %1, %2, %3}, [t1];\n\t"
         "ld.global.v4.f32 {%4, %5, %6, %7}, [t1 + 16];\n\t"
         "ld.global.v4.f32 {%8, %9, %10, %11}, [t1 + 32];\n\t"
@@ -181,7 +183,7 @@ __forceinline__ pair<Camera, Environment> unpackEnv(uint32_t batch_idx)
         "ld.global.v2.u64 {%16, %17}, [t1 + 80];\n\t"
         "ld.global.v2.u64 {%18, %19}, [t1 + 96];\n\t"
         "ld.global.v2.u64 {%20, %21}, [t1 + 112];\n\t"
-        "ld.global.u32 %22, [t1 + 128];\n\t"
+        "ld.global.v2.u64 {%22, %23}, [t1 + 128];\n\t"
         "}\n\t"
         : "=f" (packed.camData[0].x), "=f" (packed.camData[0].y),
           "=f" (packed.camData[0].z), "=f" (packed.camData[0].w),
@@ -191,10 +193,10 @@ __forceinline__ pair<Camera, Environment> unpackEnv(uint32_t batch_idx)
           "=f" (packed.camData[2].z), "=f" (packed.camData[2].w),
           "=l" (packed.tlas), "=l" (packed.vertexBuffer),
           "=l" (packed.indexBuffer), "=l" (packed.materialBuffer),
-          "=l" (packed.textureHandles), "=l" (packed.meshInfos),
-          "=l" (packed.instances), "=l" (packed.instanceMaterials),
-          "=l" (packed.lights), "=l" (packed.transforms),
-          "=r" (packed.numLights)
+          "=l" (packed.textureHandles), "=l" (packed.textureDims),
+          "=l" (packed.meshInfos), "=l" (packed.instances),
+          "=l" (packed.instanceMaterials), "=l" (packed.lights),
+          "=l" (packed.transforms), "=l" (lights_padded)
         : "r" (batch_idx), "n" (sizeof(PackedEnv)), "n" (ENV_PTR)
     );
 
@@ -206,12 +208,13 @@ __forceinline__ pair<Camera, Environment> unpackEnv(uint32_t batch_idx)
             packed.indexBuffer,
             packed.materialBuffer,
             packed.textureHandles,
+            packed.textureDims,
             packed.meshInfos,
             packed.instances,
             packed.instanceMaterials,
             packed.lights,
             packed.transforms,
-            packed.numLights,
+            uint32_t(lights_padded),
         },
     };
 }
@@ -362,8 +365,66 @@ __forceinline__ T computeFresnel(T f0, T f90, float cos_theta)
     return f0 + (f90 - f0) * pow(max(1.f - cos_theta, 0.f), 5.f);
 }
 
+template <typename T>
+__forceinline__ T fetchBC(cudaTextureObject_t tex,
+                          TextureSize dims,
+                          float2 uv)
+{
+    float scaled_x = uv.x * float(dims.width) - 0.5f;
+    float scaled_y = uv.y * float(dims.height) - 0.5f;
+
+    int left_x = truncf(scaled_x);
+    int down_y = truncf(scaled_y);
+
+    float diff_x;
+    int right_x;
+    if (left_x <= scaled_x) {
+        diff_x = scaled_x - left_x;
+        right_x = left_x + 1;
+    } else {
+        diff_x = left_x - scaled_x;
+        right_x = left_x - 1;
+    }
+
+    float diff_y;
+    int up_y;
+    if (down_y <= scaled_y) {
+        diff_y = scaled_y - down_y;
+        up_y = down_y + 1.f;
+    } else {
+        diff_y = down_y - scaled_y;
+        up_y = down_y - 1.f;
+    }
+
+    float rounded_width = float((dims.width / 4) * 4);
+    float rounded_height = float((dims.height / 4) * 4);
+
+    auto sample = [&](int x, int y) {
+        int orig_x = x;
+        int orig_y = y;
+
+        x = x % int(dims.width);
+        if (x < 0) x += int(dims.width);
+        y = y % int(dims.height);
+        if (y < 0) y += int(dims.height);
+
+        return tex2DLod<T>(tex, (float(x) + 0.5f) / rounded_width,
+                           (float(y) + 0.5f) / rounded_height, 0);
+    };
+
+
+    T left =
+        lerp(sample(left_x, down_y), sample(left_x, up_y), diff_y);
+
+    T right =
+        lerp(sample(right_x, down_y), sample(right_x, up_y), diff_y);
+
+    return lerp(left, right, diff_x);
+}
+
 __forceinline__ Material processMaterial(const MaterialParams &params,
                                          const cudaTextureObject_t *textures,
+                                         const TextureSize *texture_dims,
                                          float2 uv)
 {
     Material mat;
@@ -371,8 +432,9 @@ __forceinline__ Material processMaterial(const MaterialParams &params,
     mat.rho = params.baseColor;
     mat.transparencyMask = 1.f;
     if (checkMaterialFlag(params.flags, MaterialFlags::HasBaseTexture)) {
-        cudaTextureObject_t tex = textures[TextureConstants::baseOffset];
-        float4 tex_value = tex2DLod<float4>(tex, uv.x, uv.y, 0);
+        float4 tex_value = fetchBC<float4>(
+            textures[TextureConstants::baseOffset],
+            texture_dims[TextureConstants::baseOffset], uv);
 
         mat.rho.x *= tex_value.x;
         mat.rho.y *= tex_value.y;
@@ -383,18 +445,21 @@ __forceinline__ Material processMaterial(const MaterialParams &params,
     mat.metallic = params.baseMetallic;
     mat.roughness = params.baseRoughness;
     if (checkMaterialFlag(params.flags, MaterialFlags::HasMRTexture)) {
-        cudaTextureObject_t tex = textures[TextureConstants::mrOffset];
-        float2 tex_value = tex2DLod<float2>(tex, uv.x, uv.y, 0);
+        float2 tex_value = fetchBC<float2>(
+            textures[TextureConstants::mrOffset],
+            texture_dims[TextureConstants::mrOffset], uv);
 
         mat.roughness *= tex_value.x;
         mat.metallic *= tex_value.y;
     }
 
+    
     mat.rhoSpecular = params.baseSpecular;
     mat.specularScale = params.specularScale;
     if (checkMaterialFlag(params.flags, MaterialFlags::HasSpecularTexture)) {
-        cudaTextureObject_t tex = textures[TextureConstants::specularOffset];
-        float4 tex_value = tex2DLod<float4>(tex, uv.x, uv.y, 0);
+        float4 tex_value = fetchBC<float4>(
+            textures[TextureConstants::specularOffset],
+            texture_dims[TextureConstants::specularOffset], uv);
 
         mat.rhoSpecular.x *= tex_value.x;
         mat.rhoSpecular.y *= tex_value.y;
@@ -426,9 +491,9 @@ __forceinline__ Material processMaterial(const MaterialParams &params,
     mat.clearcoatRoughness = params.clearcoatRoughness;
     if (checkMaterialFlag(params.flags,
                           MaterialFlags::HasClearcoatTexture)) {
-        cudaTextureObject_t tex =
-            textures[TextureConstants::clearcoatOffset];
-        float2 tex_value = tex2DLod<float2>(tex, uv.x, uv.y, 0);
+        float2 tex_value = fetchBC<float2>(
+            textures[TextureConstants::clearcoatOffset],
+            texture_dims[TextureConstants::clearcoatOffset], uv);
 
         mat.clearcoatScale *= tex_value.x;
         mat.clearcoatRoughness *= tex_value.y;
@@ -438,8 +503,9 @@ __forceinline__ Material processMaterial(const MaterialParams &params,
     mat.anisoRotation = params.anisoRotation;
     if (checkMaterialFlag(params.flags,
                           MaterialFlags::HasAnisotropicTexture)) {
-        cudaTextureObject_t tex = textures[TextureConstants::anisoOffset];
-        float2 tex_value = tex2DLod<float2>(tex, uv.x, uv.y, 0);
+        float2 tex_value = fetchBC<float2>(
+            textures[TextureConstants::anisoOffset],
+            texture_dims[TextureConstants::anisoOffset], uv);
         float2 aniso_v = tex_value * 2.f - 1.f;
 
         mat.anisoScale = length(aniso_v);
@@ -991,13 +1057,15 @@ __forceinline__ float3 evalBSDF(const BSDFParams &params,
     float3 diffuse = diffuseBSDF(params, wo.z, wi.z);
 
     float3 microfacet =
-        microfacetBSDF(params, wo.z, wi.z, n_dot_h, dir_dot_h) +
+        microfacetBSDF(params, wo.z, wi.z, n_dot_h, dir_dot_h);
+
+    float3 microfacet_ms =
         microfacetMSBSDF(params, wo.z, wi.z);
 
     float3 transmissive =
         microfacetTransmissiveBSDF(params, wo, wi);
 
-    float3 base = diffuse + microfacet + transmissive;
+    float3 base = diffuse + microfacet + microfacet_ms + transmissive;
 
     auto [clearcoat_response, base_scale] =
         clearcoatBSDF(params, wo.z, wi.z, n_dot_h, dir_dot_h);
@@ -1189,16 +1257,17 @@ __forceinline__ LightInfo sampleLights(Sampler &sampler,
 {
     // include env map
     uint32_t total_lights = env.numLights + 1;
+    total_lights -= 1;
 
     uint32_t light_idx = min(uint32_t(sampler.get1D() * total_lights),
                              total_lights - 1);
 
-    light_idx = env.numLights;
+    //light_idx = env.numLights;
 
     float2 light_sample_uv = sampler.get2D();
 
     float inv_selection_pdf = float(total_lights);
-    inv_selection_pdf = 1.f;
+    //inv_selection_pdf = 1.f;
 
     LightSample light_sample;
     Light point_light;
@@ -1465,7 +1534,8 @@ inline float3 computeGeometricNormal(const Triangle &tri)
 
 inline TangentFrame computeTangentFrame(const DeviceVertex &v,
                                         const MaterialParams &mat_params,
-                                        const cudaTextureObject_t *textures)
+                                        const cudaTextureObject_t *textures,
+                                        const TextureSize *texture_dims)
 {
     float3 n = v.normal;
     float3 t = make_float3(v.tangentAndSign.x, v.tangentAndSign.y,
@@ -1476,8 +1546,10 @@ inline TangentFrame computeTangentFrame(const DeviceVertex &v,
 
     float3 perturb;
     if (checkMaterialFlag(mat_params.flags, MaterialFlags::HasNormalMap)) {
-        float2 xy = tex2DLod<float2>(textures[TextureConstants::normalOffset],
-                                     v.uv.x, v.uv.y, 0);
+        float2 xy = fetchBC<float2>(textures[TextureConstants::normalOffset],
+                                    texture_dims[TextureConstants::normalOffset],
+                                    v.uv);
+
         float2 centered = xy * 2.f - 1.f;
         float length2 = clamp(dot(centered, centered), 0.f, 1.f);
 
@@ -1644,6 +1716,8 @@ extern "C" __global__ void __raygen__rg()
                 unpackMaterialParams(env.materialBuffer[material_idx]);
             const cudaTextureObject_t *textures = env.textureHandles + 1 +
                 material_idx * TextureConstants::numTexturesPerMaterial;
+            const TextureSize *tex_dims = env.textureDims + 1 +
+                material_idx * TextureConstants::numTexturesPerMaterial;
 
             auto [o2w, w2o] = unpackTransforms(env.transforms[instance_idx]);
 
@@ -1652,7 +1726,8 @@ extern "C" __global__ void __raygen__rg()
                                              env.indexBuffer + index_offset);
             DeviceVertex interpolated = interpolateTriangle(hit_tri, barys);
             TangentFrame obj_tangent_frame =
-                computeTangentFrame(interpolated, material_params, textures);
+                computeTangentFrame(interpolated, material_params, textures,
+                                    tex_dims);
             float3 obj_geo_normal = computeGeometricNormal(hit_tri);
 
             float3 world_position =
@@ -1663,8 +1738,8 @@ extern "C" __global__ void __raygen__rg()
                 transformNormal(w2o, obj_geo_normal);
             world_geo_normal = normalize(world_geo_normal);
 
-            Material material =
-                processMaterial(material_params, textures, interpolated.uv);
+            Material material = processMaterial(material_params, textures,
+                tex_dims, interpolated.uv);
 
             LightInfo light_info = sampleLights(sampler, env, env_tex,
                 world_position, world_geo_normal);

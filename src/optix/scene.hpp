@@ -61,6 +61,7 @@ struct OptixScene : public Scene {
 
     LoadedTextures textures;
     const cudaTextureObject_t *texturePtr;
+    const TextureSize *textureDimsPtr;
 
     std::optional<ScenePhysicsData> physics;
 };

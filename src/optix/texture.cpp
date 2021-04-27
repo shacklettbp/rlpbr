@@ -8,23 +8,34 @@ using namespace std;
 namespace RLpbr {
 namespace optix {
 
-TextureBacking::TextureBacking(TextureMemory m, cudaTextureObject_t h)
+TextureBacking::TextureBacking(TextureMemory m, cudaTextureObject_t handle,
+                               uint32_t w, uint32_t h, uint32_t d)
     : mem(m),
-      hdl(h),
+      hdl(handle),
+      width(w),
+      height(h),
+      depth(d),
       refCount(0)
 {}
 
 Texture::Texture(TextureManager &mgr, const TextureRefType &r,
-                 cudaTextureObject_t hdl)
+                 cudaTextureObject_t hdl, uint32_t width,
+                 uint32_t height, uint32_t depth)
     : mgr_(mgr),
       ref_(r),
-      hdl_(hdl)
+      hdl_(hdl),
+      width_(width),
+      height_(height),
+      depth_(depth)
 {}
 
 Texture::Texture(Texture &&o)
     : mgr_(o.mgr_),
       ref_(o.ref_),
-      hdl_(o.hdl_)
+      hdl_(o.hdl_),
+      width_(o.width_),
+      height_(o.height_),
+      depth_(o.depth_)
 {
     o.hdl_ = 0;
 }
