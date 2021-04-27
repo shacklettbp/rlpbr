@@ -382,21 +382,21 @@ __forceinline__ T fetchBC(cudaTextureObject_t tex,
     float scaled_x = uv.x * float(dims.width) - 0.5f;
     float scaled_y = uv.y * float(dims.height) - 0.5f;
 
-    int left_x = truncf(scaled_x);
-    int down_y = truncf(scaled_y);
+    float left_x = truncf(scaled_x);
+    float down_y = truncf(scaled_y);
 
     float diff_x;
-    int right_x;
+    float right_x;
     if (left_x <= scaled_x) {
         diff_x = scaled_x - left_x;
-        right_x = left_x + 1;
+        right_x = left_x + 1.f;
     } else {
         diff_x = left_x - scaled_x;
-        right_x = left_x - 1;
+        right_x = left_x - 1.f;
     }
 
     float diff_y;
-    int up_y;
+    float up_y;
     if (down_y <= scaled_y) {
         diff_y = scaled_y - down_y;
         up_y = down_y + 1.f;
@@ -408,11 +408,11 @@ __forceinline__ T fetchBC(cudaTextureObject_t tex,
     float rounded_width = float((dims.width / 4) * 4);
     float rounded_height = float((dims.height / 4) * 4);
 
-    auto sample = [&](int x, int y) {
-        x = x % int(dims.width);
-        if (x < 0) x += int(dims.width);
-        y = y % int(dims.height);
-        if (y < 0) y += int(dims.height);
+    auto sample = [&](float x, float y) {
+        x = fmodf(x, float(dims.width));
+        if (x < 0) x += float(dims.width);
+        y = fmodf(y, float(dims.height));
+        if (y < 0) y += float(dims.height);
 
         return tex2DLod<T>(tex, (float(x) + 0.5f) / rounded_width,
                            (float(y) + 0.5f) / rounded_height, 0);
