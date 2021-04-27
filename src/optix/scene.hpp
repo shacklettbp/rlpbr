@@ -87,8 +87,9 @@ public:
     CUdeviceptr tlasStorage;
     OptixTraversableHandle tlas;
     InstanceTransform *transformBuffer;
+    PackedLight *lights;
+    uint32_t numLights;
 
-    std::vector<PackedLight> lights;
     std::vector<InstanceFlags> instanceFlags;
 
     std::optional<PhysicsEnvironment> physics;

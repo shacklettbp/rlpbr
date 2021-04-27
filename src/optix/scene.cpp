@@ -154,8 +154,6 @@ OptixEnvironment OptixEnvironment::make(OptixDeviceContext ctx,
         num_instances, (CUdeviceptr)tlas_storage,
         scene.defaultTLAS.numBytes, &new_tlas));
 
-    REQ_CUDA(cudaStreamSynchronize(build_stream));
-
     // FIXME, pre-pack this in envInit somehow... backend
     // env init?
     vector<PackedLight> lights;
@@ -189,6 +187,14 @@ OptixEnvironment OptixEnvironment::make(OptixDeviceContext ctx,
         lights.push_back(packed);
     }
 
+    PackedLight *light_buffer =
+        (PackedLight *)allocCU(sizeof(PackedLight) * lights.size());
+    cudaMemcpyAsync(light_buffer, lights.data(),
+                    sizeof(PackedLight) * lights.size(),
+                    cudaMemcpyHostToDevice, build_stream);
+
+    REQ_CUDA(cudaStreamSynchronize(build_stream));
+
     optional<PhysicsEnvironment> physics;
     if (scene.physics.has_value()) {
         physics.emplace(*scene.physics, build_stream);
@@ -199,7 +205,8 @@ OptixEnvironment OptixEnvironment::make(OptixDeviceContext ctx,
         (CUdeviceptr)tlas_storage,
         new_tlas,
         transforms,
-        move(lights),
+        light_buffer,
+        uint32_t(lights.size()),
         scene.envInit.defaultInstanceFlags,
         move(physics),
     };
@@ -209,11 +216,13 @@ OptixEnvironment::~OptixEnvironment()
 {
     cudaFree((void *)tlasStorage);
     cudaFree(transformBuffer);
+    cudaFree(lights);
 }
 
 uint32_t OptixEnvironment::addLight(const glm::vec3 &position,
                   const glm::vec3 &color)
 {
+#if 0
     PackedLight packed;
     LightType type = LightType::Point;
     memcpy(&packed.data[0].x, &type, sizeof(LightType));
@@ -227,13 +236,16 @@ uint32_t OptixEnvironment::addLight(const glm::vec3 &position,
     lights.push_back(packed);
 
     return lights.size() - 1;
+#endif
 }
 
 void OptixEnvironment::removeLight(uint32_t light_idx)
 {
+#if 0
     lights[light_idx] = lights.back();
 
     lights.pop_back();
+#endif
 }
 
 TLASIntermediate OptixEnvironment::queueTLASRebuild(const Environment &env,
