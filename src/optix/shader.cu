@@ -137,9 +137,18 @@ struct BSDFParams {
     float transmissionProb;
 };
 
-struct Light {
+enum class LightType : uint32_t {
+    Point,
+    Portal,
+};
+
+struct PointLight {
     float3 rgb;
     float3 position;
+};
+
+struct PortalLight {
+    float3 corners[4];
 };
 
 struct Triangle {
@@ -400,9 +409,6 @@ __forceinline__ T fetchBC(cudaTextureObject_t tex,
     float rounded_height = float((dims.height / 4) * 4);
 
     auto sample = [&](int x, int y) {
-        int orig_x = x;
-        int orig_y = y;
-
         x = x % int(dims.width);
         if (x < 0) x += int(dims.width);
         y = y % int(dims.height);
@@ -1184,14 +1190,28 @@ struct LightInfo {
     float shadowRayLength;
 };
 
-__forceinline__ Light unpackLight(const PackedLight &packed)
+__forceinline__ PointLight unpackPointLight(const PackedLight &packed)
 {
     float4 data0 = packed.data[0];
     float4 data1 = packed.data[1];
 
-    return Light {
-        make_float3(data0.x, data0.y, data0.z),
-        make_float3(data0.w, data1.x, data1.y),
+    return PointLight {
+        make_float3(data0.y, data0.z, data0.w),
+        make_float3(data1.x, data1.y, data1.z),
+    };
+}
+
+__forceinline__ PortalLight unpackPortalLight(const PackedLight &packed)
+{
+    float4 data1 = packed.data[1];
+    float4 data2 = packed.data[2];
+    float4 data3 = packed.data[3];
+
+    return PortalLight {
+        make_float3(data1.x, data1.y, data1.z),
+        make_float3(data1.w, data2.x, data2.y),
+        make_float3(data2.z, data2.w, data3.x),
+        make_float3(data3.y, data3.z, data3.w),
     };
 }
 
@@ -1231,8 +1251,35 @@ __forceinline__ LightSample sampleEnvMap(cudaTextureObject_t env_tex,
     };
 }
 
+__forceinline__ float3 getPortalLightPoint(
+    const PortalLight &light, float2 uv)
+{
+    float3 upper = lerp(light.corners[0], light.corners[3], uv.x);
+    float3 lower = lerp(light.corners[1], light.corners[2], uv.x);
+
+    return lerp(lower, upper, uv.y);
+}
+
+__forceinline__ LightSample samplePortal(
+    const PortalLight &light, cudaTextureObject_t env_tex,
+    float3 to_light, float inv_selection_pdf)
+{
+    float3 dir = normalize(to_light);
+
+    float3 irradiance = evalEnvMap(env_tex, dir);
+
+    const float inv_pdf = fabsf(
+        length(light.corners[3] - light.corners[0]) *
+        length(light.corners[1] - light.corners[0]));
+
+    return LightSample {
+        dir,
+        irradiance * inv_pdf * inv_selection_pdf,
+    };
+}
+
 __forceinline__ pair<LightSample, float> samplePointLight(
-    const Light &light, float3 origin, float inv_selection_pdf)
+    const PointLight &light, float3 origin, float inv_selection_pdf)
 {
     float3 to_light = light.position - origin;
 
@@ -1255,30 +1302,31 @@ __forceinline__ LightInfo sampleLights(Sampler &sampler,
     const Environment &env, cudaTextureObject_t env_tex, 
     float3 origin, float3 base_normal)
 {
-    // include env map
-    uint32_t total_lights = env.numLights + 1;
-    total_lights -= 1;
+    uint32_t total_lights = env.numLights;
 
     uint32_t light_idx = min(uint32_t(sampler.get1D() * total_lights),
                              total_lights - 1);
 
-    //light_idx = env.numLights;
-
     float2 light_sample_uv = sampler.get2D();
 
     float inv_selection_pdf = float(total_lights);
-    //inv_selection_pdf = 1.f;
 
-    LightSample light_sample;
-    Light point_light;
-    float3 dir_check;
-    if (light_idx < env.numLights) {
-        point_light = unpackLight(env.lights[light_idx]);
-        dir_check = point_light.position - origin;
-    } else {
-        light_sample = sampleEnvMap(env_tex, light_sample_uv, inv_selection_pdf);
-        dir_check = light_sample.toLight;
+    LightType light_type =
+        LightType(__float_as_uint(env.lights[light_idx].data[0].x));
+
+    PointLight point_light;
+    PortalLight portal_light;
+    float3 light_position;
+    if (light_type == LightType::Point) {
+        point_light = unpackPointLight(env.lights[light_idx]);
+        light_position = point_light.position;
+    } else if (light_type == LightType::Portal) {
+        portal_light = unpackPortalLight(env.lights[light_idx]);
+        light_position =
+            getPortalLightPoint(portal_light, light_sample_uv);
     }
+
+    float3 dir_check = light_position - origin;
 
     float3 shadow_offset_normal =
         dot(dir_check, base_normal) > 0 ? base_normal : -base_normal;
@@ -1286,14 +1334,19 @@ __forceinline__ LightInfo sampleLights(Sampler &sampler,
     float3 shadow_origin =
         offsetRayOrigin(origin, shadow_offset_normal);
 
+    LightSample light_sample;
     float shadow_len;
-    if (light_idx < env.numLights) {
+    if (light_type == LightType::Point) {
         float shadow_len2;
         tie(light_sample, shadow_len2) =
             samplePointLight(point_light, shadow_origin, inv_selection_pdf);
 
         shadow_len = sqrtf(shadow_len2);
-    } else {
+    } else if (light_type == LightType::Portal) {
+        float3 to_light = light_position - shadow_origin;
+        light_sample = samplePortal(portal_light, env_tex, to_light,
+                                    inv_selection_pdf);
+
         shadow_len = 10000.f;
     }
 

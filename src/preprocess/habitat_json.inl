@@ -200,10 +200,16 @@ SceneDescription<VertexType, MaterialType> parseHabitatJSON(
     }
 
     for (const Light &light : raw_scene.lights) {
-        desc.defaultLights.push_back({
-            light.position,
-            light.color * light.intensity,
-        });
+        LightProperties light_props;
+        light_props.type = RLpbr::LightType::Point;
+        light_props.position[0] = light.position.x;
+        light_props.position[1] = light.position.y;
+        light_props.position[2] = light.position.z;
+        glm::vec3 scaled_color = light.color * light.intensity;
+        light_props.color[0] = scaled_color.x;
+        light_props.color[1] = scaled_color.y;
+        light_props.color[2] = scaled_color.z;
+        desc.defaultLights.push_back(light_props);
     }
 
     return desc;

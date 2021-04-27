@@ -65,9 +65,22 @@ struct alignas(16) MaterialParams {
     glm::u16vec3 baseEmittance;
 };
 
+enum class LightType : uint32_t {
+    Point,
+    Portal,
+};
+
 struct LightProperties {
-    glm::vec3 position;
-    glm::vec3 color;
+    LightType type;
+    union {
+        struct {
+            float position[3];
+            float color[3];
+        };
+        struct {
+            float corners[4][3];
+        };
+    };
 };
 
 struct EnvironmentInit {
