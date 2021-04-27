@@ -582,12 +582,6 @@ static PackedEnv packEnv(const Environment &env,
     }
     *instance_materials = cur_inst_materials;
 
-    uint32_t num_lights = env_backend.lights.size();
-    PackedLight *light_ptr = *light_buffer;
-    memcpy(light_ptr, env_backend.lights.data(),
-           sizeof(PackedLight) * num_lights);
-    *light_buffer += num_lights;
-
     return PackedEnv {
         packCamera(env.getCamera()),
         env_backend.tlas,
@@ -599,9 +593,9 @@ static PackedEnv packEnv(const Environment &env,
         scene.meshPtr,
         env_inst_start,
         env_mat_start,
-        light_ptr,
+        env_backend.lights,
         (PackedTransforms *)env_backend.transformBuffer,
-        num_lights,
+        env_backend.numLights,
     };
 }
 
