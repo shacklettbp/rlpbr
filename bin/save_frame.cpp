@@ -99,10 +99,10 @@ int main(int argc, char *argv[]) {
         envs.emplace_back(renderer.makeEnvironment(scene, 
             eye, eye + r * to_look, up, 60.f));
     }
-    envs.back().addLight(glm::vec3(-1.950218, 1.623819, 0.863453), glm::vec3(10.f));
-    envs.back().addLight(glm::vec3(1.762336, 1.211801, -4.574429), glm::vec3(10.f));
-    envs.back().addLight(glm::vec3(8.107919, 1.345027, -1.867001), glm::vec3(10.f));
-    envs.back().addLight(glm::vec3(12.499360, 2.102839, 1.691340), glm::vec3(10.f));
+    //envs.back().addLight(glm::vec3(-1.950218, 1.623819, 0.863453), glm::vec3(10.f));
+    //envs.back().addLight(glm::vec3(1.762336, 1.211801, -4.574429), glm::vec3(10.f));
+    //envs.back().addLight(glm::vec3(8.107919, 1.345027, -1.867001), glm::vec3(10.f));
+    //envs.back().addLight(glm::vec3(12.499360, 2.102839, 1.691340), glm::vec3(10.f));
 
     renderer.render(envs.data());
     renderer.waitForFrame();
