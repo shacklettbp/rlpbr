@@ -27,20 +27,46 @@ static vector<T> copyToHost(const T *dev_ptr, uint32_t width,
     return buffer;
 }
 
+float toSRGB(float v)
+{
+    if (v <= 0.00031308f) {
+        return 12.92f * v;
+    } else {
+        return 1.055f*powf(v,(1.f / 2.4f)) - 0.055f;
+    }
+}
+
+glm::vec3 tonemap(glm::vec3 v)
+{
+    v *= 0.6;
+
+    float A = 2.51f;
+    float B = 0.03f;
+    float C = 2.43f;
+    float D = 0.59f;
+    float E = 0.14f;
+
+    v = clamp((v*(A*v+B))/(v*(C*v+D)+E), 0.f, 1.f);
+    return v;
+}
+
 void saveFrame(const char *fname, const half *dev_ptr,
                uint32_t width, uint32_t height, uint32_t num_channels)
 {
     auto buffer = copyToHost(dev_ptr, width, height, num_channels);
 
     vector<uint8_t> sdr_buffer(buffer.size());
-    for (unsigned i = 0; i < buffer.size(); i++) {
-        half v = buffer[i];
-        assert(v >= 0);
-        float f = v / (v + 1.f);
-        f = powf(f, 1.f/2.2f);
-        if (f < 0) f = 0.f;
-        if (f > 1) f = 1.f;
-        sdr_buffer[i] = uint8_t(f * 255.f);
+    for (unsigned i = 0; i < buffer.size(); i += 3) {
+        glm::vec3 rgb {float(buffer[i]), float(buffer[i + 1]),
+                       float(buffer[i + 2])};
+        assert(rgb.r >= 0 && rgb.g >= 0 && rgb.b >= 0);
+        glm::vec3 tonemapped = tonemap(rgb);
+        for (int j = 0; j < 3; j++) {
+            float v = toSRGB(tonemapped[j]);
+            if (v < 0) v = 0.f;
+            if (v > 1) v = 1.f;
+            sdr_buffer[i + j] = uint8_t(v * 255.f);
+        }
     }
 
     stbi_write_bmp(fname, width, height, num_channels, sdr_buffer.data());

@@ -1231,7 +1231,7 @@ __forceinline__ float3 evalEnvMap(cudaTextureObject_t env_tex,
 
     float4 v = tex2DLod<float4>(env_tex, uv.x, uv.y, 0.f);
 
-    v *= 90.f;
+    v *= 10.f;
 
     return make_float3(v.x, v.y, v.z);
 }
