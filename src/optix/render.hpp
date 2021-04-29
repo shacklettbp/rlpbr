@@ -71,6 +71,7 @@ private:
     SBT sbt_;
     TextureManager texture_mgr_;
     BSDFLookupTables bsdf_luts_;
+    uint32_t max_texture_resolution_;
     std::optional<PhysicsSimulator> physics_;
 };
 

@@ -16,6 +16,7 @@ struct RenderConfig {
     uint32_t imgHeight;
     uint32_t spp;
     uint32_t maxDepth;
+    uint32_t maxTextureResolution;
     bool doubleBuffered;
     bool enablePhysics;
     BackendSelect backend;

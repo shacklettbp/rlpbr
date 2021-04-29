@@ -503,6 +503,8 @@ OptixBackend::OptixBackend(const RenderConfig &cfg, bool validate)
       sbt_(buildSBT(streams_[0], pipeline_)),
       texture_mgr_(),
       bsdf_luts_(loadBSDFLookupTables(texture_mgr_, tlas_strm_)),
+      max_texture_resolution_(cfg.maxTextureResolution == 0 ? ~0u :
+                              cfg.maxTextureResolution),
       physics_(makePhysicsSimulator(cfg))
 {
     REQ_CUDA(cudaStreamSynchronize(streams_[0]));
@@ -526,6 +528,7 @@ OptixBackend::OptixBackend(const RenderConfig &cfg, bool validate)
 LoaderImpl OptixBackend::makeLoader()
 {
     OptixLoader *loader = new OptixLoader(ctx_, texture_mgr_,
+                                          max_texture_resolution_,
                                           physics_.has_value());
     return makeLoaderImpl<OptixLoader>(loader);
 }
@@ -582,6 +585,7 @@ static PackedEnv packEnv(const Environment &env,
     }
     *instance_materials = cur_inst_materials;
 
+    (void)light_buffer;
     return PackedEnv {
         packCamera(env.getCamera()),
         env_backend.tlas,

@@ -4,6 +4,7 @@
 
 #include <cuda_fp16.h>
 #include <iostream>
+#include <cassert>
 
 namespace RLpbr {
 namespace optix {
@@ -98,6 +99,8 @@ static std::pair<TextureMemory, cudaTextureObject_t> load2DTexture(
         channel_desc = cudaCreateChannelDesc<uint4>();
         num_bytes_per_elem = 16;
         compressed = true;
+    } else {
+        assert(false);
     }
 
     if (compressed) {

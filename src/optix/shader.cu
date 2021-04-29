@@ -374,63 +374,8 @@ __forceinline__ T computeFresnel(T f0, T f90, float cos_theta)
     return f0 + (f90 - f0) * pow(max(1.f - cos_theta, 0.f), 5.f);
 }
 
-template <typename T>
-__forceinline__ T fetchBC(cudaTextureObject_t tex,
-                          TextureSize dims,
-                          float2 uv)
-{
-    float scaled_x = uv.x * float(dims.width) - 0.5f;
-    float scaled_y = uv.y * float(dims.height) - 0.5f;
-
-    float left_x = truncf(scaled_x);
-    float down_y = truncf(scaled_y);
-
-    float diff_x;
-    float right_x;
-    if (left_x <= scaled_x) {
-        diff_x = scaled_x - left_x;
-        right_x = left_x + 1.f;
-    } else {
-        diff_x = left_x - scaled_x;
-        right_x = left_x - 1.f;
-    }
-
-    float diff_y;
-    float up_y;
-    if (down_y <= scaled_y) {
-        diff_y = scaled_y - down_y;
-        up_y = down_y + 1.f;
-    } else {
-        diff_y = down_y - scaled_y;
-        up_y = down_y - 1.f;
-    }
-
-    float rounded_width = float((dims.width / 4) * 4);
-    float rounded_height = float((dims.height / 4) * 4);
-
-    auto sample = [&](float x, float y) {
-        x = fmodf(x, float(dims.width));
-        if (x < 0) x += float(dims.width);
-        y = fmodf(y, float(dims.height));
-        if (y < 0) y += float(dims.height);
-
-        return tex2DLod<T>(tex, (float(x) + 0.5f) / rounded_width,
-                           (float(y) + 0.5f) / rounded_height, 0);
-    };
-
-
-    T left =
-        lerp(sample(left_x, down_y), sample(left_x, up_y), diff_y);
-
-    T right =
-        lerp(sample(right_x, down_y), sample(right_x, up_y), diff_y);
-
-    return lerp(left, right, diff_x);
-}
-
 __forceinline__ Material processMaterial(const MaterialParams &params,
                                          const cudaTextureObject_t *textures,
-                                         const TextureSize *texture_dims,
                                          float2 uv)
 {
     Material mat;
@@ -438,9 +383,8 @@ __forceinline__ Material processMaterial(const MaterialParams &params,
     mat.rho = params.baseColor;
     mat.transparencyMask = 1.f;
     if (checkMaterialFlag(params.flags, MaterialFlags::HasBaseTexture)) {
-        float4 tex_value = fetchBC<float4>(
-            textures[TextureConstants::baseOffset],
-            texture_dims[TextureConstants::baseOffset], uv);
+        float4 tex_value = tex2DLod<float4>(
+            textures[TextureConstants::baseOffset], uv.x, uv.y, 0);
 
         mat.rho.x *= tex_value.x;
         mat.rho.y *= tex_value.y;
@@ -451,9 +395,8 @@ __forceinline__ Material processMaterial(const MaterialParams &params,
     mat.metallic = params.baseMetallic;
     mat.roughness = params.baseRoughness;
     if (checkMaterialFlag(params.flags, MaterialFlags::HasMRTexture)) {
-        float2 tex_value = fetchBC<float2>(
-            textures[TextureConstants::mrOffset],
-            texture_dims[TextureConstants::mrOffset], uv);
+        float2 tex_value = tex2DLod<float2>(
+            textures[TextureConstants::mrOffset], uv.x, uv.y, 0);
 
         mat.roughness *= tex_value.x;
         mat.metallic *= tex_value.y;
@@ -463,9 +406,8 @@ __forceinline__ Material processMaterial(const MaterialParams &params,
     mat.rhoSpecular = params.baseSpecular;
     mat.specularScale = params.specularScale;
     if (checkMaterialFlag(params.flags, MaterialFlags::HasSpecularTexture)) {
-        float4 tex_value = fetchBC<float4>(
-            textures[TextureConstants::specularOffset],
-            texture_dims[TextureConstants::specularOffset], uv);
+        float4 tex_value = tex2DLod<float4>(
+            textures[TextureConstants::specularOffset], uv.x, uv.y, 0);
 
         mat.rhoSpecular.x *= tex_value.x;
         mat.rhoSpecular.y *= tex_value.y;
@@ -497,9 +439,8 @@ __forceinline__ Material processMaterial(const MaterialParams &params,
     mat.clearcoatRoughness = params.clearcoatRoughness;
     if (checkMaterialFlag(params.flags,
                           MaterialFlags::HasClearcoatTexture)) {
-        float2 tex_value = fetchBC<float2>(
-            textures[TextureConstants::clearcoatOffset],
-            texture_dims[TextureConstants::clearcoatOffset], uv);
+        float2 tex_value = tex2DLod<float2>(
+            textures[TextureConstants::clearcoatOffset], uv.x, uv.y, 0);
 
         mat.clearcoatScale *= tex_value.x;
         mat.clearcoatRoughness *= tex_value.y;
@@ -509,9 +450,8 @@ __forceinline__ Material processMaterial(const MaterialParams &params,
     mat.anisoRotation = params.anisoRotation;
     if (checkMaterialFlag(params.flags,
                           MaterialFlags::HasAnisotropicTexture)) {
-        float2 tex_value = fetchBC<float2>(
-            textures[TextureConstants::anisoOffset],
-            texture_dims[TextureConstants::anisoOffset], uv);
+        float2 tex_value = tex2DLod<float2>(
+            textures[TextureConstants::anisoOffset], uv.x, uv.y, 0);
         float2 aniso_v = tex_value * 2.f - 1.f;
 
         mat.anisoScale = length(aniso_v);
@@ -1231,7 +1171,7 @@ __forceinline__ float3 evalEnvMap(cudaTextureObject_t env_tex,
 
     float4 v = tex2DLod<float4>(env_tex, uv.x, uv.y, 0.f);
 
-    v *= 10.f;
+    v *= 90.f;
 
     return make_float3(v.x, v.y, v.z);
 }
@@ -1587,8 +1527,7 @@ inline float3 computeGeometricNormal(const Triangle &tri)
 
 inline TangentFrame computeTangentFrame(const DeviceVertex &v,
                                         const MaterialParams &mat_params,
-                                        const cudaTextureObject_t *textures,
-                                        const TextureSize *texture_dims)
+                                        const cudaTextureObject_t *textures)
 {
     float3 n = v.normal;
     float3 t = make_float3(v.tangentAndSign.x, v.tangentAndSign.y,
@@ -1599,9 +1538,8 @@ inline TangentFrame computeTangentFrame(const DeviceVertex &v,
 
     float3 perturb;
     if (checkMaterialFlag(mat_params.flags, MaterialFlags::HasNormalMap)) {
-        float2 xy = fetchBC<float2>(textures[TextureConstants::normalOffset],
-                                    texture_dims[TextureConstants::normalOffset],
-                                    v.uv);
+        float2 xy = tex2DLod<float2>(textures[TextureConstants::normalOffset],
+                                    v.uv.x, v.uv.y, 0);
 
         float2 centered = xy * 2.f - 1.f;
         float length2 = clamp(dot(centered, centered), 0.f, 1.f);
@@ -1769,8 +1707,6 @@ extern "C" __global__ void __raygen__rg()
                 unpackMaterialParams(env.materialBuffer[material_idx]);
             const cudaTextureObject_t *textures = env.textureHandles + 1 +
                 material_idx * TextureConstants::numTexturesPerMaterial;
-            const TextureSize *tex_dims = env.textureDims + 1 +
-                material_idx * TextureConstants::numTexturesPerMaterial;
 
             auto [o2w, w2o] = unpackTransforms(env.transforms[instance_idx]);
 
@@ -1779,8 +1715,7 @@ extern "C" __global__ void __raygen__rg()
                                              env.indexBuffer + index_offset);
             DeviceVertex interpolated = interpolateTriangle(hit_tri, barys);
             TangentFrame obj_tangent_frame =
-                computeTangentFrame(interpolated, material_params, textures,
-                                    tex_dims);
+                computeTangentFrame(interpolated, material_params, textures);
             float3 obj_geo_normal = computeGeometricNormal(hit_tri);
 
             float3 world_position =
@@ -1792,7 +1727,7 @@ extern "C" __global__ void __raygen__rg()
             world_geo_normal = normalize(world_geo_normal);
 
             Material material = processMaterial(material_params, textures,
-                tex_dims, interpolated.uv);
+                interpolated.uv);
 
             LightInfo light_info = sampleLights(sampler, env, env_tex,
                 world_position, world_geo_normal);
@@ -1831,6 +1766,8 @@ extern "C" __global__ void __raygen__rg()
             if (unoccluded && !pass_through) {
                 sample_radiance += path_prob * color;
             }
+
+            //sample_radiance = material.rho;
 
             float3 next_dir = pass_through ? ray_dir : bounce_dir;
 

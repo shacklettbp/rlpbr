@@ -222,6 +222,9 @@ OptixEnvironment::~OptixEnvironment()
 uint32_t OptixEnvironment::addLight(const glm::vec3 &position,
                   const glm::vec3 &color)
 {
+    (void)position;
+    (void)color;
+    return 0;
 #if 0
     PackedLight packed;
     LightType type = LightType::Point;
@@ -241,6 +244,7 @@ uint32_t OptixEnvironment::addLight(const glm::vec3 &position,
 
 void OptixEnvironment::removeLight(uint32_t light_idx)
 {
+    (void)light_idx;
 #if 0
     lights[light_idx] = lights.back();
 
@@ -265,7 +269,7 @@ TLASIntermediate OptixEnvironment::queueTLASRebuild(const Environment &env,
 }
 
 OptixLoader::OptixLoader(OptixDeviceContext ctx, TextureManager &texture_mgr,
-                         bool need_physics)
+                         uint32_t max_texture_resolution, bool need_physics)
     : stream_([]() {
           cudaStream_t strm;
           REQ_CUDA(cudaStreamCreate(&strm));
@@ -273,6 +277,7 @@ OptixLoader::OptixLoader(OptixDeviceContext ctx, TextureManager &texture_mgr,
       }()),
       ctx_(ctx),
       texture_mgr_(texture_mgr),
+      max_texture_resolution_(max_texture_resolution),
       need_physics_(need_physics)
 {}
 
@@ -284,6 +289,7 @@ void TLASIntermediate::free()
 
 static LoadedTextures loadTextures(const TextureInfo &texture_info,
                                    cudaStream_t cpy_strm,
+                                   uint32_t max_texture_resolution,
                                    TextureManager &mgr)
 {
     vector<void *> host_tex_data;
@@ -306,25 +312,88 @@ static LoadedTextures loadTextures(const TextureInfo &texture_info,
                         return v;
                     };
 
+                    uint32_t bytes_per_pixel;
+                    if (fmt == TextureFormat::R8G8B8A8_SRGB) {
+                        bytes_per_pixel = 4;
+                    } else if (fmt == TextureFormat::R8G8_UNORM) {
+                        bytes_per_pixel = 2;
+                    } else {
+                        cerr << "Invalid texture format" << endl;
+                        abort();
+                    }
+
                     auto magic = read_uint();
                     if (magic != 0x50505050) {
                         cerr << "Invalid texture file" << endl;
                         abort();
                     }
-
                     auto num_levels = read_uint();
-                    auto x = read_uint();
-                    auto y = read_uint();
-                    tex_file.ignore(sizeof(uint32_t) * 3);
-                    auto num_blocks = read_uint();
-                    for (int i = 1; i < (int)num_levels; i++) {
-                        tex_file.ignore(sizeof(uint32_t) * 5);
-                        num_blocks += read_uint();
+                    
+                    uint32_t x = 0;
+                    uint32_t y = 0;
+                    uint32_t num_compressed_bytes = 0;
+                    uint32_t num_decompressed_bytes = 0;
+                    uint32_t skip_bytes = 0;
+                    vector<pair<uint32_t, uint32_t>> png_pos;
+                    png_pos.reserve(num_levels);
+
+                    for (int i = 0; i < (int)num_levels; i++) {
+                        uint32_t level_x = read_uint();
+                        uint32_t level_y = read_uint();
+                        uint32_t offset = read_uint();
+                        uint32_t lvl_compressed_bytes = read_uint();
+
+                        if (level_x >= max_texture_resolution &&
+                            level_y >= max_texture_resolution) {
+                            skip_bytes += lvl_compressed_bytes;
+                            num_levels--;
+                            continue;
+                        }
+
+                        if (x == 0 && y == 0) {
+                            x = level_x;
+                            y = level_y;
+                        }
+
+                        png_pos.emplace_back(offset, lvl_compressed_bytes);
+                        num_decompressed_bytes +=
+                            level_x * level_y * bytes_per_pixel;
+                        num_compressed_bytes += lvl_compressed_bytes;
                     }
 
-                    void *img_data = malloc(16 * num_blocks);
-                    tex_file.read((char *)img_data, 16 * num_blocks);
+                    uint8_t *img_data = (uint8_t *)malloc(num_decompressed_bytes);
+                    tex_file.ignore(skip_bytes);
 
+                    uint8_t *compressed_data = (uint8_t *)malloc(num_compressed_bytes);
+                    tex_file.read((char *)compressed_data, num_compressed_bytes);
+
+                    uint8_t *cur_ptr = img_data;
+                    for (int i = 0; i < (int)num_levels; i++) {
+                        auto [offset, num_bytes] = png_pos[i];
+                        int lvl_x, lvl_y, tmp_n;
+                        uint8_t *decompressed = stbi_load_from_memory(
+                            compressed_data + offset, num_bytes,
+                            &lvl_x, &lvl_y, &tmp_n, 4);
+
+                        for (int pix_idx = 0; pix_idx < int(lvl_x * lvl_y);
+                             pix_idx++) {
+                            uint8_t *decompressed_offset =
+                                decompressed + pix_idx * 4;
+                            uint8_t *out_offset =
+                                cur_ptr + pix_idx * bytes_per_pixel;
+
+                            for (int byte_idx = 0; byte_idx < (int)bytes_per_pixel;
+                                 byte_idx++) {
+                                out_offset[byte_idx] =
+                                    decompressed_offset[byte_idx];
+                            }
+                        }
+                        free(decompressed);
+
+                        cur_ptr += lvl_x * lvl_y * bytes_per_pixel;
+                    }
+
+                    free(compressed_data);
                     host_tex_data.push_back(img_data);
 
                     return make_tuple(img_data, glm::u32vec2(x, y),
@@ -339,21 +408,21 @@ static LoadedTextures loadTextures(const TextureInfo &texture_info,
 
     LoadedTextures loaded;
     loaded.base = loadTextureList(texture_info.base,
-                                  TextureFormat::BC7);
+                                  TextureFormat::R8G8B8A8_SRGB);
     loaded.metallicRoughness = loadTextureList(texture_info.metallicRoughness,
-                                               TextureFormat::BC5);
+                                               TextureFormat::R8G8_UNORM);
     loaded.specular = loadTextureList(texture_info.specular,
-                                      TextureFormat::BC7);
+                                      TextureFormat::R8G8B8A8_SRGB);
     loaded.normal = loadTextureList(texture_info.normal,
-                                    TextureFormat::BC5);
+                                    TextureFormat::R8G8_UNORM);
     loaded.emittance = loadTextureList(texture_info.emittance,
-                                       TextureFormat::R32G32B32A32_SFLOAT);
+                                       TextureFormat::R8G8B8A8_SRGB);
     loaded.transmission = loadTextureList(texture_info.transmission,
                                           TextureFormat::R8_UNORM);
     loaded.clearcoat = loadTextureList(texture_info.clearcoat,
-                                       TextureFormat::BC5);
+                                       TextureFormat::R8G8_UNORM);
     loaded.anisotropic = loadTextureList(texture_info.anisotropic,
-                                         TextureFormat::BC5);
+                                         TextureFormat::R8G8_UNORM);
 
     if (!texture_info.envMap.empty()) {
         loaded.envMap.emplace(mgr.load(
@@ -379,7 +448,8 @@ static LoadedTextures loadTextures(const TextureInfo &texture_info,
 
 shared_ptr<Scene> OptixLoader::loadScene(SceneLoadData &&load_info)
 {
-    auto textures = loadTextures(load_info.textureInfo, stream_, texture_mgr_);
+    auto textures = loadTextures(load_info.textureInfo, stream_,
+                                 max_texture_resolution_, texture_mgr_);
 
     size_t num_texture_hdls = load_info.hdr.numMaterials *
         TextureConstants::numTexturesPerMaterial;
