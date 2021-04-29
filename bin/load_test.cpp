@@ -20,7 +20,7 @@ int main(int argc, char *argv[]) {
 
     int num_loaders = atoi(argv[1]);
     Renderer renderer({0, (uint32_t)num_loaders, (uint32_t)num_loaders,
-                      64, 64, 4, 4, false, false,
+                      64, 64, 4, 4, 0, false, false,
                       BackendSelect::Optix});
 
     uint32_t num_scenes = argc - 2;

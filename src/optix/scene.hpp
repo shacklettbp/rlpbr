@@ -98,7 +98,7 @@ public:
 class OptixLoader : public LoaderBackend {
 public:
     OptixLoader(OptixDeviceContext ctx, TextureManager &texture_mgr,
-                bool need_physics);
+                uint32_t max_texture_resolution, bool need_physics);
 
     std::shared_ptr<Scene> loadScene(SceneLoadData &&load_info);
 
@@ -107,6 +107,7 @@ private:
     OptixDeviceContext ctx_;
     TextureManager &texture_mgr_;
 
+    uint32_t max_texture_resolution_;
     bool need_physics_;
 };
 
