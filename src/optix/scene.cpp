@@ -315,6 +315,8 @@ static LoadedTextures loadTextures(const TextureInfo &texture_info,
                     uint32_t bytes_per_pixel;
                     if (fmt == TextureFormat::R8G8B8A8_SRGB) {
                         bytes_per_pixel = 4;
+                    } else if (fmt == TextureFormat::R8G8B8A8_UNORM) {
+                        bytes_per_pixel = 4;
                     } else if (fmt == TextureFormat::R8G8_UNORM) {
                         bytes_per_pixel = 2;
                     } else {
@@ -327,7 +329,7 @@ static LoadedTextures loadTextures(const TextureInfo &texture_info,
                         cerr << "Invalid texture file" << endl;
                         abort();
                     }
-                    auto num_levels = read_uint();
+                    auto total_num_levels = read_uint();
                     
                     uint32_t x = 0;
                     uint32_t y = 0;
@@ -335,18 +337,19 @@ static LoadedTextures loadTextures(const TextureInfo &texture_info,
                     uint32_t num_decompressed_bytes = 0;
                     uint32_t skip_bytes = 0;
                     vector<pair<uint32_t, uint32_t>> png_pos;
-                    png_pos.reserve(num_levels);
+                    png_pos.reserve(total_num_levels);
 
-                    for (int i = 0; i < (int)num_levels; i++) {
+                    uint32_t num_skip_levels = 0;
+                    for (int i = 0; i < (int)total_num_levels; i++) {
                         uint32_t level_x = read_uint();
                         uint32_t level_y = read_uint();
                         uint32_t offset = read_uint();
                         uint32_t lvl_compressed_bytes = read_uint();
 
-                        if (level_x >= max_texture_resolution &&
-                            level_y >= max_texture_resolution) {
+                        if (level_x > max_texture_resolution &&
+                            level_y > max_texture_resolution) {
                             skip_bytes += lvl_compressed_bytes;
-                            num_levels--;
+                            num_skip_levels--;
                             continue;
                         }
 
@@ -355,11 +358,14 @@ static LoadedTextures loadTextures(const TextureInfo &texture_info,
                             y = level_y;
                         }
 
-                        png_pos.emplace_back(offset, lvl_compressed_bytes);
+                        png_pos.emplace_back(offset - skip_bytes,
+                                             lvl_compressed_bytes);
                         num_decompressed_bytes +=
                             level_x * level_y * bytes_per_pixel;
                         num_compressed_bytes += lvl_compressed_bytes;
                     }
+
+                    int num_levels = total_num_levels - num_skip_levels;
 
                     uint8_t *img_data = (uint8_t *)malloc(num_decompressed_bytes);
                     tex_file.ignore(skip_bytes);
@@ -397,7 +403,7 @@ static LoadedTextures loadTextures(const TextureInfo &texture_info,
                     host_tex_data.push_back(img_data);
 
                     return make_tuple(img_data, glm::u32vec2(x, y),
-                                      num_levels);
+                                      num_levels, -float(num_skip_levels));
                 });
 
             gpu_textures.emplace_back(move(tex));
@@ -433,7 +439,7 @@ static LoadedTextures loadTextures(const TextureInfo &texture_info,
                 float *img_data =
                     stbi_loadf(tex_path.c_str(), &x, &y, &n, 4);
                 host_tex_data.push_back(img_data);
-                return make_tuple(img_data, glm::u32vec2(x, y), 1);
+                return make_tuple(img_data, glm::u32vec2(x, y), 1, 0.f);
             }));
     }
 

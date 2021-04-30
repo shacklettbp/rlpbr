@@ -376,7 +376,7 @@ __forceinline__ T computeFresnel(T f0, T f90, float cos_theta)
 
 __forceinline__ Material processMaterial(const MaterialParams &params,
                                          const cudaTextureObject_t *textures,
-                                         float2 uv)
+                                         float2 uv, float mip_level)
 {
     Material mat;
 
@@ -384,7 +384,7 @@ __forceinline__ Material processMaterial(const MaterialParams &params,
     mat.transparencyMask = 1.f;
     if (checkMaterialFlag(params.flags, MaterialFlags::HasBaseTexture)) {
         float4 tex_value = tex2DLod<float4>(
-            textures[TextureConstants::baseOffset], uv.x, uv.y, 0);
+            textures[TextureConstants::baseOffset], uv.x, uv.y, mip_level);
 
         mat.rho.x *= tex_value.x;
         mat.rho.y *= tex_value.y;
@@ -396,18 +396,17 @@ __forceinline__ Material processMaterial(const MaterialParams &params,
     mat.roughness = params.baseRoughness;
     if (checkMaterialFlag(params.flags, MaterialFlags::HasMRTexture)) {
         float2 tex_value = tex2DLod<float2>(
-            textures[TextureConstants::mrOffset], uv.x, uv.y, 0);
+            textures[TextureConstants::mrOffset], uv.x, uv.y, mip_level);
 
         mat.roughness *= tex_value.x;
         mat.metallic *= tex_value.y;
     }
-
     
     mat.rhoSpecular = params.baseSpecular;
     mat.specularScale = params.specularScale;
     if (checkMaterialFlag(params.flags, MaterialFlags::HasSpecularTexture)) {
         float4 tex_value = tex2DLod<float4>(
-            textures[TextureConstants::specularOffset], uv.x, uv.y, 0);
+            textures[TextureConstants::specularOffset], uv.x, uv.y, mip_level);
 
         mat.rhoSpecular.x *= tex_value.x;
         mat.rhoSpecular.y *= tex_value.y;
@@ -418,7 +417,7 @@ __forceinline__ Material processMaterial(const MaterialParams &params,
     mat.emittance = params.baseEmittance;
     if (checkMaterialFlag(params.flags, MaterialFlags::HasEmittanceTexture)) {
         cudaTextureObject_t tex = textures[TextureConstants::emittanceOffset];
-        float4 tex_value = tex2DLod<float4>(tex, uv.x, uv.y, 0);
+        float4 tex_value = tex2DLod<float4>(tex, uv.x, uv.y, mip_level);
 
         mat.emittance.x *= tex_value.x;
         mat.emittance.y *= tex_value.y;
@@ -430,7 +429,7 @@ __forceinline__ Material processMaterial(const MaterialParams &params,
                           MaterialFlags::HasTransmissionTexture)) {
         cudaTextureObject_t tex =
             textures[TextureConstants::transmissionOffset];
-        float tex_value = tex2DLod<float>(tex, uv.x, uv.y, 0);
+        float tex_value = tex2DLod<float>(tex, uv.x, uv.y, mip_level);
 
         mat.transmission *= tex_value;
     }
@@ -440,7 +439,8 @@ __forceinline__ Material processMaterial(const MaterialParams &params,
     if (checkMaterialFlag(params.flags,
                           MaterialFlags::HasClearcoatTexture)) {
         float2 tex_value = tex2DLod<float2>(
-            textures[TextureConstants::clearcoatOffset], uv.x, uv.y, 0);
+            textures[TextureConstants::clearcoatOffset], uv.x, uv.y,
+            mip_level);
 
         mat.clearcoatScale *= tex_value.x;
         mat.clearcoatRoughness *= tex_value.y;
@@ -451,7 +451,7 @@ __forceinline__ Material processMaterial(const MaterialParams &params,
     if (checkMaterialFlag(params.flags,
                           MaterialFlags::HasAnisotropicTexture)) {
         float2 tex_value = tex2DLod<float2>(
-            textures[TextureConstants::anisoOffset], uv.x, uv.y, 0);
+            textures[TextureConstants::anisoOffset], uv.x, uv.y, mip_level);
         float2 aniso_v = tex_value * 2.f - 1.f;
 
         mat.anisoScale = length(aniso_v);
@@ -1727,7 +1727,7 @@ extern "C" __global__ void __raygen__rg()
             world_geo_normal = normalize(world_geo_normal);
 
             Material material = processMaterial(material_params, textures,
-                interpolated.uv);
+                interpolated.uv, 0);
 
             LightInfo light_info = sampleLights(sampler, env, env_tex,
                 world_position, world_geo_normal);
@@ -1766,8 +1766,6 @@ extern "C" __global__ void __raygen__rg()
             if (unoccluded && !pass_through) {
                 sample_radiance += path_prob * color;
             }
-
-            //sample_radiance = material.rho;
 
             float3 next_dir = pass_through ? ray_dir : bounce_dir;
 

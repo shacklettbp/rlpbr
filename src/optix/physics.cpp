@@ -87,7 +87,7 @@ ScenePhysicsData ScenePhysicsData::make(const PhysicsMetadata &metadata,
 
                 host_data.push_back(sdf_data);
 
-                return make_tuple(sdf_data, sdf_dims, 1);
+                return make_tuple(sdf_data, sdf_dims, 1, 0.f);
             });
 
         sdf_volumes.emplace_back(move(volume));
