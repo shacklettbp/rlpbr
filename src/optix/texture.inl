@@ -11,8 +11,8 @@ namespace optix {
 
 [[maybe_unused]]
 static std::pair<TextureMemory , cudaTextureObject_t> load1DTexture(
-    void *data, float len, uint32_t num_levels, TextureFormat fmt, 
-    cudaTextureAddressMode edge_mode, cudaStream_t cpy_strm)
+    void *data, float len, uint32_t num_levels, float mip_bias,
+    TextureFormat fmt, cudaTextureAddressMode edge_mode, cudaStream_t cpy_strm)
 {
     if (fmt != TextureFormat::R32_SFLOAT) {
         std::cerr << 
@@ -21,6 +21,7 @@ static std::pair<TextureMemory , cudaTextureObject_t> load1DTexture(
         std::abort();
     }
     if (num_levels != 1) {
+        (void)mip_bias;
         std::cerr << "1D mipmaps not currently supported" << std::endl;
         std::abort();
     }
@@ -60,7 +61,7 @@ static std::pair<TextureMemory , cudaTextureObject_t> load1DTexture(
 
 [[maybe_unused]]
 static std::pair<TextureMemory, cudaTextureObject_t> load2DTexture(
-    void *data, glm::u32vec2 dims, uint32_t num_levels,
+    void *data, glm::u32vec2 dims, uint32_t num_levels, float mip_bias,
     TextureFormat fmt, cudaTextureAddressMode edge_mode,
     cudaStream_t cpy_strm)
 {
@@ -190,10 +191,13 @@ static std::pair<TextureMemory, cudaTextureObject_t> load2DTexture(
     tex_desc.readMode = normalized && !compressed ?
         cudaReadModeNormalizedFloat : cudaReadModeElementType;
     tex_desc.normalizedCoords = true;
-    if (num_levels > 1 && !compressed) {
-        tex_desc.mipmapFilterMode = cudaFilterModeLinear;
-    }
     tex_desc.sRGB = srgb;
+    if (num_levels > 1) {
+        tex_desc.mipmapFilterMode = cudaFilterModeLinear;
+        tex_desc.mipmapLevelBias = mip_bias;
+        tex_desc.minMipmapLevelClamp = 0;
+        tex_desc.maxMipmapLevelClamp = num_levels - 1;
+    }
 
     cudaTextureObject_t hdl;
     REQ_CUDA(cudaCreateTextureObject(&hdl, &res_desc, &tex_desc,
@@ -206,8 +210,8 @@ static std::pair<TextureMemory, cudaTextureObject_t> load2DTexture(
 
 [[maybe_unused]]
 static std::pair<TextureMemory, cudaTextureObject_t> load3DTexture(
-    void *data, glm::u32vec3 dims, uint32_t num_levels, TextureFormat fmt,
-    cudaTextureAddressMode edge_mode, cudaStream_t cpy_strm)
+    void *data, glm::u32vec3 dims, uint32_t num_levels, float mip_bias,
+    TextureFormat fmt, cudaTextureAddressMode edge_mode, cudaStream_t cpy_strm)
 {
     if (fmt != TextureFormat::R32_SFLOAT) {
         std::cerr << 
@@ -217,6 +221,7 @@ static std::pair<TextureMemory, cudaTextureObject_t> load3DTexture(
     }
 
     if (num_levels != 1) {
+        (void)mip_bias;
         std::cerr << "3D mipmaps not currently supported" <<
             std::endl;
         std::abort();
@@ -280,7 +285,8 @@ Texture TextureManager::load(const std::string &lookup_key,
     if (iter == loaded_.end()) {
         cache_lock_.unlock();
 
-        auto [host_ptr, dims, num_levels] = load_fn(lookup_key);
+        auto [host_ptr, dims, num_levels, mip_bias] =
+            load_fn(lookup_key);
 
         uint32_t width = 0;
         uint32_t height = 0;
@@ -290,22 +296,22 @@ Texture TextureManager::load(const std::string &lookup_key,
         cudaTextureObject_t tex_hdl;
         if constexpr (is_same_v<decltype(dims), glm::u32vec3>) {
             tie(tex_mem, tex_hdl) =
-                load3DTexture(host_ptr, dims, num_levels, fmt, edge_mode,
-                              copy_strm);
+                load3DTexture(host_ptr, dims, num_levels, mip_bias, fmt,
+                              edge_mode, copy_strm);
 
             width = dims.x;
             height = dims.y;
             depth = dims.z;
         } else if constexpr (is_same_v<decltype(dims), glm::u32vec1>) {
             tie(tex_mem, tex_hdl) =
-                load1DTexture(host_ptr, dims.x, num_levels, fmt, edge_mode,
-                              copy_strm);
+                load1DTexture(host_ptr, dims.x, num_levels, mip_bias, fmt,
+                              edge_mode, copy_strm);
 
             width = dims.x;
         } else {
             tie(tex_mem, tex_hdl) =
-                load2DTexture(host_ptr, dims, num_levels, fmt, edge_mode,
-                              copy_strm);
+                load2DTexture(host_ptr, dims, num_levels, mip_bias, fmt,
+                              edge_mode, copy_strm);
 
             width = dims.x;
             height = dims.y;
