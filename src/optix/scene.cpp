@@ -349,7 +349,7 @@ static LoadedTextures loadTextures(const TextureInfo &texture_info,
                         if (level_x > max_texture_resolution &&
                             level_y > max_texture_resolution) {
                             skip_bytes += lvl_compressed_bytes;
-                            num_skip_levels--;
+                            num_skip_levels++;
                             continue;
                         }
 
