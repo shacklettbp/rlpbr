@@ -636,6 +636,8 @@ uint32_t OptixBackend::render(const Environment *envs)
         env_backend->queueTLASRebuild(env, ctx_, streams_[active_idx_]);
     }
 
+    REQ_CUDA(cudaStreamSynchronize(streams_[active_idx_]));
+
     buffers.launchInput->baseBatchOffset = batch_size_ * active_idx_;
     buffers.launchInput->baseFrameCounter = frame_counter_;
 
