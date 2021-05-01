@@ -144,6 +144,7 @@ uint32_t Environment::addInstance(uint32_t obj_idx,
     }
 
     transforms_.push_back({model_matrix, inv_model});
+    instance_flags_.push_back(InstanceFlags {});
 
     uint32_t instance_idx = instances_.size() - 1;
 
@@ -237,6 +238,12 @@ const std::vector<InstanceTransform> &
     Environment::getTransforms() const
 {
     return transforms_;
+}
+
+const std::vector<InstanceFlags> &
+    Environment::getInstanceFlags() const
+{
+    return instance_flags_;
 }
 
 uint32_t Environment::getNumInstances() const

@@ -17,9 +17,7 @@ namespace optix {
 
 OptixScene::~OptixScene()
 {
-    cudaFreeHost(defaultTLAS.instanceBLASes);
-
-    cudaFree((void *)defaultTLAS.storage);
+    defaultTLAS.free();
 
     for (auto blas_ptr : blasStorage) {
         cudaFree((void *)blas_ptr);
@@ -38,32 +36,46 @@ static void assignInstanceTransform(OptixInstance &inst,
     }
 }
 
-static pair<TLAS, TLASIntermediate> buildTLAS(
+void TLAS::build(
     OptixDeviceContext ctx,
     const vector<ObjectInstance> &instances,
     const vector<InstanceTransform> &instance_transforms,
     const vector<InstanceFlags> &instance_flags,
     const OptixTraversableHandle *blases,
-    cudaStream_t build_stream,
-    bool update = false,
-    void *tlas_storage = nullptr,
-    OptixTraversableHandle tlas_hdl = 0)
+    cudaStream_t build_stream)
 {
-    uint32_t num_instances = instances.size();
+    bool update = hdl != 0;
 
-    OptixInstance *instance_ptr;
-    REQ_CUDA(cudaHostAlloc(&instance_ptr, sizeof(OptixInstance) * num_instances,
-                           cudaHostAllocMapped));
+    uint32_t new_num_instances = instances.size();
 
-    OptixTraversableHandle *instance_blases;
-    REQ_CUDA(cudaHostAlloc(&instance_blases,
-                           sizeof(OptixTraversableHandle) * num_instances,
-                           cudaHostAllocMapped));
+    if (numBuildInstances != new_num_instances) {
+        update = false;
+        hdl = 0;
+    }
 
-    for (int inst_id = 0; inst_id < (int)num_instances; inst_id++) {
+    if (numBuildInstances < new_num_instances) {
+        if (instanceBuildBuffer != nullptr) {
+            REQ_CUDA(cudaFree(instanceBuildBuffer));
+        }
+        if (instanceBLASes != nullptr) {
+            REQ_CUDA(cudaFree(instanceBLASes));
+        }
+
+        REQ_CUDA(cudaHostAlloc(&instanceBuildBuffer,
+                               sizeof(OptixInstance) * new_num_instances,
+                               cudaHostAllocMapped));
+
+        REQ_CUDA(cudaHostAlloc(&instanceBLASes,
+                               sizeof(OptixTraversableHandle) * new_num_instances,
+                               cudaHostAllocMapped));
+
+        numBuildInstances = new_num_instances;
+    }
+
+    for (int inst_id = 0; inst_id < (int)new_num_instances; inst_id++) {
         const ObjectInstance &inst = instances[inst_id];
         const InstanceTransform &txfm = instance_transforms[inst_id];
-        OptixInstance &cur_inst = instance_ptr[inst_id];
+        OptixInstance &cur_inst = instanceBuildBuffer[inst_id];
 
         assignInstanceTransform(cur_inst, txfm.mat);
         cur_inst.instanceId = 0;
@@ -76,17 +88,18 @@ static pair<TLAS, TLASIntermediate> buildTLAS(
         cur_inst.flags = 0;
         cur_inst.traversableHandle = blases[inst.objectIndex];
 
-        instance_blases[inst_id] = blases[inst.objectIndex];
+        instanceBLASes[inst_id] = blases[inst.objectIndex];
     }
 
     OptixBuildInput tlas_build {};
     tlas_build.type = OPTIX_BUILD_INPUT_TYPE_INSTANCES;
     OptixBuildInputInstanceArray &tlas_instances = tlas_build.instanceArray;
-    tlas_instances.instances = (CUdeviceptr)instance_ptr;
-    tlas_instances.numInstances = num_instances;
+    tlas_instances.instances = (CUdeviceptr)instanceBuildBuffer;
+    tlas_instances.numInstances = new_num_instances;
 
     OptixAccelBuildOptions tlas_options;
-    tlas_options.buildFlags = OPTIX_BUILD_FLAG_PREFER_FAST_TRACE | OPTIX_BUILD_FLAG_ALLOW_UPDATE;
+    tlas_options.buildFlags = OPTIX_BUILD_FLAG_PREFER_FAST_TRACE |
+        OPTIX_BUILD_FLAG_ALLOW_UPDATE;
     tlas_options.motionOptions = {};
 
     if (update) {
@@ -95,36 +108,50 @@ static pair<TLAS, TLASIntermediate> buildTLAS(
         tlas_options.operation = OPTIX_BUILD_OPERATION_BUILD;
     }
 
-
     OptixAccelBufferSizes tlas_buffer_sizes;
     REQ_OPTIX(optixAccelComputeMemoryUsage(ctx, &tlas_options, &tlas_build, 1,
                                            &tlas_buffer_sizes));
+    
+    if (numTLASBytes < tlas_buffer_sizes.outputSizeInBytes) {
+        if (tlasStorage != nullptr) {
+            REQ_CUDA(cudaFree(tlasStorage));
+        }
+        REQ_CUDA(cudaMalloc(&tlasStorage, tlas_buffer_sizes.outputSizeInBytes));
 
-    if (tlas_storage == nullptr) {
-        REQ_CUDA(cudaMalloc(&tlas_storage, tlas_buffer_sizes.outputSizeInBytes));
+        numTLASBytes = tlas_buffer_sizes.outputSizeInBytes;
     }
-    void *scratch_storage;
-    REQ_CUDA(cudaMalloc(&scratch_storage, update ? tlas_buffer_sizes.tempUpdateSizeInBytes : tlas_buffer_sizes.tempSizeInBytes));
+
+    size_t new_num_scratch_bytes;
+    if (update) {
+        new_num_scratch_bytes = tlas_buffer_sizes.tempUpdateSizeInBytes;
+    } else {
+        new_num_scratch_bytes = tlas_buffer_sizes.tempSizeInBytes;
+    }
+
+    if (numScratchBytes < new_num_scratch_bytes) {
+        if (scratchStorage != nullptr) {
+            REQ_CUDA(cudaFree(scratchStorage));
+        }
+        REQ_CUDA(cudaMalloc(&scratchStorage, new_num_scratch_bytes));
+
+        numScratchBytes = new_num_scratch_bytes;
+    }
 
     REQ_OPTIX(optixAccelBuild(ctx, build_stream, &tlas_options, &tlas_build,
-        1, (CUdeviceptr)scratch_storage,
+        1, (CUdeviceptr)scratchStorage,
         update ? tlas_buffer_sizes.tempUpdateSizeInBytes :
                  tlas_buffer_sizes.tempSizeInBytes,
-        (CUdeviceptr)tlas_storage, tlas_buffer_sizes.outputSizeInBytes, &tlas_hdl,
+        (CUdeviceptr)tlasStorage, tlas_buffer_sizes.outputSizeInBytes, &hdl,
         nullptr, 0));
+}
 
-    return {
-        TLAS {
-            tlas_hdl,
-            (CUdeviceptr)tlas_storage,
-            tlas_buffer_sizes.outputSizeInBytes,
-            instance_blases,
-        },
-        TLASIntermediate {
-            instance_ptr,
-            scratch_storage,
-        },
-    };
+void TLAS::free()
+{
+    cudaFreeHost(instanceBLASes);
+    cudaFreeHost(instanceBuildBuffer);
+
+    cudaFree(scratchStorage);
+    cudaFree(tlasStorage);
 }
 
 OptixEnvironment OptixEnvironment::make(OptixDeviceContext ctx,
@@ -133,20 +160,22 @@ OptixEnvironment OptixEnvironment::make(OptixDeviceContext ctx,
 {
     uint32_t num_instances = scene.envInit.defaultInstances.size();
 
-    void *tlas_storage = allocCU(scene.defaultTLAS.numBytes);
-    cudaMemcpyAsync(tlas_storage, (void *)scene.defaultTLAS.storage,
-                    scene.defaultTLAS.numBytes, cudaMemcpyDeviceToDevice,
+    TLAS new_tlas {};
+    new_tlas.tlasStorage = allocCU(scene.defaultTLAS.numTLASBytes);
+    cudaMemcpyAsync(new_tlas.tlasStorage,
+                    (void *)scene.defaultTLAS.tlasStorage,
+                    scene.defaultTLAS.numTLASBytes, cudaMemcpyDeviceToDevice,
                     build_stream);
+    new_tlas.numTLASBytes = scene.defaultTLAS.numTLASBytes;
 
     OptixAccelRelocationInfo tlas_reloc_info {};
     REQ_OPTIX(optixAccelGetRelocationInfo(ctx, scene.defaultTLAS.hdl,
                                           &tlas_reloc_info));
 
-    OptixTraversableHandle new_tlas;
     REQ_OPTIX(optixAccelRelocate(ctx, build_stream, &tlas_reloc_info,
         (CUdeviceptr)scene.defaultTLAS.instanceBLASes,
-        num_instances, (CUdeviceptr)tlas_storage,
-        scene.defaultTLAS.numBytes, &new_tlas));
+        num_instances, (CUdeviceptr)new_tlas.tlasStorage,
+        scene.defaultTLAS.numTLASBytes, &new_tlas.hdl));
 
     // FIXME, pre-pack this in envInit somehow... backend
     // env init?
@@ -196,18 +225,16 @@ OptixEnvironment OptixEnvironment::make(OptixDeviceContext ctx,
 
     return OptixEnvironment {
         {},
-        (CUdeviceptr)tlas_storage,
         new_tlas,
         light_buffer,
         uint32_t(lights.size()),
-        scene.envInit.defaultInstanceFlags,
         move(physics),
     };
 }
 
 OptixEnvironment::~OptixEnvironment()
 {
-    cudaFree((void *)tlasStorage);
+    tlas.free();
     cudaFree(lights);
 }
 
@@ -244,20 +271,15 @@ void OptixEnvironment::removeLight(uint32_t light_idx)
 #endif
 }
 
-TLASIntermediate OptixEnvironment::queueTLASRebuild(const Environment &env,
+void OptixEnvironment::queueTLASRebuild(const Environment &env,
     OptixDeviceContext ctx, cudaStream_t strm)
 {
     const OptixScene &scene = 
         *static_cast<const OptixScene *>(env.getScene().get());
-    const OptixEnvironment &env_backend =
-        *static_cast<const OptixEnvironment *>(env.getBackend());
 
-    auto [new_tlas, tlas_inter] = buildTLAS(ctx, env.getInstances(),
-        env.getTransforms(), env_backend.instanceFlags,
-        scene.blases.data(), strm, true,
-        (void *)tlasStorage, tlas);
-
-    return tlas_inter;
+    tlas.build(ctx, env.getInstances(),
+        env.getTransforms(), env.getInstanceFlags(),
+        scene.blases.data(), strm);
 }
 
 OptixLoader::OptixLoader(OptixDeviceContext ctx, TextureManager &texture_mgr,
@@ -272,12 +294,6 @@ OptixLoader::OptixLoader(OptixDeviceContext ctx, TextureManager &texture_mgr,
       max_texture_resolution_(max_texture_resolution),
       need_physics_(need_physics)
 {}
-
-void TLASIntermediate::free()
-{
-    REQ_CUDA(cudaFreeHost(instanceTransforms));
-    REQ_CUDA(cudaFree(buildScratch));
-}
 
 static LoadedTextures loadTextures(const TextureInfo &texture_info,
                                    cudaStream_t cpy_strm,
@@ -362,7 +378,8 @@ static LoadedTextures loadTextures(const TextureInfo &texture_info,
                     uint8_t *img_data = (uint8_t *)malloc(num_decompressed_bytes);
                     tex_file.ignore(skip_bytes);
 
-                    uint8_t *compressed_data = (uint8_t *)malloc(num_compressed_bytes);
+                    uint8_t *compressed_data =
+                        (uint8_t *)malloc(num_compressed_bytes);
                     tex_file.read((char *)compressed_data, num_compressed_bytes);
 
                     uint8_t *cur_ptr = img_data;
@@ -581,7 +598,8 @@ shared_ptr<Scene> OptixLoader::loadScene(SceneLoadData &&load_info)
         blas_storage.push_back(accel_storage);
     }
 
-    auto [tlas, tlas_inter] = buildTLAS(ctx_, load_info.envInit.defaultInstances,
+    TLAS tlas {};
+    tlas.build(ctx_, load_info.envInit.defaultInstances,
         load_info.envInit.defaultTransforms,
         load_info.envInit.defaultInstanceFlags,
         blases.data(), stream_);
@@ -648,7 +666,6 @@ shared_ptr<Scene> OptixLoader::loadScene(SceneLoadData &&load_info)
                     cudaMemcpyHostToDevice, stream_);
 
     REQ_CUDA(cudaStreamSynchronize(stream_));
-    tlas_inter.free();
     
     if (cuda_staging) {
         REQ_CUDA(cudaFreeHost(data_src));

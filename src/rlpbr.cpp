@@ -122,6 +122,7 @@ Environment::Environment(EnvironmentImpl &&backend,
       instances_(scene_->envInit.defaultInstances),
       instance_materials_(scene->envInit.defaultInstanceMaterials),
       transforms_(scene_->envInit.defaultTransforms),
+      instance_flags_(scene_->envInit.defaultInstanceFlags),
       index_map_(scene_->envInit.indexMap),
       reverse_id_map_(scene_->envInit.reverseIDMap),
       free_ids_(),
@@ -174,6 +175,7 @@ void Environment::reset()
     instances_ = scene_->envInit.defaultInstances;
     instance_materials_ = scene_->envInit.defaultInstanceMaterials;
     transforms_ = scene_->envInit.defaultTransforms;
+    instance_flags_ = scene_->envInit.defaultInstanceFlags;
     index_map_ = scene_->envInit.indexMap;
     reverse_id_map_ = scene_->envInit.reverseIDMap;
     free_ids_.clear();

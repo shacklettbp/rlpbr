@@ -21,6 +21,10 @@ struct InstanceTransform {
     glm::mat4x3 inv;
 };
 
+enum class InstanceFlags : uint32_t {
+    Transparent = 1 << 0,
+};
+
 struct Camera {
     inline Camera(const glm::vec3 &eye, const glm::vec3 &target,
                   const glm::vec3 &up_vec, float vertical_fov,
@@ -129,6 +133,9 @@ public:
     inline const std::vector<InstanceTransform> &
         getTransforms() const;
 
+    inline const std::vector<InstanceFlags> &
+        getInstanceFlags() const;
+
     inline uint32_t getNumInstances() const;
 
     inline bool isDirty() const;
@@ -151,6 +158,7 @@ private:
     std::vector<ObjectInstance> instances_;
     std::vector<uint32_t> instance_materials_;
     std::vector<InstanceTransform> transforms_;
+    std::vector<InstanceFlags> instance_flags_;
 
     std::vector<uint32_t> index_map_;
     std::vector<uint32_t> reverse_id_map_;
@@ -162,6 +170,18 @@ private:
 
     bool dirty_;
 };
+
+inline InstanceFlags & operator|=(InstanceFlags &a, InstanceFlags b)
+{
+    a = InstanceFlags(static_cast<uint32_t>(a) | static_cast<uint32_t>(b));
+    return a;
+}
+
+inline bool operator&(InstanceFlags a, InstanceFlags b)
+{
+    return (static_cast<uint32_t>(a) & static_cast<uint32_t>(b)) > 0;
+}
+
 
 }
 

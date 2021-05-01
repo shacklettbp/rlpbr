@@ -15,18 +15,24 @@
 namespace RLpbr {
 namespace optix {
 
-struct TLASIntermediate {
-    void *instanceTransforms;
-    void *buildScratch;
-
-    void free();
-};
-
 struct TLAS {
     OptixTraversableHandle hdl;
-    CUdeviceptr storage;
-    size_t numBytes;
+    void *tlasStorage;
+    size_t numTLASBytes;
+    void *scratchStorage;
+    size_t numScratchBytes;
+    OptixInstance *instanceBuildBuffer;
     OptixTraversableHandle *instanceBLASes;
+    size_t numBuildInstances;
+
+    void build(OptixDeviceContext ctx,
+               const std::vector<ObjectInstance> &instances,
+               const std::vector<InstanceTransform> &instance_transforms,
+               const std::vector<InstanceFlags> &instance_flags,
+               const OptixTraversableHandle *blases,
+               cudaStream_t build_stream);
+
+    void free();
 };
 
 struct LoadedTextures {
@@ -81,15 +87,12 @@ public:
 
     void removeLight(uint32_t light_idx);
 
-    TLASIntermediate queueTLASRebuild(const Environment &env,
+    void queueTLASRebuild(const Environment &env,
         OptixDeviceContext ctx, cudaStream_t strm);
 
-    CUdeviceptr tlasStorage;
-    OptixTraversableHandle tlas;
+    TLAS tlas;
     PackedLight *lights;
     uint32_t numLights;
-
-    std::vector<InstanceFlags> instanceFlags;
 
     std::optional<PhysicsEnvironment> physics;
 };

@@ -370,7 +370,6 @@ static RenderState makeRenderState(const RenderConfig &cfg,
             transform_ptr,
             instance_material_ptr,
             light_ptr,
-            vector<TLASIntermediate>(cfg.batchSize),
         };
     }
 
@@ -603,7 +602,7 @@ static PackedEnv packEnv(const Environment &env,
     (void)light_buffer;
     return PackedEnv {
         packCamera(env.getCamera()),
-        env_backend.tlas,
+        env_backend.tlas.hdl,
         scene.vertexPtr,
         scene.indexPtr,
         scene.materialPtr,
@@ -634,8 +633,7 @@ uint32_t OptixBackend::render(const Environment *envs)
         buffers.envs[batch_idx] =
             packEnv(env, &instance_buffer, &transform_buffer,
                     &instance_material_buffer, &light_buffer);
-        buffers.tlasInters[batch_idx] = env_backend->queueTLASRebuild(env,
-            ctx_, streams_[active_idx_]);
+        env_backend->queueTLASRebuild(env, ctx_, streams_[active_idx_]);
     }
 
     buffers.launchInput->baseBatchOffset = batch_size_ * active_idx_;
@@ -646,10 +644,6 @@ uint32_t OptixBackend::render(const Environment *envs)
         &sbt_.hdl, img_dims_.x, img_dims_.y, batch_size_));
 
     REQ_CUDA(cudaStreamSynchronize(streams_[active_idx_]));
-
-    for (auto &inter : buffers.tlasInters) {
-        inter.free();
-    }
 
     frame_counter_ += batch_size_;
 
