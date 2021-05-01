@@ -133,12 +133,6 @@ OptixEnvironment OptixEnvironment::make(OptixDeviceContext ctx,
 {
     uint32_t num_instances = scene.envInit.defaultInstances.size();
 
-    InstanceTransform *transforms =
-        (InstanceTransform *)allocCU(sizeof(InstanceTransform) * num_instances);
-    cudaMemcpyAsync(transforms, scene.defaultTransformBuffer,
-                    num_instances * sizeof(InstanceTransform),
-                    cudaMemcpyHostToDevice, build_stream);
-
     void *tlas_storage = allocCU(scene.defaultTLAS.numBytes);
     cudaMemcpyAsync(tlas_storage, (void *)scene.defaultTLAS.storage,
                     scene.defaultTLAS.numBytes, cudaMemcpyDeviceToDevice,
@@ -204,7 +198,6 @@ OptixEnvironment OptixEnvironment::make(OptixDeviceContext ctx,
         {},
         (CUdeviceptr)tlas_storage,
         new_tlas,
-        transforms,
         light_buffer,
         uint32_t(lights.size()),
         scene.envInit.defaultInstanceFlags,
@@ -215,7 +208,6 @@ OptixEnvironment OptixEnvironment::make(OptixDeviceContext ctx,
 OptixEnvironment::~OptixEnvironment()
 {
     cudaFree((void *)tlasStorage);
-    cudaFree(transformBuffer);
     cudaFree(lights);
 }
 

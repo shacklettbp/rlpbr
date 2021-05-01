@@ -25,8 +25,10 @@ struct ShaderBuffers {
     PackedEnv *envs;
     LaunchInput *launchInput;
     PackedInstance *instanceBuffer;
+    PackedTransforms *transformBuffer;
     uint32_t *instanceMaterialBuffer;
     PackedLight *lightBuffer;
+    std::vector<TLASIntermediate> tlasInters;
 };
 
 struct RenderState {

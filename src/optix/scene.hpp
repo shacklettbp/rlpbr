@@ -86,7 +86,6 @@ public:
 
     CUdeviceptr tlasStorage;
     OptixTraversableHandle tlas;
-    InstanceTransform *transformBuffer;
     PackedLight *lights;
     uint32_t numLights;
 

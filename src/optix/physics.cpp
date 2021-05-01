@@ -243,7 +243,8 @@ static PackedPhysicsEnv packPhysicsEnv(const Environment &env)
     packed.indexBuffer = scene.indexPtr;
     packed.objects = scene_physics.objectsPtr;
     packed.sdfHandles = scene_physics.sdfHandles;
-    packed.transforms = env_backend.transformBuffer;
+    // FIXME
+    //packed.transforms = env_backend.transformBuffer;
     packed.decomposedTransforms = physics_env.transforms;
     packed.scratch = physics_env.scratch;
     packed.numStatic = physics_env.numStatic;

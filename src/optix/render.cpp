@@ -306,6 +306,8 @@ static RenderState makeRenderState(const RenderConfig &cfg,
     uint64_t env_batch_bytes = sizeof(PackedEnv) * cfg.batchSize;
     uint64_t instance_bytes =
         sizeof(PackedInstance) * Config::maxInstances;
+    uint64_t transform_bytes =
+        sizeof(PackedTransforms) * Config::maxInstances;
     uint64_t instance_material_bytes =
         sizeof(uint32_t) * Config::maxInstanceMaterials;
     uint64_t light_bytes =
@@ -316,8 +318,10 @@ static RenderState makeRenderState(const RenderConfig &cfg,
 
     uint64_t instance_offset = alignOffset(
         launch_input_offset + sizeof(LaunchInput) * num_frames, 16);
-    uint64_t instance_material_offset = alignOffset(
+    uint64_t transform_offset = alignOffset(
         instance_offset + instance_bytes * num_frames, 16);
+    uint64_t instance_material_offset = alignOffset(
+        transform_offset + transform_bytes * num_frames, 16);
     uint64_t light_offset = alignOffset(
         instance_material_offset + instance_material_bytes * num_frames, 16);
 
@@ -349,6 +353,9 @@ static RenderState makeRenderState(const RenderConfig &cfg,
         PackedInstance *instance_ptr = (PackedInstance *)(param_base +
             instance_offset + instance_bytes * frame_idx);
 
+        PackedTransforms *transform_ptr = (PackedTransforms *)(param_base +
+            transform_offset + transform_bytes * frame_idx);
+
         uint32_t *instance_material_ptr = (uint32_t *)(param_base +
             instance_material_offset + instance_material_bytes * frame_idx);
 
@@ -360,8 +367,10 @@ static RenderState makeRenderState(const RenderConfig &cfg,
             env_ptr,
             launch_input_ptr,
             instance_ptr,
+            transform_ptr,
             instance_material_ptr,
             light_ptr,
+            vector<TLASIntermediate>(cfg.batchSize),
         };
     }
 
@@ -560,6 +569,7 @@ static array<float4, 3> packCamera(const Camera &cam)
 
 static PackedEnv packEnv(const Environment &env,
                          PackedInstance **instance_buffer,
+                         PackedTransforms **instance_transforms,
                          uint32_t **instance_materials,
                          PackedLight **light_buffer)
 {
@@ -577,6 +587,11 @@ static PackedEnv packEnv(const Environment &env,
         };
     }
     *instance_buffer = cur_instance;
+
+    PackedTransforms *env_txfm_start = *instance_transforms;
+    memcpy(*instance_transforms, env.getTransforms().data(),
+           sizeof(PackedTransforms) * env.getTransforms().size());
+    *instance_transforms += env.getTransforms().size();
 
     uint32_t *cur_inst_materials = *instance_materials;
     uint32_t *env_mat_start = cur_inst_materials;
@@ -598,7 +613,7 @@ static PackedEnv packEnv(const Environment &env,
         env_inst_start,
         env_mat_start,
         env_backend.lights,
-        (PackedTransforms *)env_backend.transformBuffer,
+        (PackedTransforms *)env_txfm_start,
         env_backend.numLights,
     };
 }
@@ -607,27 +622,34 @@ uint32_t OptixBackend::render(const Environment *envs)
 {
     //physics_->simulate(envs);
 
-    const ShaderBuffers &buffers = render_state_.shaderBuffers[active_idx_];
+    ShaderBuffers &buffers = render_state_.shaderBuffers[active_idx_];
     PackedInstance *instance_buffer = buffers.instanceBuffer;
+    PackedTransforms *transform_buffer = buffers.transformBuffer;
     uint32_t *instance_material_buffer = buffers.instanceMaterialBuffer;
     PackedLight *light_buffer = buffers.lightBuffer;
 
     for (int batch_idx = 0; batch_idx < (int)batch_size_; batch_idx++) {
+        const Environment &env = envs[batch_idx];
+        OptixEnvironment *env_backend = (OptixEnvironment *)env.getBackend();
         buffers.envs[batch_idx] =
-            packEnv(envs[batch_idx], &instance_buffer,
+            packEnv(env, &instance_buffer, &transform_buffer,
                     &instance_material_buffer, &light_buffer);
+        buffers.tlasInters[batch_idx] = env_backend->queueTLASRebuild(env,
+            ctx_, streams_[active_idx_]);
     }
 
     buffers.launchInput->baseBatchOffset = batch_size_ * active_idx_;
     buffers.launchInput->baseFrameCounter = frame_counter_;
-
-    REQ_CUDA(cudaStreamSynchronize(streams_[active_idx_]));
 
     REQ_OPTIX(optixLaunch(pipeline_.hdl, streams_[active_idx_],
         (CUdeviceptr)buffers.launchInput, sizeof(LaunchInput),
         &sbt_.hdl, img_dims_.x, img_dims_.y, batch_size_));
 
     REQ_CUDA(cudaStreamSynchronize(streams_[active_idx_]));
+
+    for (auto &inter : buffers.tlasInters) {
+        inter.free();
+    }
 
     frame_counter_ += batch_size_;
 
