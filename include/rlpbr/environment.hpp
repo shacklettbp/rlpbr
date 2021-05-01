@@ -135,6 +135,9 @@ public:
     inline void setDirty();
     inline void clearDirty();
 
+    // Reset environment to default instances / materials
+    void reset();
+
 private:
     Environment(EnvironmentImpl &&backend,
                 const std::shared_ptr<Scene> &scene,
