@@ -116,9 +116,9 @@ void Camera::updateView(const glm::vec3 &position_vec,
     right = right_vec;
 }
 
-template <int N>
 uint32_t Environment::addInstance(uint32_t obj_idx,
-                                  const std::array<uint32_t, N> &material_idxs,
+                                  const uint32_t *material_idxs,
+                                  uint32_t num_mat_indices,
                                   const glm::vec3 &position,
                                   const glm::quat &rotation,
                                   bool dynamic,
@@ -139,7 +139,7 @@ uint32_t Environment::addInstance(uint32_t obj_idx,
         uint32_t(instance_materials_.size()),
     });
 
-    for (int i = 0; i < N; i++) {
+    for (int i = 0; i < (int)num_mat_indices; i++) {
         instance_materials_.push_back(material_idxs[i]);
     }
 

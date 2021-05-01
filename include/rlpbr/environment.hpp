@@ -86,13 +86,13 @@ public:
     Environment & operator=(Environment &&) = default;
 
     // Instance transformations
-    template <int N>
-    uint32_t addInstance(uint32_t obj_idx,
-                         const std::array<uint32_t, N> &material_idxs,
-                         const glm::vec3 &position, 
-                         const glm::quat &rotation,
-                         bool dynamic = true,
-                         bool kinematic = false);
+    inline uint32_t addInstance(uint32_t obj_idx,
+                                const uint32_t *material_idxs,
+                                uint32_t num_mat_indices,
+                                const glm::vec3 &position, 
+                                const glm::quat &rotation,
+                                bool dynamic = true,
+                                bool kinematic = false);
 
     void deleteInstance(uint32_t inst_id);
 
