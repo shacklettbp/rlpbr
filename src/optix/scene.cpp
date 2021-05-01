@@ -48,7 +48,7 @@ void TLAS::build(
 
     uint32_t new_num_instances = instances.size();
 
-    if (numBuildInstances != new_num_instances) {
+    if (true || numBuildInstances != new_num_instances) {
         update = false;
         hdl = 0;
     }
