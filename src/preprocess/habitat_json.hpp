@@ -24,16 +24,23 @@ struct Light {
     glm::vec3 color;
 };
 
-struct Instance {
+struct AdditionalInstance {
+    std::string name;
     std::filesystem::path gltfPath;
     glm::vec3 pos;
     glm::quat rotation;
     bool dynamic;
 };
 
+struct AdditionalObject {
+    std::string name;
+    std::filesystem::path gltfPath;
+};
+
 struct Scene {
     std::filesystem::path stagePath;
-    std::vector<Instance> additionalInstances;
+    std::vector<AdditionalInstance> additionalInstances;
+    std::vector<AdditionalObject> additionalObjects;
     std::vector<Light> lights;
     std::string envMap;
 };

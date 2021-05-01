@@ -374,7 +374,17 @@ GLTFScene gltfLoad(filesystem::path gltf_path) noexcept
             uint32_t emissive_idx = jsonGetOr(
                 material["emissiveTexture"]["index"], tex_missing);
 
+            string_view material_name_view;
+            string material_name;
+            auto name_err = material["name"].get(material_name_view);
+            if (name_err) {
+                material_name = to_string(scene.materials.size());
+            } else {
+                material_name = material_name_view;
+            }
+
             scene.materials.push_back(GLTFMaterial {
+                move(material_name),
                 base_color_idx,
                 metallic_roughness_idx,
                 spec_idx,
@@ -456,7 +466,17 @@ GLTFScene gltfLoad(filesystem::path gltf_path) noexcept
                 });
             }
 
+            string_view mesh_name_view;
+            string mesh_name;
+            auto name_err = mesh["name"].get(mesh_name_view);
+            if (name_err) {
+                mesh_name = to_string(scene.meshes.size());
+            } else {
+                mesh_name = mesh_name_view;
+            }
+
             scene.meshes.push_back(GLTFMesh {
+                move(mesh_name),
                 move(prims),
             });
         }
@@ -685,6 +705,7 @@ vector<MaterialType> gltfParseMaterials(const GLTFScene &scene,
         float aniso_rotation = atan2(gltf_mat.anisoDir.y, gltf_mat.anisoDir.x);
 
         materials.push_back({
+            gltf_mat.name,
             extractTex(gltf_mat.baseColorIdx),
             extractTex(gltf_mat.metallicRoughnessIdx),
             extractTex(gltf_mat.specularIdx),
@@ -920,6 +941,7 @@ static std::vector<InstanceProperties> gltfParseInstances(
             }
 
             instances.push_back({
+                to_string(instances.size()),
                 cur_node.meshIdx,
                 move(instance_materials),
                 position,
@@ -952,6 +974,7 @@ SceneDescription<VertexType, MaterialType> parseGLTF(
             gltfParseMesh<VertexType>(raw_scene, mesh_idx);
 
         Object<VertexType> obj {
+            raw_scene.meshes[mesh_idx].name,
             move(meshes),
         };
 

@@ -93,7 +93,7 @@ HabitatJSON::Scene habitatJSONLoad(string_view scene_path_name)
             }
         }
 
-        simdjson::dom::parser inst_parser;
+        simdjson::dom::parser nested_parser;
         auto insts = root["object_instances"];
         for (const auto &inst : insts) {
             glm::vec3 translation;
@@ -108,22 +108,40 @@ HabitatJSON::Scene habitatJSONLoad(string_view scene_path_name)
                 rotation[3 - idx++] = float(double(c));
             }
 
-
-            auto template_path =
-                root_path / string_view(inst["template_name"]);
+            string_view template_name = inst["template_name"];
+            auto template_path = root_path / template_name;
             template_path.concat(".object_config.json");
 
-            auto inst_root = inst_parser.load(template_path);
+            auto inst_root = nested_parser.load(template_path);
             string_view inst_asset = inst_root["render_asset"];
 
             auto inst_path = template_path.parent_path() / inst_asset;
 
             scene.additionalInstances.push_back({
+                string(template_name),
                 inst_path,
                 translation,
                 rotation,
                 string_view(inst["motion_type"]) == "DYNAMIC",
             });
+        }
+
+        simdjson::dom::array objs;
+        auto obj_err = root["additional_objects"].get(objs);
+        if (!obj_err) {
+            for (const auto &obj : objs) {
+                string_view template_name = obj["template_name"];
+                auto template_path = root_path / template_name;
+                template_path.concat(".object_config.json");
+                auto obj_root = nested_parser.load(template_path);
+                string_view obj_asset = obj_root["render_asset"];
+
+                auto obj_path = template_path.parent_path() / obj_asset;
+                scene.additionalObjects.push_back({
+                    string(obj["name"]),
+                    obj_path,
+                });
+            }
         }
     } catch (const simdjson_error &e) {
         cerr << "Habitat JSON loading '" << scene_path_name
@@ -150,7 +168,7 @@ SceneDescription<VertexType, MaterialType> parseHabitatJSON(
 
     unordered_map<string, uint32_t> loaded_gltfs;
 
-    for (const Instance &inst : raw_scene.additionalInstances) {
+    for (const AdditionalInstance &inst : raw_scene.additionalInstances) {
         uint32_t mat_offset = desc.materials.size();
         
         glm::vec3 inst_pos = base_txfm * glm::vec4(inst.pos, 1.f);
@@ -184,10 +202,12 @@ SceneDescription<VertexType, MaterialType> parseHabitatJSON(
             // Merge sub GLTF into single object
             auto [merged_obj, merged_mats] =
                 SceneDesc::mergeScene(move(inst_desc), mat_offset);
+            merged_obj.name = "merged_" + to_string(desc.objects.size());
 
             desc.objects.emplace_back(move(merged_obj));
 
             desc.defaultInstances.push_back({
+                to_string(desc.defaultInstances.size()),
                 uint32_t(desc.objects.size() - 1),
                 move(merged_mats),
                 inst_pos,
@@ -197,6 +217,25 @@ SceneDescription<VertexType, MaterialType> parseHabitatJSON(
                 is_transparent,
             });
         }
+    }
+
+    for (const AdditionalObject &obj : raw_scene.additionalObjects) {
+        auto obj_desc = parseGLTF<VertexType, MaterialType>(
+            obj.gltfPath, base_txfm, texture_dir);
+
+        auto [merged_obj, mat_idxs] =
+            SceneDesc::mergeScene(obj_desc, 0);
+
+        for (int i = 0; i < (int)mat_idxs.size(); i++) {
+            uint32_t mat_idx = mat_idxs[i];
+            auto &sub_mat = obj_desc.materials[mat_idx];
+            sub_mat.name = obj.name + "_" + to_string(i);
+            desc.materials.push_back(sub_mat);
+        }
+
+        merged_obj.name = obj.name;
+
+        desc.objects.emplace_back(move(merged_obj));
     }
 
     for (const Light &light : raw_scene.lights) {
