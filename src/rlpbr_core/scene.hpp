@@ -19,21 +19,6 @@ namespace RLpbr {
 
 struct LoaderBackend;
 
-enum class InstanceFlags : uint32_t {
-    Transparent = 1 << 0,
-};
-
-inline InstanceFlags & operator|=(InstanceFlags &a, InstanceFlags b)
-{
-    a = InstanceFlags(static_cast<uint32_t>(a) | static_cast<uint32_t>(b));
-    return a;
-}
-
-inline bool operator&(InstanceFlags a, InstanceFlags b)
-{
-    return (static_cast<uint32_t>(a) & static_cast<uint32_t>(b)) > 0;
-}
-
 struct alignas(16) Vertex {
     glm::vec3 position;
     glm::vec3 normal;
