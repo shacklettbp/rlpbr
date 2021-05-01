@@ -309,6 +309,7 @@ optional<pair<Object<PackedVertex>, vector<uint32_t>>>
 processObject(const Object<VertexType> &orig_obj)
 {
     Object<PackedVertex> obj;
+    obj.name = orig_obj.name;
 
     vector<uint32_t> removed_meshes;
 
@@ -357,8 +358,10 @@ processGeometry(const vector<Object<VertexType>> &orig_objects,
                 scaled_objects.emplace_back(move(obj));
                 reverse_scale_map.emplace_back(obj_idx, glm::vec3(1.f));
             } else {
+                int scale_idx = 0;
                 for (const glm::vec3 &scale : scales) {
                     Object<VertexType> scaled_obj;
+                    scaled_obj.name = obj.name + "_" + to_string(scale_idx);
                     for (const auto &mesh : obj.meshes) {
                         Mesh<VertexType> scaled_mesh;
                         for (const VertexType &vert : mesh.vertices) {
@@ -374,6 +377,8 @@ processGeometry(const vector<Object<VertexType>> &orig_objects,
                     }
                     scaled_objects.emplace_back(move(scaled_obj));
                     reverse_scale_map.emplace_back(obj_idx, scale);
+
+                    scale_idx++;
                 }
             }
         }
@@ -411,6 +416,7 @@ processGeometry(const vector<Object<VertexType>> &orig_objects,
     vector<uint32_t> indices;
     vector<MeshInfo> mesh_infos;
     vector<ObjectInfo> obj_infos;
+    vector<string> obj_names;
 
     for (auto &obj : processed_objects) {
         uint32_t mesh_offset = mesh_infos.size();
@@ -437,6 +443,8 @@ processGeometry(const vector<Object<VertexType>> &orig_objects,
             mesh_offset,
             uint32_t(obj.meshes.size()),
         });
+
+        obj_names.emplace_back(move(obj.name));
     }
 
     return {
@@ -445,6 +453,7 @@ processGeometry(const vector<Object<VertexType>> &orig_objects,
             move(indices),
             move(mesh_infos),
             move(obj_infos),
+            move(obj_names),
         },
         move(obj_id_remap),
         move(removed_meshes),
@@ -470,6 +479,7 @@ SceneDescription<VertexType, MaterialType> mergeStaticInstances(
     }
 
     vector<uint32_t> obj_remap(orig_desc.objects.size(), ~0u);
+    vector<bool> obj_merged(orig_desc.objects.size(), false);
 
     for (const auto &inst : orig_desc.defaultInstances) {
         if (!inst.dynamic &&
@@ -486,6 +496,7 @@ SceneDescription<VertexType, MaterialType> mergeStaticInstances(
                 static_desc.defaultInstances.back().objectIndex =
                     static_desc.objects.size() - 1;
             }
+            obj_merged[inst.objectIndex] = true;
         } else {
             uint32_t remapped = obj_remap[inst.objectIndex];
             new_desc.defaultInstances.push_back(inst);
@@ -500,11 +511,21 @@ SceneDescription<VertexType, MaterialType> mergeStaticInstances(
         }
     }
 
+    // Include non instanced objects
+    for (int orig_obj_idx = 0; orig_obj_idx < (int)orig_desc.objects.size();
+         orig_obj_idx++) {
+        if (obj_remap[orig_obj_idx] == ~0u && !obj_merged[orig_obj_idx]) {
+            new_desc.objects.push_back(orig_desc.objects[orig_obj_idx]);
+        }
+    }
+
     if (static_desc.defaultInstances.size() > 0) {
         auto [static_obj, static_mat_ids] = SceneDesc::mergeScene(static_desc, 0);
+        static_obj.name = "static_opaque_merged";
 
         new_desc.objects.emplace_back(move(static_obj));
         new_desc.defaultInstances.push_back({
+            "static_opaque_merged",
             uint32_t(new_desc.objects.size() - 1),
             move(static_mat_ids),
             glm::vec3(0.f),
@@ -518,9 +539,11 @@ SceneDescription<VertexType, MaterialType> mergeStaticInstances(
     if (static_transparent_desc.defaultInstances.size() > 0) {
         auto [static_transparent_obj, static_transparent_mat_ids] =
             SceneDesc::mergeScene(static_transparent_desc, 0);
+        static_transparent_obj.name = "static_transparent_merged";
 
         new_desc.objects.emplace_back(move(static_transparent_obj));
         new_desc.defaultInstances.push_back({
+            "static_transparent_merged",
             uint32_t(new_desc.objects.size() - 1),
             move(static_transparent_mat_ids),
             glm::vec3(0.f),
@@ -558,7 +581,14 @@ processScene(const SceneDescription<VertexType, MaterialType> &orig_desc)
         if (obj_remap[inst.objectIndex].empty()) continue;
 
         auto iter = obj_remap[inst.objectIndex].find(inst.scale);
+        string new_name = inst.name;
+        if (inst.scale != glm::vec3(1.f)) {
+            new_name += "_" + to_string(inst.scale.x) + "_" +
+                to_string(inst.scale.y) + "_" + to_string(inst.scale.z);
+        }
+
         InstanceProperties new_inst {
+            move(new_name),
             iter->second,
             {},
             inst.position,
@@ -872,10 +902,58 @@ static vector<LightProperties> processLights(
     return lights;
 }
 
+static void dumpIDMap(string_view scene_path_base,
+                      const ProcessedGeometry<PackedVertex> &geo,
+                      const vector<InstanceProperties> &insts,
+                      const vector<Material> &materials)
+{
+    ofstream out(string(scene_path_base) + "_ids.json");
+    string_view tab = "    ";
+    out << "{\n";
+    out << tab << "\"instances\": {\n";
+    for (int inst_idx = 0; inst_idx < (int)insts.size(); inst_idx++) {
+        const auto &inst = insts[inst_idx];
+        out << tab << tab << "\"" << inst.name << "\": " << inst_idx;
+        if (inst_idx != (int)insts.size() - 1) {
+            out << ",";
+        }
+        out << "\n";
+    }
+
+    out << tab << "},\n";
+
+    out << tab << "\"objects\": {\n";
+    for (int obj_idx = 0; obj_idx < (int)geo.objectNames.size(); obj_idx++) {
+        const auto &name = geo.objectNames[obj_idx];
+        out << tab << tab << "\"" << name << "\": " << obj_idx;
+        if (obj_idx != (int)geo.objectNames.size() - 1) {
+            out << ",";
+        }
+        out << "\n";
+    }
+
+    out << tab << "},\n";
+
+    out << tab << "\"materials\": {\n";
+    for (int mat_idx = 0; mat_idx < (int)materials.size(); mat_idx++) {
+        out << tab << tab << "\"" << materials[mat_idx].name <<
+            "\": " << mat_idx;
+        if (mat_idx != (int)materials.size() - 1) {
+            out << ",";
+        }
+        out << "\n";
+    }
+
+    out << tab << "}\n";
+
+    out << "}";
+}
+
 void ScenePreprocessor::dump(string_view out_path_name)
 {
     auto [processed_geometry, processed_instances] =
         processScene(scene_data_->desc);
+
 
     auto processed_lights = processLights(scene_data_->desc.defaultLights,
         processed_geometry, processed_instances);
@@ -884,8 +962,11 @@ void ScenePreprocessor::dump(string_view out_path_name)
         ProcessedPhysicsState::make(processed_geometry, !scene_data_->dumpSDFs);
 
     filesystem::path out_path(out_path_name);
-    string basename = out_path.filename();
+    string basename = out_path;
     basename.resize(basename.rfind('.'));
+
+    dumpIDMap(basename, processed_geometry, processed_instances,
+              scene_data_->desc.materials);
 
     ofstream out(out_path, ios::binary);
     auto write = [&](auto val) {

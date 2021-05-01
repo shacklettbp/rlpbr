@@ -62,6 +62,7 @@ struct GLTFTexture {
 };
 
 struct GLTFMaterial {
+    std::string name;
     uint32_t baseColorIdx;
     uint32_t metallicRoughnessIdx;
     uint32_t specularIdx;
@@ -98,6 +99,7 @@ struct GLTFPrimitive {
 };
 
 struct GLTFMesh {
+    std::string name;
     std::vector<GLTFPrimitive> primitives;
 };
 

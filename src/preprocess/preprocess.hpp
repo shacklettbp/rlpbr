@@ -11,6 +11,7 @@ struct ProcessedGeometry {
     std::vector<uint32_t> indices;
     std::vector<MeshInfo> meshInfos;
     std::vector<ObjectInfo> objectInfos;
+    std::vector<std::string> objectNames;
 };
 
 }

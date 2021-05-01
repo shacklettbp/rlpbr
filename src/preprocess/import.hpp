@@ -15,10 +15,12 @@ struct Mesh {
 
 template <typename VertexType>
 struct Object {
+    std::string name;
     std::vector<Mesh<VertexType>> meshes;
 };
 
 struct Material {
+    std::string name;
     std::string baseColorTexture;
     std::string metallicRoughnessTexture;
     std::string specularTexture;
@@ -45,6 +47,7 @@ struct Material {
 };
 
 struct InstanceProperties {
+    std::string name;
     uint32_t objectIndex;
     std::vector<uint32_t> materials;
     glm::vec3 position;
