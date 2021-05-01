@@ -169,6 +169,18 @@ Environment::Environment(EnvironmentImpl &&backend,
                          vertical_fov, aspect_ratio))
 {}
 
+void Environment::reset()
+{
+    instances_ = scene_->envInit.defaultInstances;
+    instance_materials_ = scene_->envInit.defaultInstanceMaterials;
+    transforms_ = scene_->envInit.defaultTransforms;
+    index_map_ = scene_->envInit.indexMap;
+    reverse_id_map_ = scene_->envInit.reverseIDMap;
+    free_ids_.clear();
+    free_light_ids_.clear();
+    light_ids_ = scene_->envInit.lightIDs;
+    light_reverse_ids_ = scene_->envInit.lightReverseIDs;
+}
 
 void Environment::deleteInstance(uint32_t inst_id)
 {
