@@ -24,6 +24,8 @@ struct TLAS {
     OptixInstance *instanceBuildBuffer;
     OptixTraversableHandle *instanceBLASes;
     size_t numBuildInstances;
+    std::vector<OptixInstance> instanceStaging;
+    std::vector<OptixTraversableHandle> instanceBLASStaging;
 
     void build(OptixDeviceContext ctx,
                const std::vector<ObjectInstance> &instances,
