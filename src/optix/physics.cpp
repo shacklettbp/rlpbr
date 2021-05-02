@@ -262,7 +262,7 @@ void PhysicsSimulator::simulate(const Environment *envs)
 
     //sdfDebug(envs);
 
-    processCollisions();
+    //processCollisions();
 }
 
 }

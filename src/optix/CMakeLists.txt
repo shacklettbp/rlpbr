@@ -10,7 +10,7 @@ add_library(rlpbr_optix SHARED
     render.hpp render.cpp
     scene.hpp scene.cpp
     utils.hpp utils.cpp cuda_utils.hpp
-    physics.hpp physics.cpp collisions.cu
+    physics.hpp physics.cpp #collisions.cu
     texture.hpp texture.cpp texture.inl
 )
 
