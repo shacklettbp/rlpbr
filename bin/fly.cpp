@@ -284,7 +284,7 @@ int main(int argc, char *argv[]) {
         }
 
         res = cudaMemcpy2DAsync(cuda_intermediates[prev_frame],
-            sizeof(half) * 4, output, sizeof(half) * 3, sizeof(half) * 3,
+            sizeof(half) * 4, output, sizeof(half) * 4, sizeof(half) * 4,
             img_dims.x * img_dims.y, cudaMemcpyDeviceToDevice,
             copy_streams[prev_frame]);
 
