@@ -112,7 +112,7 @@ public:
     void simulate(const Environment *envs);
 
 private:
-    void processCollisions();
+    //void processCollisions();
 
     void sdfDebug(const Environment *envs);
 
