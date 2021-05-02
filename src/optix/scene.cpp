@@ -55,27 +55,27 @@ void TLAS::build(
 
     if (numBuildInstances < new_num_instances) {
         if (instanceBuildBuffer != nullptr) {
-            REQ_CUDA(cudaFree(instanceBuildBuffer));
+            REQ_CUDA(cudaFreeAsync(instanceBuildBuffer, build_stream));
         }
         if (instanceBLASes != nullptr) {
-            REQ_CUDA(cudaFree(instanceBLASes));
+            REQ_CUDA(cudaFreeAsync(instanceBLASes, build_stream));
         }
 
-        REQ_CUDA(cudaHostAlloc(&instanceBuildBuffer,
-                               sizeof(OptixInstance) * new_num_instances,
-                               cudaHostAllocMapped));
+        REQ_CUDA(cudaMallocAsync(&instanceBuildBuffer,
+                            sizeof(OptixInstance) * new_num_instances, build_stream));
 
-        REQ_CUDA(cudaHostAlloc(&instanceBLASes,
-                               sizeof(OptixTraversableHandle) * new_num_instances,
-                               cudaHostAllocMapped));
+        REQ_CUDA(cudaMallocAsync(&instanceBLASes,
+                            sizeof(OptixTraversableHandle) * new_num_instances, build_stream));
 
         numBuildInstances = new_num_instances;
     }
 
+    instanceStaging.clear();
+    instanceBLASStaging.clear();
     for (int inst_id = 0; inst_id < (int)new_num_instances; inst_id++) {
         const ObjectInstance &inst = instances[inst_id];
         const InstanceTransform &txfm = instance_transforms[inst_id];
-        OptixInstance &cur_inst = instanceBuildBuffer[inst_id];
+        OptixInstance cur_inst;
 
         assignInstanceTransform(cur_inst, txfm.mat);
         cur_inst.instanceId = 0;
@@ -88,8 +88,17 @@ void TLAS::build(
         cur_inst.flags = 0;
         cur_inst.traversableHandle = blases[inst.objectIndex];
 
-        instanceBLASes[inst_id] = blases[inst.objectIndex];
+        instanceStaging.push_back(cur_inst);
+        instanceBLASStaging.push_back(blases[inst.objectIndex]);
     }
+
+    cudaMemcpyAsync(instanceBuildBuffer, instanceStaging.data(),
+                    new_num_instances * sizeof(OptixInstance),
+                    cudaMemcpyHostToDevice, build_stream);
+
+    cudaMemcpyAsync(instanceBLASes, instanceBLASStaging.data(),
+                    new_num_instances * sizeof(OptixTraversableHandle),
+                    cudaMemcpyHostToDevice, build_stream);
 
     OptixBuildInput tlas_build {};
     tlas_build.type = OPTIX_BUILD_INPUT_TYPE_INSTANCES;
@@ -114,9 +123,9 @@ void TLAS::build(
     
     if (numTLASBytes < tlas_buffer_sizes.outputSizeInBytes) {
         if (tlasStorage != nullptr) {
-            REQ_CUDA(cudaFree(tlasStorage));
+            REQ_CUDA(cudaFreeAsync(tlasStorage, build_stream));
         }
-        REQ_CUDA(cudaMalloc(&tlasStorage, tlas_buffer_sizes.outputSizeInBytes));
+        REQ_CUDA(cudaMallocAsync(&tlasStorage, tlas_buffer_sizes.outputSizeInBytes, build_stream));
 
         numTLASBytes = tlas_buffer_sizes.outputSizeInBytes;
     }
@@ -130,9 +139,9 @@ void TLAS::build(
 
     if (numScratchBytes < new_num_scratch_bytes) {
         if (scratchStorage != nullptr) {
-            REQ_CUDA(cudaFree(scratchStorage));
+            REQ_CUDA(cudaFreeAsync(scratchStorage, build_stream));
         }
-        REQ_CUDA(cudaMalloc(&scratchStorage, new_num_scratch_bytes));
+        REQ_CUDA(cudaMallocAsync(&scratchStorage, new_num_scratch_bytes, build_stream));
 
         numScratchBytes = new_num_scratch_bytes;
     }
@@ -147,8 +156,8 @@ void TLAS::build(
 
 void TLAS::free()
 {
-    cudaFreeHost(instanceBLASes);
-    cudaFreeHost(instanceBuildBuffer);
+    cudaFree(instanceBLASes);
+    cudaFree(instanceBuildBuffer);
 
     cudaFree(scratchStorage);
     cudaFree(tlasStorage);
