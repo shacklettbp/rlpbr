@@ -55,21 +55,31 @@ void saveFrame(const char *fname, const half *dev_ptr,
 {
     auto buffer = copyToHost(dev_ptr, width, height, num_channels);
 
-    vector<uint8_t> sdr_buffer(buffer.size());
-    for (unsigned i = 0; i < buffer.size(); i += 3) {
-        glm::vec3 rgb {float(buffer[i]), float(buffer[i + 1]),
-                       float(buffer[i + 2])};
+    uint32_t num_pixels = buffer.size() / num_channels;
+    vector<uint8_t> sdr_buffer(num_pixels * 3);
+
+    for (unsigned pixel = 0; pixel < num_pixels; pixel++) {
+        uint32_t i = pixel * num_channels;
+        uint32_t k = pixel * 3;
+
+        glm::vec3 rgb {
+            float(buffer[i]),
+            float(buffer[i + 1]),
+            float(buffer[i + 2]),
+        };
+
         assert(rgb.r >= 0 && rgb.g >= 0 && rgb.b >= 0);
+
         glm::vec3 tonemapped = tonemap(rgb);
         for (int j = 0; j < 3; j++) {
             float v = toSRGB(tonemapped[j]);
             if (v < 0) v = 0.f;
             if (v > 1) v = 1.f;
-            sdr_buffer[i + j] = uint8_t(v * 255.f);
+            sdr_buffer[k + j] = uint8_t(v * 255.f);
         }
     }
 
-    stbi_write_bmp(fname, width, height, num_channels, sdr_buffer.data());
+    stbi_write_bmp(fname, width, height, 3, sdr_buffer.data());
 }
 
 int main(int argc, char *argv[]) {
@@ -137,7 +147,7 @@ int main(int argc, char *argv[]) {
 
     for (uint32_t batch_idx = 0; batch_idx < batch_size; batch_idx++) {
         saveFrame(("/tmp/out_color_" + to_string(batch_idx) + ".bmp").c_str(),
-                  base_out_ptr + batch_idx * out_dim.x * out_dim.y * 3,
-                  out_dim.x, out_dim.y, 3);
+                  base_out_ptr + batch_idx * out_dim.x * out_dim.y * 4,
+                  out_dim.x, out_dim.y, 4);
     }
 }

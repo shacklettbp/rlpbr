@@ -229,7 +229,8 @@ __forceinline__ pair<Camera, Environment> unpackEnv(uint32_t batch_idx)
 }
 
 // Similarly to unpackEnv, work around broken 64bit constant pointer support
-__forceinline__ void setOutput(uint32_t base_offset, float3 rgb)
+__forceinline__ void setOutput(uint32_t base_offset, float3 rgb,
+                               uint16_t instance_id)
 {
     // FP16 cannot represent numbers over this, and get converted
     // to infinity, clamp instead
@@ -241,13 +242,11 @@ __forceinline__ void setOutput(uint32_t base_offset, float3 rgb)
 
     asm ("{\n\t"
         ".reg .u64 t1;\n\t"
-        "mad.wide.u32 t1, %3, %4, %5;\n\t"
-        "st.global.u16 [t1], %0;\n\t"
-        "st.global.u16 [t1 + %4], %1;\n\t"
-        "st.global.u16 [t1 + 2 * %4], %2;\n\t"
+        "mad.wide.u32 t1, %4, %5, %6;\n\t"
+        "st.global.v4.u16 [t1], {%0, %1, %2, %3};\n\t"
         "}\n\t"
         :
-        : "h" (r), "h" (g), "h" (b),
+        : "h" (r), "h" (g), "h" (b), "h" (instance_id)
           "r" (base_offset), "n" (sizeof(half)), "n" (OUTPUT_PTR)
         : "memory"
     );
@@ -1629,12 +1628,13 @@ extern "C" __global__ void __raygen__rg()
     uint32_t batch_idx = launchInput.baseBatchOffset + idx.z;
 
     uint32_t base_out_offset = 
-        3 * (batch_idx * dim.y * dim.x + idx.y * dim.x + idx.x);
+        4 * (batch_idx * dim.y * dim.x + idx.y * dim.x + idx.x);
 
     const auto [cam, env] = unpackEnv(batch_idx);
     cudaTextureObject_t env_tex = env.textureHandles[0];
     
     float3 pixel_radiance = make_float3(0.f);
+    uint16_t instance_id = 0xFFFF;
 
 #if SPP != (1u)
 #pragma unroll 1
@@ -1694,6 +1694,10 @@ extern "C" __global__ void __raygen__rg()
 
             auto [barys, tri_idx, instance_idx, mesh_idx] =
                 unpackHitPayload(payload_0, payload_1, payload_2);
+
+            if (path_depth == 0) {
+                instance_id = instance_idx;
+            }
 
             Instance inst = unpackInstance(env.instances[instance_idx]);
 
@@ -1785,7 +1789,7 @@ extern "C" __global__ void __raygen__rg()
         pixel_radiance += sample_radiance / SPP;
     }
 
-    setOutput(base_out_offset, pixel_radiance);
+    setOutput(base_out_offset, pixel_radiance, instance_id);
 }
 
 extern "C" __global__ void __miss__ms()

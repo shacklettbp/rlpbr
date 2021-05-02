@@ -332,7 +332,7 @@ static RenderState makeRenderState(const RenderConfig &cfg,
         cudaHostAllocMapped | cudaHostAllocWriteCombined));
 
     RenderState state {
-        (half *)allocCU(sizeof(half) * 3 * cfg.batchSize * cfg.imgHeight *
+        (half *)allocCU(sizeof(half) * 4 * cfg.batchSize * cfg.imgHeight *
                          cfg.imgWidth * num_frames),
         param_buffer,
         {},
@@ -341,7 +341,7 @@ static RenderState makeRenderState(const RenderConfig &cfg,
     for (uint32_t frame_idx = 0; frame_idx < num_frames; frame_idx++) {
         char *param_base = (char *)param_buffer;
 
-        half *output_ptr = state.output + 3 * frame_idx * cfg.batchSize *
+        half *output_ptr = state.output + 4 * frame_idx * cfg.batchSize *
                 cfg.imgHeight * cfg.imgWidth;
 
         PackedEnv *env_ptr = (PackedEnv *)(
