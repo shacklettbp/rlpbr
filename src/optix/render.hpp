@@ -59,6 +59,7 @@ public:
     half *getOutputPointer(uint32_t frame_idx);
 
 private:
+    OptixDeviceContext ctx_;
     const uint32_t batch_size_;
     const glm::u32vec2 img_dims_;
     uint32_t active_idx_;
@@ -66,7 +67,6 @@ private:
     const uint32_t frame_mask_;
     std::array<cudaStream_t, 2> streams_;
     cudaStream_t tlas_strm_;
-    OptixDeviceContext ctx_;
     RenderState render_state_;
     Pipeline pipeline_;
     SBT sbt_;

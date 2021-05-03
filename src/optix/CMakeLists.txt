@@ -22,12 +22,14 @@ target_include_directories(rlpbr_optix SYSTEM
         "${OPTIX_ROOT}/include"
 )
 
-target_compile_options(rlpbr_optix PRIVATE
-    $<$<COMPILE_LANGUAGE:CUDA>: -use_fast_math -rdc=true -lineinfo>)
-set_property(TARGET rlpbr_optix PROPERTY CUDA_ARCHITECTURES 86)
-set_property(TARGET rlpbr_optix PROPERTY CUDA_RESOLVE_DEVICE_SYMBOLS ON)
+# Disable for now while collisions.cu disabled
+#target_compile_options(rlpbr_optix PRIVATE
+#    $<$<COMPILE_LANGUAGE:CUDA>: -use_fast_math -rdc=true -lineinfo>)
+#
+#set_property(TARGET rlpbr_optix PROPERTY CUDA_ARCHITECTURES 86)
+#set_property(TARGET rlpbr_optix PROPERTY CUDA_RESOLVE_DEVICE_SYMBOLS ON)
 
-set(NVRTC_COMPILE_FLAGS -std=c++17 -default-device -rdc true -arch compute_86
+set(NVRTC_COMPILE_FLAGS -std=c++17 -default-device -rdc true
     -use_fast_math -lineinfo)
 
 get_target_property(RLPBR_OPTIX_INCLUDES rlpbr_optix INCLUDE_DIRECTORIES)

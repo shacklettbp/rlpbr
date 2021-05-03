@@ -26,13 +26,10 @@ static void optixLog(unsigned int level, const char *tag,
 static OptixDeviceContext initializeOptix(uint32_t gpu_id, bool validate)
 {
     REQ_CUDA(cudaSetDevice(gpu_id));
+    REQ_CUDA(cudaFree(nullptr));
 
     // FIXME Drop stubs
-    auto res = optixInit();
-    if (res != OPTIX_SUCCESS) {
-        cerr << "Optix initialization failed" << endl;
-        abort();
-    }
+    REQ_OPTIX(optixInit());
 
     OptixDeviceContextOptions optix_opts;
     if (validate) {
@@ -46,7 +43,6 @@ static OptixDeviceContext initializeOptix(uint32_t gpu_id, bool validate)
     optix_opts.logCallbackData = nullptr;
 
     CUcontext cuda_ctx = nullptr;
-
     OptixDeviceContext optix_ctx;
     REQ_OPTIX(optixDeviceContextCreate(cuda_ctx, &optix_opts, &optix_ctx));
     REQ_OPTIX(optixDeviceContextSetCacheEnabled(optix_ctx, false));
@@ -55,7 +51,7 @@ static OptixDeviceContext initializeOptix(uint32_t gpu_id, bool validate)
 }
 
 template <size_t N>
-static vector<char> compileToPTX(const char *cu_path,
+static vector<char> compileToPTX(const char *cu_path, int gpu_id,
                                  const array<string, N> &extra_options,
                                  bool validate)
 {
@@ -71,10 +67,17 @@ static vector<char> compileToPTX(const char *cu_path,
     nvrtcProgram prog;
     REQ_NVRTC(nvrtcCreateProgram(&prog, cu_src.data(), cu_path, 0,
                                  nullptr, nullptr));
-    
+
     vector<const char *> nvrtc_options = {
         NVRTC_OPTIONS
     };
+
+    cudaDeviceProp dev_props;
+    REQ_CUDA(cudaGetDeviceProperties(&dev_props, gpu_id));
+    
+    string arch_str = "compute_" + to_string(dev_props.major) + to_string(dev_props.minor);
+    nvrtc_options.push_back("-arch");
+    nvrtc_options.push_back(arch_str.c_str());
 
     for (const string &extra : extra_options) {
         nvrtc_options.push_back(extra.c_str());
@@ -164,7 +167,7 @@ static Pipeline buildPipeline(OptixDeviceContext ctx, const RenderConfig &cfg,
         move(sampling_define),
     };
 
-    vector<char> ptx = compileToPTX(STRINGIFY(OPTIX_SHADER),
+    vector<char> ptx = compileToPTX(STRINGIFY(OPTIX_SHADER), cfg.gpuID,
         extra_compile_options, validate);
 
     static constexpr size_t log_bytes = 2048;
@@ -488,7 +491,8 @@ static optional<PhysicsSimulator> makePhysicsSimulator(const RenderConfig &cfg)
 }
 
 OptixBackend::OptixBackend(const RenderConfig &cfg, bool validate)
-    : batch_size_(cfg.batchSize),
+    : ctx_(initializeOptix(cfg.gpuID, validate)), // Needs to be first
+      batch_size_(cfg.batchSize),
       img_dims_(cfg.imgWidth, cfg.imgHeight),
       active_idx_(0),
       frame_counter_(0),
@@ -504,7 +508,6 @@ OptixBackend::OptixBackend(const RenderConfig &cfg, bool validate)
           return array<cudaStream_t, 2>{strm, strm2};
       }()),
       tlas_strm_(makeStream()),
-      ctx_(initializeOptix(cfg.gpuID, validate)),
       render_state_(makeRenderState(cfg, getNumFrames(cfg))),
       pipeline_(
           buildPipeline(ctx_, cfg, render_state_.shaderBuffers[0], validate)),
