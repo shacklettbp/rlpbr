@@ -371,6 +371,95 @@ template <typename T>
 __forceinline__ T computeFresnel(T f0, T f90, float cos_theta)
 {
     return f0 + (f90 - f0) * pow(max(1.f - cos_theta, 0.f), 5.f);
+
+}
+
+template <typename T> __forceinline__ T makeZeroVec();
+
+template <>
+float makeZeroVec()
+{
+    return 0.f;
+}
+
+template <>
+float2 makeZeroVec()
+{
+    return make_float2(0.f);
+}
+
+template <>
+float3 makeZeroVec()
+{
+    return make_float3(0.f);
+}
+
+template <>
+float4 makeZeroVec()
+{
+    return make_float4(0.f);
+}
+
+template <typename T> __forceinline__ T trimFloat4(float4 v);
+
+template <>
+float trimFloat4(float4 v)
+{
+    return v.x;
+}
+
+template <>
+float2 trimFloat4(float4 v)
+{
+    return make_float2(v.x, v.y);
+}
+
+template <>
+float4 trimFloat4(float4 v)
+{
+    return v;
+}
+
+template <typename T>
+__forceinline__ T textureFetch1D(cudaTextureObject_t tex, float ux, float mip)
+{
+    float4 out;
+    asm ("{\n\t"
+        "tex.level.1d.v4.f32.f32 {%0, %1, %2, %3}, [%4, %5], %6;\n\t"
+        "}\n\t"
+        : "=f" (out.x), "=f" (out.y), "=f" (out.z), "=f" (out.w)
+        : "l" (tex), "f" (ux), "f" (mip)
+    );
+
+    return trimFloat4<T>(out);
+}
+
+template <typename T>
+__forceinline__ T textureFetch2D(cudaTextureObject_t tex, float ux, float uy, float mip)
+{
+    float4 out;
+    asm ("{\n\t"
+        "tex.level.2d.v4.f32.f32 {%0, %1, %2, %3}, [%4, {%5, %6}], %7;\n\t"
+        "}\n\t"
+        : "=f" (out.x), "=f" (out.y), "=f" (out.z), "=f" (out.w)
+        : "l" (tex), "f" (ux), "f" (uy), "f" (mip)
+    );
+
+    return trimFloat4<T>(out);
+}
+
+template <typename T>
+__forceinline__ T textureFetch3D(cudaTextureObject_t tex, float ux, float uy, float uz, float mip)
+{
+    float4 out;
+    asm ("{\n\t"
+        "tex.level.3d.v4.f32.f32 {%0, %1, %2, %3}, [%4, {%5, %6, %7, %7}], %8;\n\t"
+        "}\n\t"
+        : "=f" (out.x), "=f" (out.y), "=f" (out.z), "=f" (out.w)
+        : "l" (tex), "f" (ux), "f" (uy), "f" (uz), "f" (mip)
+    );
+
+    return trimFloat4<T>(out);
 }
 
 __forceinline__ Material processMaterial(const MaterialParams &params,
@@ -382,7 +471,7 @@ __forceinline__ Material processMaterial(const MaterialParams &params,
     mat.rho = params.baseColor;
     mat.transparencyMask = 1.f;
     if (checkMaterialFlag(params.flags, MaterialFlags::HasBaseTexture)) {
-        float4 tex_value = tex2DLod<float4>(
+        float4 tex_value = textureFetch2D<float4>(
             textures[TextureConstants::baseOffset], uv.x, uv.y, mip_level);
 
         mat.rho.x *= tex_value.x;
@@ -394,7 +483,7 @@ __forceinline__ Material processMaterial(const MaterialParams &params,
     mat.metallic = params.baseMetallic;
     mat.roughness = params.baseRoughness;
     if (checkMaterialFlag(params.flags, MaterialFlags::HasMRTexture)) {
-        float2 tex_value = tex2DLod<float2>(
+        float2 tex_value = textureFetch2D<float2>(
             textures[TextureConstants::mrOffset], uv.x, uv.y, mip_level);
 
         mat.roughness *= tex_value.x;
@@ -404,7 +493,7 @@ __forceinline__ Material processMaterial(const MaterialParams &params,
     mat.rhoSpecular = params.baseSpecular;
     mat.specularScale = params.specularScale;
     if (checkMaterialFlag(params.flags, MaterialFlags::HasSpecularTexture)) {
-        float4 tex_value = tex2DLod<float4>(
+        float4 tex_value = textureFetch2D<float4>(
             textures[TextureConstants::specularOffset], uv.x, uv.y, mip_level);
 
         mat.rhoSpecular.x *= tex_value.x;
@@ -416,7 +505,7 @@ __forceinline__ Material processMaterial(const MaterialParams &params,
     mat.emittance = params.baseEmittance;
     if (checkMaterialFlag(params.flags, MaterialFlags::HasEmittanceTexture)) {
         cudaTextureObject_t tex = textures[TextureConstants::emittanceOffset];
-        float4 tex_value = tex2DLod<float4>(tex, uv.x, uv.y, mip_level);
+        float4 tex_value = textureFetch2D<float4>(tex, uv.x, uv.y, mip_level);
 
         mat.emittance.x *= tex_value.x;
         mat.emittance.y *= tex_value.y;
@@ -428,7 +517,7 @@ __forceinline__ Material processMaterial(const MaterialParams &params,
                           MaterialFlags::HasTransmissionTexture)) {
         cudaTextureObject_t tex =
             textures[TextureConstants::transmissionOffset];
-        float tex_value = tex2DLod<float>(tex, uv.x, uv.y, mip_level);
+        float tex_value = textureFetch2D<float>(tex, uv.x, uv.y, mip_level);
 
         mat.transmission *= tex_value;
     }
@@ -437,7 +526,7 @@ __forceinline__ Material processMaterial(const MaterialParams &params,
     mat.clearcoatRoughness = params.clearcoatRoughness;
     if (checkMaterialFlag(params.flags,
                           MaterialFlags::HasClearcoatTexture)) {
-        float2 tex_value = tex2DLod<float2>(
+        float2 tex_value = textureFetch2D<float2>(
             textures[TextureConstants::clearcoatOffset], uv.x, uv.y,
             mip_level);
 
@@ -449,7 +538,7 @@ __forceinline__ Material processMaterial(const MaterialParams &params,
     mat.anisoRotation = params.anisoRotation;
     if (checkMaterialFlag(params.flags,
                           MaterialFlags::HasAnisotropicTexture)) {
-        float2 tex_value = tex2DLod<float2>(
+        float2 tex_value = textureFetch2D<float2>(
             textures[TextureConstants::anisoOffset], uv.x, uv.y, mip_level);
         float2 aniso_v = tex_value * 2.f - 1.f;
 
@@ -467,7 +556,7 @@ __forceinline__ Material processMaterial(const MaterialParams &params,
 __forceinline__ float fetchDiffuseAverageAlbedo(float lookup_f0,
                                                 float roughness)
 {
-    return tex2DLod<float>(launchInput.precomputed.diffuseAverage,
+    return textureFetch2D<float>(launchInput.precomputed.diffuseAverage,
                            roughness, lookup_f0, 0);
 }
 
@@ -475,26 +564,26 @@ __forceinline__ float fetchDiffuseDirectionalAlbedo(float lookup_f0,
                                                     float roughness,
                                                     float cos_theta)
 {
-    return tex3DLod<float>(launchInput.precomputed.diffuseDirectional,
+    return textureFetch3D<float>(launchInput.precomputed.diffuseDirectional,
                            cos_theta, roughness, lookup_f0, 0);
 }
 
 __forceinline__ float fetchMicrofacetMSAverageAlbedo(float roughness)
 {
-    return tex1DLod<float>(launchInput.precomputed.microfacetAverage,
+    return textureFetch1D<float>(launchInput.precomputed.microfacetAverage,
                            roughness, 0);
 }
 
 __forceinline__ float fetchMicrofacetMSDirectionalAlbedo(float roughness,
                                                          float cos_theta)
 {
-    return tex2DLod<float>(launchInput.precomputed.microfacetDirectional,
+    return textureFetch2D<float>(launchInput.precomputed.microfacetDirectional,
                            cos_theta, roughness, 0);
 }
 
 __forceinline__ float sampleMSMicrofacetAngle(float roughness, float u)
 {
-    return tex2DLod<float>(
+    return textureFetch2D<float>(
         launchInput.precomputed.microfacetDirectionalInverse, u, roughness, 0);
 }
 
@@ -748,20 +837,6 @@ __forceinline__ float ggxMasking(float a2, float out_cos, float in_cos)
     float in_lambda = ggxLambda(in_cos, a2);
     float out_lambda = ggxLambda(out_cos, a2);
     return 1.f / (1.f + in_lambda + out_lambda);
-}
-
-template <typename T> __forceinline__ T makeZeroVec();
-
-template <>
-float makeZeroVec()
-{
-    return 0.f;
-}
-
-template <>
-float3 makeZeroVec()
-{
-    return make_float3(0.f);
 }
 
 template <typename T>
@@ -1168,7 +1243,7 @@ __forceinline__ float3 evalEnvMap(cudaTextureObject_t env_tex,
 {
     float2 uv = dirToLatLong(dir);
 
-    float4 v = tex2DLod<float4>(env_tex, uv.x, uv.y, 0.f);
+    float4 v = textureFetch2D<float4>(env_tex, uv.x, uv.y, 0.f);
 
     v *= 90.f;
 
@@ -1537,7 +1612,7 @@ inline TangentFrame computeTangentFrame(const DeviceVertex &v,
 
     float3 perturb;
     if (checkMaterialFlag(mat_params.flags, MaterialFlags::HasNormalMap)) {
-        float2 xy = tex2DLod<float2>(textures[TextureConstants::normalOffset],
+        float2 xy = textureFetch2D<float2>(textures[TextureConstants::normalOffset],
                                     v.uv.x, v.uv.y, 0);
 
         float2 centered = xy * 2.f - 1.f;
