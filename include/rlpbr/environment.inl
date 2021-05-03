@@ -146,6 +146,10 @@ uint32_t Environment::addInstance(uint32_t obj_idx,
     transforms_.push_back({model_matrix, inv_model});
     instance_flags_.push_back(InstanceFlags {});
 
+    return instances_.size() - 1;
+
+    // FIXME
+#if 0
     uint32_t instance_idx = instances_.size() - 1;
 
     uint32_t outer_id;
@@ -163,6 +167,7 @@ uint32_t Environment::addInstance(uint32_t obj_idx,
     reverse_id_map_.emplace_back(outer_id);
 
     return outer_id;
+#endif
 }
 
 void Environment::moveInstance(uint32_t inst_id, const glm::vec3 &delta)
