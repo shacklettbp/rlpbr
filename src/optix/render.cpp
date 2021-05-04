@@ -632,10 +632,11 @@ uint32_t OptixBackend::render(const Environment *envs)
 
     for (int batch_idx = 0; batch_idx < (int)batch_size_; batch_idx++) {
         const Environment &env = envs[batch_idx];
-        OptixEnvironment *env_backend = (OptixEnvironment *)env.getBackend();
         buffers.envs[batch_idx] =
             packEnv(env, &instance_buffer, &transform_buffer,
                     &instance_material_buffer, &light_buffer);
+
+        OptixEnvironment *env_backend = (OptixEnvironment *)env.getBackend();
         env_backend->queueTLASRebuild(env, ctx_, streams_[active_idx_]);
     }
 
