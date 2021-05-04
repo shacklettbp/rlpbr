@@ -636,8 +636,8 @@ uint32_t OptixBackend::render(const Environment *envs)
             packEnv(env, &instance_buffer, &transform_buffer,
                     &instance_material_buffer, &light_buffer);
 
-        OptixEnvironment *env_backend = (OptixEnvironment *)env.getBackend();
-        env_backend->queueTLASRebuild(env, ctx_, streams_[active_idx_]);
+        //OptixEnvironment *env_backend = (OptixEnvironment *)env.getBackend();
+        //env_backend->queueTLASRebuild(env, ctx_, streams_[active_idx_]);
     }
 
     buffers.launchInput->baseBatchOffset = batch_size_ * active_idx_;
