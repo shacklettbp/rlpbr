@@ -55,17 +55,17 @@ void TLAS::build(
 
     if (numBuildInstances < new_num_instances) {
         if (instanceBuildBuffer != nullptr) {
-            REQ_CUDA(cudaFreeAsync(instanceBuildBuffer, build_stream));
+            REQ_CUDA(cudaFree(instanceBuildBuffer));
         }
         if (instanceBLASes != nullptr) {
-            REQ_CUDA(cudaFreeAsync(instanceBLASes, build_stream));
+            REQ_CUDA(cudaFree(instanceBLASes));
         }
 
-        REQ_CUDA(cudaMallocAsync(&instanceBuildBuffer,
-                            sizeof(OptixInstance) * new_num_instances, build_stream));
+        REQ_CUDA(cudaMalloc(&instanceBuildBuffer,
+                            sizeof(OptixInstance) * new_num_instances));
 
-        REQ_CUDA(cudaMallocAsync(&instanceBLASes,
-                            sizeof(OptixTraversableHandle) * new_num_instances, build_stream));
+        REQ_CUDA(cudaMalloc(&instanceBLASes,
+                            sizeof(OptixTraversableHandle) * new_num_instances));
 
         numBuildInstances = new_num_instances;
     }
@@ -123,9 +123,9 @@ void TLAS::build(
     
     if (numTLASBytes < tlas_buffer_sizes.outputSizeInBytes) {
         if (tlasStorage != nullptr) {
-            REQ_CUDA(cudaFreeAsync(tlasStorage, build_stream));
+            REQ_CUDA(cudaFree(tlasStorage));
         }
-        REQ_CUDA(cudaMallocAsync(&tlasStorage, tlas_buffer_sizes.outputSizeInBytes, build_stream));
+        REQ_CUDA(cudaMalloc(&tlasStorage, tlas_buffer_sizes.outputSizeInBytes));
 
         numTLASBytes = tlas_buffer_sizes.outputSizeInBytes;
     }
@@ -139,9 +139,9 @@ void TLAS::build(
 
     if (numScratchBytes < new_num_scratch_bytes) {
         if (scratchStorage != nullptr) {
-            REQ_CUDA(cudaFreeAsync(scratchStorage, build_stream));
+            REQ_CUDA(cudaFree(scratchStorage));
         }
-        REQ_CUDA(cudaMallocAsync(&scratchStorage, new_num_scratch_bytes, build_stream));
+        REQ_CUDA(cudaMalloc(&scratchStorage, new_num_scratch_bytes));
 
         numScratchBytes = new_num_scratch_bytes;
     }
