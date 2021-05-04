@@ -170,6 +170,8 @@ OptixEnvironment OptixEnvironment::make(OptixDeviceContext ctx,
     uint32_t num_instances = scene.envInit.defaultInstances.size();
 
     TLAS new_tlas {};
+
+#if 0
     new_tlas.tlasStorage = allocCU(scene.defaultTLAS.numTLASBytes);
     cudaMemcpyAsync(new_tlas.tlasStorage,
                     (void *)scene.defaultTLAS.tlasStorage,
@@ -185,6 +187,9 @@ OptixEnvironment OptixEnvironment::make(OptixDeviceContext ctx,
         (CUdeviceptr)scene.defaultTLAS.instanceBLASes,
         num_instances, (CUdeviceptr)new_tlas.tlasStorage,
         scene.defaultTLAS.numTLASBytes, &new_tlas.hdl));
+#endif
+    (void)ctx;
+    (void)num_instances;
 
     // FIXME, pre-pack this in envInit somehow... backend
     // env init?
