@@ -82,13 +82,20 @@ private:
 
     inline uint32_t curSampleIndex() const
     {
-        static const uint8_t permutations[24][4] = {
-            {0, 1, 2, 3}, {0, 1, 3, 2}, {0, 2, 1, 3}, {0, 2, 3, 1},
-            {0, 3, 2, 1}, {0, 3, 1, 2}, {1, 0, 2, 3}, {1, 0, 3, 2},
-            {1, 2, 0, 3}, {1, 2, 3, 0}, {1, 3, 2, 0}, {1, 3, 0, 2},
-            {2, 1, 0, 3}, {2, 1, 3, 0}, {2, 0, 1, 3}, {2, 0, 3, 1},
-            {2, 3, 0, 1}, {2, 3, 1, 0}, {3, 1, 2, 0}, {3, 1, 0, 2},
-            {3, 2, 1, 0}, {3, 2, 0, 1}, {3, 0, 2, 1}, {3, 0, 1, 2},
+        auto getPermutationDigit = [](int p, int d) {
+            uint32_t a = 0xe4b4d878;
+            uint32_t b = 0x6c9ce1b1;
+            uint32_t c = 0x934b4ec6;
+
+            uint32_t mid = p & 0b110;
+
+            uint32_t t = p < 8 ? a : p < 16 ? b : c;
+
+            uint32_t perm_set = p & 1 ? __brev(t) : t;
+
+            uint32_t perm = perm_set >> (mid * 4);
+
+            return (perm >> (d * 2)) & 3;
         };
 
         uint32_t sample_idx = 0;
@@ -99,7 +106,7 @@ private:
             int digit_shift = 2 * i;
             int digit = (morton_idx_ >> digit_shift) & 3;
             int p = hashPermute(morton_idx_ >> (digit_shift + 2));
-            uint32_t permuted = permutations[p][digit];
+            uint32_t permuted = getPermutationDigit(p, digit);
             sample_idx |= permuted << digit_shift;
         }
 
