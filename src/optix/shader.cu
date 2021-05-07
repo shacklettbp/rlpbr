@@ -1317,7 +1317,7 @@ __forceinline__ LightInfo sampleLights(Sampler &sampler,
     const Environment &env, cudaTextureObject_t env_tex, 
     float3 origin, float3 base_normal, float3 cam_pos)
 {
-    float3 light_position = cam_pos + make_float3(0.f, 1.f, 0.f);
+    float3 light_position = cam_pos + make_float3(0.f, 0.1f, 0.f);
 
     float3 dir_check = light_position - origin;
 
