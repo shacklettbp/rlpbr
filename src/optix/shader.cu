@@ -148,6 +148,7 @@ struct BSDFParams {
 enum class LightType : uint32_t {
     Point,
     Portal,
+    Environment,
 };
 
 struct PointLight {
@@ -380,7 +381,9 @@ __forceinline__ float rgbToLuminance(float3 rgb)
 template <typename T>
 __forceinline__ T computeFresnel(T f0, T f90, float cos_theta)
 {
-    return f0 + (f90 - f0) * pow(max(1.f - cos_theta, 0.f), 5.f);
+    float complement = max(1.f - cos_theta, 0.f);
+    return f0 + (f90 - f0) * complement * complement * complement *
+        complement * complement;
 
 }
 
@@ -1380,7 +1383,7 @@ __forceinline__ LightInfo sampleLights(Sampler &sampler,
     const Environment &env, cudaTextureObject_t env_tex, 
     float3 origin, float3 base_normal)
 {
-    uint32_t total_lights = env.numLights;
+    uint32_t total_lights = env.numLights + 1;
 
     uint32_t light_idx = min(uint32_t(sampler.get1D() * total_lights),
                              total_lights - 1);
@@ -1391,17 +1394,28 @@ __forceinline__ LightInfo sampleLights(Sampler &sampler,
 
     PointLight point_light {};
     PortalLight portal_light {};
-    LightType light_type =
-        unpackLight(env, light_idx, &point_light, &portal_light);
+    LightType light_type {};
 
-    float3 light_position {};
-    if (light_type == LightType::Point) {
-        light_position = point_light.position;
+    if (light_idx < env.numLights) {
+        light_type =
+            unpackLight(env, light_idx, &point_light, &portal_light);
     } else {
-        light_position = getPortalLightPoint(portal_light, light_sample_uv);
+        light_type = LightType::Environment;
     }
 
-    float3 dir_check = light_position - origin;
+    float3 light_position {};
+    float3 dir_check {};
+    LightSample light_sample {};
+    if (light_type == LightType::Point) {
+        light_position = point_light.position;
+        dir_check = light_position - origin;
+    } else if (light_type == LightType::Portal) {
+        light_position = getPortalLightPoint(portal_light, light_sample_uv);
+        dir_check = light_position - origin;
+    } else {
+        light_sample = sampleEnvMap(env_tex, light_sample_uv, inv_selection_pdf);
+        dir_check = light_sample.toLight;
+    }
 
     float3 shadow_offset_normal =
         dot(dir_check, base_normal) > 0 ? base_normal : -base_normal;
@@ -1409,7 +1423,6 @@ __forceinline__ LightInfo sampleLights(Sampler &sampler,
     float3 shadow_origin =
         offsetRayOrigin(origin, shadow_offset_normal);
 
-    LightSample light_sample {};
     float shadow_len {};
     if (light_type == LightType::Point) {
         float shadow_len2;
@@ -1422,6 +1435,8 @@ __forceinline__ LightInfo sampleLights(Sampler &sampler,
         light_sample = samplePortal(portal_light, env_tex, to_light,
                                     inv_selection_pdf);
 
+        shadow_len = 10000.f;
+    } else {
         shadow_len = 10000.f;
     }
 
