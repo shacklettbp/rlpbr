@@ -1932,7 +1932,7 @@ extern "C" __global__ void __raygen__rg()
             if (path_depth == 0) {
                 float3 view_normal = make_float3(
                     dot(normalize(cam.right), world_tangent_frame.normal),
-                    dot(normalize(cam.up), world_tangent_frame.normal),
+                    dot(-normalize(cam.up), world_tangent_frame.normal),
                     dot(normalize(cam.view), world_tangent_frame.normal));
 
                 view_normal = normalize(view_normal);
