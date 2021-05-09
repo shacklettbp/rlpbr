@@ -22,6 +22,8 @@ struct SBT {
 
 struct ShaderBuffers {
     half *outputBuffer;
+    half *normalBuffer;
+    half *albedoBuffer;
     PackedEnv *envs;
     LaunchInput *launchInput;
     PackedInstance *instanceBuffer;
@@ -32,6 +34,8 @@ struct ShaderBuffers {
 
 struct RenderState {
     half *output;
+    half *normal;
+    half *albedo;
     void *paramBuffer;
     std::array<ShaderBuffers, 2> shaderBuffers;
 };
@@ -57,6 +61,7 @@ public:
     void waitForFrame(uint32_t frame_idx);
 
     half *getOutputPointer(uint32_t frame_idx);
+    AuxiliaryOutputs getAuxiliaryOutputs(uint32_t frame_idx);
 
 private:
     OptixDeviceContext ctx_;

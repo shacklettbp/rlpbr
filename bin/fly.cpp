@@ -153,7 +153,7 @@ int main(int argc, char *argv[]) {
     }
 
     Renderer renderer({0, 1, 1, img_dims.x, img_dims.y, spp, depth, 0,
-        true, false, BackendSelect::Optix});
+        true, false, false, BackendSelect::Optix});
 
     array<cudaStream_t, 2> copy_streams;
 

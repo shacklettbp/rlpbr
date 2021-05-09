@@ -64,6 +64,8 @@ RendererImpl makeRendererImpl(RenderBackend *ptr)
             &RendererType::waitForFrame),
         static_cast<RendererImpl::GetOutputType>(
             &RendererType::getOutputPointer),
+        static_cast<RendererImpl::GetAuxType>(
+            &RendererType::getAuxiliaryOutputs),
         ptr);
 }
 

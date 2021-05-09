@@ -51,6 +51,8 @@ public:
 
     half *getOutputPointer(uint32_t frame_idx = 0) const;
 
+    AuxiliaryOutputs getAuxiliaryOutputs(uint32_t frame_idx = 0) const;
+
 private:
     RendererImpl backend_;
     float aspect_ratio_;

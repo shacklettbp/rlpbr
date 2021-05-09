@@ -339,6 +339,7 @@ RendererImpl::RendererImpl(DestroyType destroy_ptr,
                            RenderType render_ptr,
                            WaitType wait_ptr,
                            GetOutputType get_output_ptr,
+                           GetAuxType get_aux_ptr,
                            RenderBackend *state)
     : destroy_ptr_(destroy_ptr),
       make_loader_ptr_(make_loader_ptr),
@@ -346,6 +347,7 @@ RendererImpl::RendererImpl(DestroyType destroy_ptr,
       render_ptr_(render_ptr),
       wait_ptr_(wait_ptr),
       get_output_ptr_(get_output_ptr),
+      get_aux_ptr_(get_aux_ptr),
       state_(state)
 {}
 
@@ -356,6 +358,7 @@ RendererImpl::RendererImpl(RendererImpl &&o)
       render_ptr_(o.render_ptr_),
       wait_ptr_(o.wait_ptr_),
       get_output_ptr_(o.get_output_ptr_),
+      get_aux_ptr_(o.get_aux_ptr_),
       state_(o.state_)
 {
     o.state_ = nullptr;
@@ -380,6 +383,7 @@ RendererImpl & RendererImpl::operator=(RendererImpl &&o)
     render_ptr_ = o.render_ptr_;
     wait_ptr_ = o.wait_ptr_;
     get_output_ptr_ = o.get_output_ptr_;
+    get_aux_ptr_ = o.get_aux_ptr_;
     state_ = o.state_;
 
     o.state_ = nullptr;
@@ -411,6 +415,11 @@ void RendererImpl::waitForFrame(uint32_t frame_idx)
 half *RendererImpl::getOutputPointer(uint32_t frame_idx) const
 {
     return invoke(get_output_ptr_, state_, frame_idx);
+}
+
+AuxiliaryOutputs RendererImpl::getAuxiliaryOutputs(uint32_t frame_idx) const
+{
+    return invoke(get_aux_ptr_, state_, frame_idx);
 }
 
 }

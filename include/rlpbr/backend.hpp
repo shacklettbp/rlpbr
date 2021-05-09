@@ -67,6 +67,11 @@ private:
     LoaderBackend *state_;
 };
 
+struct AuxiliaryOutputs {
+    half *normal;
+    half *albedo;
+};
+
 class RendererImpl {
 public:
     typedef void(*DestroyType)(RenderBackend *);
@@ -76,11 +81,13 @@ public:
     typedef uint32_t(RenderBackend::*RenderType)(const Environment *);
     typedef void(RenderBackend::*WaitType)(uint32_t frame_idx);
     typedef half *(RenderBackend::*GetOutputType)(uint32_t frame_idx);
+    typedef AuxiliaryOutputs(RenderBackend::*GetAuxType)(uint32_t frame_idx);
 
     RendererImpl(DestroyType destroy_ptr,
         MakeLoaderType make_loader_ptr, MakeEnvironmentType make_env_ptr,
         RenderType render_ptr, WaitType wait_ptr,
-        GetOutputType get_output_ptr, RenderBackend *state);
+        GetOutputType get_output_ptr, GetAuxType get_aux_ptr,
+        RenderBackend *state);
     RendererImpl(const RendererImpl &) = delete;
     RendererImpl(RendererImpl &&);
 
@@ -100,6 +107,8 @@ public:
 
     inline half *getOutputPointer(uint32_t frame_idx) const;
 
+    inline AuxiliaryOutputs getAuxiliaryOutputs(uint32_t frame_idx) const;
+
 private:
     DestroyType destroy_ptr_;
     MakeLoaderType make_loader_ptr_;
@@ -107,6 +116,7 @@ private:
     RenderType render_ptr_;
     WaitType wait_ptr_;
     GetOutputType get_output_ptr_;
+    GetAuxType get_aux_ptr_;
     RenderBackend *state_;
 };
 

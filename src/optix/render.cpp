@@ -50,9 +50,8 @@ static OptixDeviceContext initializeOptix(uint32_t gpu_id, bool validate)
     return optix_ctx;
 }
 
-template <size_t N>
 static vector<char> compileToPTX(const char *cu_path, int gpu_id,
-                                 const array<string, N> &extra_options,
+                                 const vector<string> &extra_options,
                                  bool validate)
 {
     ifstream cu_file(cu_path, ios::binary | ios::ate);
@@ -155,7 +154,7 @@ static Pipeline buildPipeline(OptixDeviceContext ctx, const RenderConfig &cfg,
         sampling_define = "-DZSOBOL_SAMPLING";
     }
 
-    array extra_compile_options {
+    vector extra_compile_options {
         string("-DSPP=(") + to_string(cfg.spp) + "u)",
         string("-DMAX_DEPTH=(") + to_string(cfg.maxDepth) + "u)",
         string("-DRES_X=(") + to_string(cfg.imgWidth) + "u)",
@@ -166,6 +165,14 @@ static Pipeline buildPipeline(OptixDeviceContext ctx, const RenderConfig &cfg,
                to_string((uintptr_t)base_buffers.envs) + "ul)",
         move(sampling_define),
     };
+
+    if (cfg.auxiliaryOutputs) {
+        extra_compile_options.emplace_back("-DAUXILIARY_OUTPUTS");
+        extra_compile_options.emplace_back(string("-DNORMAL_PTR=(") +
+                to_string((uintptr_t)base_buffers.normalBuffer) + "ul)");
+        extra_compile_options.emplace_back(string("-DALBEDO_PTR=(") +
+                to_string((uintptr_t)base_buffers.albedoBuffer) + "ul)");
+    }
 
     vector<char> ptx = compileToPTX(STRINGIFY(OPTIX_SHADER), cfg.gpuID,
         extra_compile_options, validate);
@@ -336,7 +343,13 @@ static RenderState makeRenderState(const RenderConfig &cfg,
 
     RenderState state {
         (half *)allocCU(sizeof(half) * 4 * cfg.batchSize * cfg.imgHeight *
-                         cfg.imgWidth * num_frames),
+                        cfg.imgWidth * num_frames),
+        cfg.auxiliaryOutputs ? 
+            (half *)allocCU(sizeof(half) * 3 * cfg.batchSize * cfg.imgHeight *
+                            cfg.imgWidth * num_frames) : nullptr,
+        cfg.auxiliaryOutputs ?
+            (half *)allocCU(sizeof(half) * 3 * cfg.batchSize * cfg.imgHeight *
+                            cfg.imgWidth * num_frames) : nullptr,
         param_buffer,
         {},
     };
@@ -365,8 +378,20 @@ static RenderState makeRenderState(const RenderConfig &cfg,
         PackedLight *light_ptr = (PackedLight *)(param_base +
             light_offset + light_bytes * frame_idx);
 
+        half *normal_ptr = nullptr;
+        half *albedo_ptr = nullptr;
+
+        if (cfg.auxiliaryOutputs) {
+            normal_ptr = state.normal + 3 * frame_idx * cfg.batchSize *
+                cfg.imgHeight * cfg.imgWidth;
+            albedo_ptr = state.albedo + 3 * frame_idx * cfg.batchSize *
+                cfg.imgHeight * cfg.imgWidth;
+        }
+
         state.shaderBuffers[frame_idx] = {
             output_ptr,
+            normal_ptr,
+            albedo_ptr,
             env_ptr,
             launch_input_ptr,
             instance_ptr,
@@ -664,6 +689,14 @@ void OptixBackend::waitForFrame(uint32_t frame_idx)
 half *OptixBackend::getOutputPointer(uint32_t frame_idx)
 {
     return render_state_.shaderBuffers[frame_idx].outputBuffer;
+}
+
+AuxiliaryOutputs OptixBackend::getAuxiliaryOutputs(uint32_t frame_idx)
+{
+    return {
+        render_state_.shaderBuffers[frame_idx].normalBuffer,
+        render_state_.shaderBuffers[frame_idx].albedoBuffer,
+    };
 }
 
 }

@@ -19,6 +19,7 @@ struct RenderConfig {
     uint32_t maxTextureResolution;
     bool doubleBuffered;
     bool enablePhysics;
+    bool auxiliaryOutputs;
     BackendSelect backend;
 };
 

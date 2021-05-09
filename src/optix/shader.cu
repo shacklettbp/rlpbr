@@ -261,6 +261,40 @@ __forceinline__ void setOutput(uint32_t base_offset, float3 rgb,
     );
 }
 
+#ifdef AUXILIARY_OUTPUTS
+__forceinline__ void setAuxiliaries(uint32_t base_offset, float3 normal,
+                                    float3 albedo)
+{
+    uint16_t nx = __half_as_ushort(__float2half(normal.x));
+    uint16_t ny = __half_as_ushort(__float2half(normal.y));
+    uint16_t nz = __half_as_ushort(__float2half(normal.z));
+
+    uint16_t ax = __half_as_ushort(__float2half(albedo.x));
+    uint16_t ay = __half_as_ushort(__float2half(albedo.y));
+    uint16_t az = __half_as_ushort(__float2half(albedo.z));
+
+    asm ("{\n\t"
+         ".reg .u64 t1;\n\t"
+         ".reg .u64 t2;\n\t"
+         "mad.wide.u32 t1, %6, %7, %8;\n\t"
+         "mad.wide.u32 t2, %6, %7, %9;\n\t"
+         "st.global.u16 [t1], %0;\n\t"
+         "st.global.u16 [t1 + %7], %1;\n\t"
+         "st.global.u16 [t1 + 2 * %7], %2;\n\t"
+         "st.global.u16 [t2], %3;\n\t"
+         "st.global.u16 [t2 + %7], %4;\n\t"
+         "st.global.u16 [t2 + 2 * %7], %5;\n\t"
+         "}\n\t"
+         :
+         : "h" (nx), "h" (ny), "h" (nz),
+           "h" (ax), "h" (ay), "h" (az),
+           "r" (base_offset), "n" (sizeof(half)),
+           "n" (NORMAL_PTR), "n" (ALBEDO_PTR)
+         : "memory"
+    );
+}
+#endif
+
 __forceinline__ MeshInfo unpackMeshInfo(const PackedMeshInfo &packed)
 {
     return MeshInfo {
@@ -1779,6 +1813,9 @@ extern "C" __global__ void __raygen__rg()
     uint32_t base_out_offset = 
         4 * (batch_idx * dim.y * dim.x + idx.y * dim.x + idx.x);
 
+    uint32_t base_aux_offset = 
+        3 * (batch_idx * dim.y * dim.x + idx.y * dim.x + idx.x);
+
     const auto [cam, env] = unpackEnv(batch_idx);
     cudaTextureObject_t env_tex = env.textureHandles[0];
     
@@ -1839,6 +1876,11 @@ extern "C" __global__ void __raygen__rg()
                 if (path_depth == 0 ||
                     BSDFFlags(payload_2) & BSDFFlags::Delta) {
                     sample_radiance += evalEnvMap(env_tex, ray_dir) * path_prob;
+
+#ifdef AUXILIARY_OUTPUTS
+                    setAuxiliaries(base_aux_offset, make_float3(0.f),
+                                   make_float3(0.f));
+#endif
                 }
                 break;
             }
@@ -1885,6 +1927,23 @@ extern "C" __global__ void __raygen__rg()
 
             Material material = processMaterial(material_params, textures,
                 interpolated.uv, 0);
+
+#ifdef AUXILIARY_OUTPUTS
+            if (path_depth == 0) {
+                float3 view_normal = make_float3(
+                    dot(normalize(cam.right), world_tangent_frame.normal),
+                    dot(normalize(cam.up), world_tangent_frame.normal),
+                    dot(normalize(cam.view), world_tangent_frame.normal));
+
+                view_normal = normalize(view_normal);
+
+                float3 albedo = lerp(material.rho,
+                                     material.rhoSpecular * material.specularScale,
+                                     material.metallic);
+
+                setAuxiliaries(base_aux_offset, view_normal, albedo);
+            }
+#endif
 
             LightInfo light_info = sampleLights(sampler, env, env_tex,
                 world_position, world_geo_normal);
