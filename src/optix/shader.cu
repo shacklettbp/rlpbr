@@ -1822,6 +1822,11 @@ extern "C" __global__ void __raygen__rg()
     float3 pixel_radiance = make_float3(0.f);
     uint16_t instance_id = 0xFFFF;
 
+#ifdef AUXILIARY_OUTPUTS
+    float3 aux_normal = make_float3(0.f);
+    float3 aux_albedo = make_float3(0.f);
+#endif
+
 #if SPP != (1u)
 #pragma unroll 1
 #endif
@@ -1876,11 +1881,6 @@ extern "C" __global__ void __raygen__rg()
                 if (path_depth == 0 ||
                     BSDFFlags(payload_2) & BSDFFlags::Delta) {
                     sample_radiance += evalEnvMap(env_tex, ray_dir) * path_prob;
-
-#ifdef AUXILIARY_OUTPUTS
-                    setAuxiliaries(base_aux_offset, make_float3(0.f),
-                                   make_float3(0.f));
-#endif
                 }
                 break;
             }
@@ -1941,7 +1941,8 @@ extern "C" __global__ void __raygen__rg()
                                      material.rhoSpecular * material.specularScale,
                                      material.metallic);
 
-                setAuxiliaries(base_aux_offset, view_normal, albedo);
+                aux_normal = view_normal / SPP;
+                aux_albedo = albedo / SPP;
             }
 #endif
 
@@ -2005,6 +2006,10 @@ extern "C" __global__ void __raygen__rg()
     }
 
     setOutput(base_out_offset, pixel_radiance, instance_id);
+
+#ifdef AUXILIARY_OUTPUTS
+    setAuxiliaries(base_aux_offset, aux_normal, aux_albedo);
+#endif
 }
 
 extern "C" __global__ void __miss__ms()
