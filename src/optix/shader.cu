@@ -1933,7 +1933,7 @@ extern "C" __global__ void __raygen__rg()
                 float3 view_normal = make_float3(
                     dot(normalize(cam.right), world_tangent_frame.normal),
                     dot(normalize(cam.up) * -1.f, world_tangent_frame.normal),
-                    dot(normalize(cam.view), world_tangent_frame.normal));
+                    dot(normalize(cam.view) * -1.f, world_tangent_frame.normal));
 
                 view_normal = normalize(view_normal);
 
