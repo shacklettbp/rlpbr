@@ -113,6 +113,11 @@ half *Renderer::getOutputPointer(uint32_t frame_idx) const
     return backend_.getOutputPointer(frame_idx);
 }
 
+AuxiliaryOutputs Renderer::getAuxiliaryOutputs(uint32_t frame_idx) const
+{
+    return backend_.getAuxiliaryOutputs(frame_idx);
+}
+
 Environment::Environment(EnvironmentImpl &&backend,
                          const shared_ptr<Scene> &scene,
                          const Camera &cam)
