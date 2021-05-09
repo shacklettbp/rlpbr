@@ -1937,9 +1937,7 @@ extern "C" __global__ void __raygen__rg()
 
                 view_normal = normalize(view_normal);
 
-                float3 albedo = lerp(material.rho,
-                                     material.rhoSpecular * material.specularScale,
-                                     material.metallic);
+                float3 albedo = material.rho;
 
                 aux_normal += view_normal / SPP;
                 aux_albedo += albedo / SPP;
