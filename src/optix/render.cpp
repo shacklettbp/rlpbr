@@ -154,6 +154,12 @@ static Pipeline buildPipeline(OptixDeviceContext ctx, const RenderConfig &cfg,
         sampling_define = "-DZSOBOL_SAMPLING";
     }
 
+    float clamp_threshold = cfg.clampThreshold;
+    if (clamp_threshold == 0.f || clamp_threshold > 65504.f) {
+        clamp_threshold = 65504.f; // FP16 max
+    }
+
+
     vector extra_compile_options {
         string("-DSPP=(") + to_string(cfg.spp) + "u)",
         string("-DMAX_DEPTH=(") + to_string(cfg.maxDepth) + "u)",
@@ -164,6 +170,7 @@ static Pipeline buildPipeline(OptixDeviceContext ctx, const RenderConfig &cfg,
         string("-DENV_PTR=(") +
                to_string((uintptr_t)base_buffers.envs) + "ul)",
         move(sampling_define),
+        string("-DCLAMP_THRESHOLD=(") + to_string(clamp_threshold) + "f)",
     };
 
     if (cfg.auxiliaryOutputs) {

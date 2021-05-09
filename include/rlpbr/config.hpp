@@ -20,6 +20,7 @@ struct RenderConfig {
     bool doubleBuffered;
     bool enablePhysics;
     bool auxiliaryOutputs;
+    float clampThreshold;
     BackendSelect backend;
 };
 

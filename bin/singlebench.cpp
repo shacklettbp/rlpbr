@@ -56,7 +56,7 @@ int main(int argc, char *argv[]) {
     cout << "Loaded " << views.size() << " views" << endl;
 
     Renderer renderer({0, 1, batch_size, res, res, spp, path_depth, 1, false,
-        false, false, BackendSelect::Optix});
+        false, false, 0.f, BackendSelect::Optix});
 
     auto loader = renderer.makeLoader();
     auto scene = loader.loadScene(argv[1]);
