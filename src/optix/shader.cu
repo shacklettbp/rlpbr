@@ -1941,8 +1941,8 @@ extern "C" __global__ void __raygen__rg()
                                      material.rhoSpecular * material.specularScale,
                                      material.metallic);
 
-                aux_normal = view_normal / SPP;
-                aux_albedo = albedo / SPP;
+                aux_normal += view_normal / SPP;
+                aux_albedo += albedo / SPP;
             }
 #endif
 
