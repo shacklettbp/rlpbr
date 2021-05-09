@@ -241,7 +241,9 @@ __forceinline__ pair<Camera, Environment> unpackEnv(uint32_t batch_idx)
 __forceinline__ void setOutput(uint32_t base_offset, float3 rgb,
                                uint16_t instance_id)
 {
-    rgb = fminf(rgb, make_float3(CLAMP_THRESHOLD));
+    // FP16 cannot represent numbers over this, and get converted
+    // to infinity, clamp instead
+    rgb = fminf(rgb, make_float3(65504.f));
 
     uint16_t r = __half_as_ushort(__float2half(rgb.x));
     uint16_t g = __half_as_ushort(__float2half(rgb.y));
@@ -1994,7 +1996,13 @@ extern "C" __global__ void __raygen__rg()
             bool unoccluded = payload_1 == ~0u;
 
             if (unoccluded && !payload_0) {
-                sample_radiance += path_prob * color;
+                float3 contrib = path_prob * color;
+#ifdef INDIRECT_CLAMP
+                if (path_depth > 0) {
+                    contrib = fminf(contrib, make_float3(INDIRECT_CLAMP));
+                }
+#endif
+                sample_radiance += contrib;
             }
         }
 
