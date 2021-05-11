@@ -139,8 +139,8 @@ public:
     inline uint32_t getNumInstances() const;
 
     inline bool isDirty() const;
-    inline void setDirty();
-    inline void clearDirty();
+    inline void setDirty() const;
+    inline void clearDirty() const;
 
     // Reset environment to default instances / materials
     void reset();
@@ -168,7 +168,7 @@ private:
     std::vector<uint32_t> light_ids_;
     std::vector<uint32_t> light_reverse_ids_;
 
-    bool dirty_;
+    mutable bool dirty_;
 };
 
 inline InstanceFlags & operator|=(InstanceFlags &a, InstanceFlags b)

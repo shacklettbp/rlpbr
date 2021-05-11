@@ -124,6 +124,7 @@ uint32_t Environment::addInstance(uint32_t obj_idx,
                                   bool dynamic,
                                   bool kinematic)
 {
+    setDirty();
     // FIXME
     (void)dynamic;
     (void)kinematic;
@@ -261,12 +262,12 @@ bool Environment::isDirty() const
     return dirty_;
 }
 
-void Environment::setDirty()
+void Environment::setDirty() const
 {
     dirty_ = true;
 }
 
-void Environment::clearDirty()
+void Environment::clearDirty() const
 {
     dirty_ = false;
 }

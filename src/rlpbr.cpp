@@ -134,7 +134,7 @@ Environment::Environment(EnvironmentImpl &&backend,
       free_light_ids_(),
       light_ids_(scene_->envInit.lightIDs),
       light_reverse_ids_(scene_->envInit.lightReverseIDs),
-      dirty_(false)
+      dirty_(true)
 {
     // FIXME use EnvironmentInit lights
 }
@@ -187,6 +187,8 @@ void Environment::reset()
     free_light_ids_.clear();
     light_ids_ = scene_->envInit.lightIDs;
     light_reverse_ids_ = scene_->envInit.lightReverseIDs;
+
+    setDirty();
 }
 
 void Environment::deleteInstance(uint32_t inst_id)
