@@ -36,9 +36,10 @@ static const uint32_t generatorMatrix[maxDims * matrixSize] = {
 inline uint32_t sample(uint32_t sobol_idx, uint32_t dim)
 {
     uint32_t v = 0;
-    for (int mat_idx = dim * matrixSize; sobol_idx != 0;
+    const uint32_t base_offset = dim * matrixSize;
+    for (int mat_idx = 0; mat_idx < matrixSize;
          sobol_idx >>= 1, mat_idx++) {
-        if (sobol_idx & 1) v ^= generatorMatrix[mat_idx];
+        if (sobol_idx & 1) v ^= generatorMatrix[base_offset + mat_idx];
     }
 
     return v;
