@@ -40,7 +40,7 @@ public:
         uint32_t hash_seed = mix32(dim_ ^ seed_);
         dim_++;
 
-        return sample(idx, 0, hash_seed);
+        return sample<0>(idx, hash_seed);
     }
 
     inline float2 get2D()
@@ -49,15 +49,15 @@ public:
         uint2 hash_seed = mix32x2(dim_ ^ seed_);
         dim_ += 2;
 
-        return make_float2(sample(idx, 0, hash_seed.x),
-                           sample(idx, 1, hash_seed.y));
+        return make_float2(sample<0>(idx, hash_seed.x),
+                           sample<1>(idx, hash_seed.y));
     }
 
 private:
-    __forceinline__ float sample(uint32_t idx, uint32_t dim,
-                                 uint32_t hash_seed) const
+    template <int sobol_dim>
+    __forceinline__ float sample(uint32_t idx, uint32_t hash_seed) const
     {
-        return finalizeSobol(sobol::sample(idx, dim), hash_seed);
+        return finalizeSobol(sobol::sample<sobol_dim>(idx), hash_seed);
     }
 
     __forceinline__ uint32_t hashMortonPrefix(uint32_t idx) const
