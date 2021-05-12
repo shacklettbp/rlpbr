@@ -143,6 +143,8 @@ static Pipeline buildPipeline(OptixDeviceContext ctx, const RenderConfig &cfg,
     pipeline_compile_options.numAttributeValues = 2;
     pipeline_compile_options.numPayloadValues = 3;
     pipeline_compile_options.pipelineLaunchParamsVariableName = "launchInput";
+    pipeline_compile_options.usesPrimitiveTypeFlags =
+        OPTIX_PRIMITIVE_TYPE_FLAGS_TRIANGLE;
 
     string sampling_define;
     if (uint64_t(cfg.spp) * uint64_t(cfg.imgWidth) * uint64_t(cfg.imgHeight) >

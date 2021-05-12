@@ -882,11 +882,11 @@ __forceinline__ SampleResult<float3> sampleDiffuse(
 // Single scattering GGX Microfacet BRDF
 __forceinline__ float ggxLambda(float cos_theta, float a2)
 {
-    if (cos_theta <= 0.f) return 0.f;
-
     float cos2 = cos_theta * cos_theta;
     float tan2 = max(1.f - cos2, 0.f) / cos2;
-    return 0.5f * (-1.f + sqrt(1.f + a2 * tan2));
+    float l = 0.5f * (-1.f + sqrtf(1.f + a2 * tan2));
+
+    return cos_theta <= 0.f ? 0.f : l;
 }
 
 __forceinline__ float ggxNDF(float alpha, float cos_theta)
@@ -1005,15 +1005,15 @@ __forceinline__ SampleResult<T> sampleMicrofacet(
         float cos_half_out = dot(wo, h);
         wi = 2.f * cos_half_out * h - wo;
 
+        float a2 = alpha * alpha;
+
+        float G = ggxMasking(a2, wo.z, wi.z);
+        float GG1_out = G * (1.f + ggxLambda(wo.z, a2));
+        T F = computeFresnel(F0, F90, cos_half_out);
+
         if (wi.z < 1e-6f) {
             weight = makeZeroVec<T>();
         } else {
-            float a2 = alpha * alpha;
-
-            float G = ggxMasking(a2, wo.z, wi.z);
-            float GG1_out = G * (1.f + ggxLambda(wo.z, a2));
-            T F = computeFresnel(F0, F90, cos_half_out);
-
             if constexpr (transmission) {
                 weight = (1.f - F) * GG1_out;
             } else {
