@@ -108,10 +108,10 @@ static vector<uint32_t> compileToSPV(const DynArray<char> &src,
     }
     shader.setPreamble(preamble.c_str());
 
-    int vk_semantic_version = 110;
+    int vk_semantic_version = 100;
     glslang::EshTargetClientVersion vk_client_version =
-        glslang::EShTargetVulkan_1_1;
-    glslang::EShTargetLanguageVersion spv_version = glslang::EShTargetSpv_1_4;
+        glslang::EShTargetVulkan_1_2;
+    glslang::EShTargetLanguageVersion spv_version = glslang::EShTargetSpv_1_5;
 
     shader.setEnvInput(glslang::EShSourceGlsl, stage, glslang::EShClientVulkan,
                        vk_semantic_version);
@@ -134,16 +134,8 @@ static vector<uint32_t> compileToSPV(const DynArray<char> &src,
         fatalExit();
     };
 
-    string preprocessed;
-    if (!shader.preprocess(&resource_limits, 110, ENoProfile, false, false,
-                           desired_msgs, &preprocessed, preprocess_includer)) {
-        handleError("Preprocessing failed");
-    }
-
-    src_ptr = preprocessed.data();
-    shader.setStrings(&src_ptr, 1);
-
-    if (!shader.parse(&resource_limits, 110, false, desired_msgs)) {
+    if (!shader.parse(&resource_limits, 110, false, desired_msgs,
+                      preprocess_includer)) {
         handleError("Parsing failed");
     }
 
