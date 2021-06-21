@@ -60,13 +60,23 @@ static VkInstance createInstance(bool enable_validation,
     vector<const char *> layers;
     vector<const char *> extensions(extra_exts);
 
+    VkValidationFeatureEnableEXT debug_printf_flag;
+    VkValidationFeaturesEXT val_features {};
+    val_features.sType = VK_STRUCTURE_TYPE_VALIDATION_FEATURES_EXT;
+
     if (enable_validation) {
         layers.push_back("VK_LAYER_KHRONOS_validation");
         extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+        extensions.push_back(VK_EXT_VALIDATION_FEATURES_EXTENSION_NAME);
+
+        debug_printf_flag = VK_VALIDATION_FEATURE_ENABLE_DEBUG_PRINTF_EXT;
+        val_features.enabledValidationFeatureCount = 1;
+        val_features.pEnabledValidationFeatures = &debug_printf_flag;
     }
 
     VkInstanceCreateInfo inst_info {};
     inst_info.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
+    inst_info.pNext = &val_features;
     inst_info.pApplicationInfo = &app_info;
 
     if (layers.size() > 0) {
@@ -195,6 +205,10 @@ DeviceState InstanceState::makeDevice(
 
     if (need_present) {
         extensions.push_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
+    }
+
+    if (debug_ != VK_NULL_HANDLE) {
+        extensions.push_back(VK_KHR_SHADER_NON_SEMANTIC_INFO_EXTENSION_NAME);
     }
 
     VkPhysicalDevice phy = findPhysicalDevice(uuid);

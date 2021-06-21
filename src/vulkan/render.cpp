@@ -194,6 +194,10 @@ static RenderState makeRenderState(const DeviceState &dev,
         string("ZSOBOL_INDEX_SHIFT (") + to_string(index_shift) + "u)",
     };
 
+    if (backend_cfg.validate) {
+        shader_defines.push_back("VALIDATE");
+    }
+
     if (is_odd_power2) {
         shader_defines.push_back("ZSOBOL_ODD_POWER");
     }

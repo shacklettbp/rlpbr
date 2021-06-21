@@ -12,6 +12,10 @@
 #extension GL_EXT_shader_16bit_storage : require
 #extension GL_EXT_shader_8bit_storage : require
 
+#ifdef VALIDATE 
+#extension GL_EXT_debug_printf : enable
+#endif
+
 // GLSL wants this for uint64_t -> accel struct conversion
 #extension GL_EXT_ray_tracing : require
 
@@ -32,6 +36,7 @@
 #include "shader_common.h"
 #include "sampler.h"
 
+// Packed Structs
 struct PackedVertex {
     vec4 data[2];
 };
@@ -1647,6 +1652,10 @@ void setOutput(uint32_t base_offset, vec3 rgb, uint32_t instance_id)
 void main()
 {
     u32vec3 idx = gl_GlobalInvocationID.xyz;
+
+    if (idx.x == 0 && idx.y == 0 && idx.z == 0) {
+        debugPrintfEXT("HI");
+    }
 
     if (idx.x >= RES_X || idx.y >= RES_Y || idx.z >= BATCH_SIZE) {
         return;
