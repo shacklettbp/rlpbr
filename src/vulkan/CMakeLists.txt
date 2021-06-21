@@ -57,7 +57,7 @@ add_library(rlpbr_vulkan SHARED
     memory.hpp memory.cpp
     render.hpp render.cpp
     scene.hpp scene.cpp
-    shader.hpp shader.cpp shader.inl
+    shader.hpp shader.cpp
     utils.hpp utils.cpp utils.inl
     linux_hacks.cpp
 )

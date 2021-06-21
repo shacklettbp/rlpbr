@@ -7,6 +7,7 @@
 #include <rlpbr_core/utils.hpp>
 
 #include "core.hpp"
+#include "shader.hpp"
 
 namespace RLpbr {
 namespace vk {
@@ -60,6 +61,11 @@ inline VkDescriptorSet makeDescriptorSet(const DeviceState &dev,
                                          VkDescriptorSetLayout layout);
 
 inline VkDeviceSize alignOffset(VkDeviceSize offset, VkDeviceSize alignment);
+
+template <typename T>
+inline T divideRoundUp(T a, T b);
+
+inline uint32_t getWorkgroupSize(uint32_t num_items);
 
 void printVkError(VkResult res, const char *msg);
 

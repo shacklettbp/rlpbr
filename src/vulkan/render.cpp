@@ -793,6 +793,15 @@ static DynArray<QueueState> initComputeQueues(const DeviceState &dev)
     return queues;
 }
 
+static glm::u32vec3 getLaunchSize(const RenderConfig &cfg)
+{
+    return {
+        divideRoundUp(cfg.imgWidth, VulkanConfig::localWorkgroupX),
+        divideRoundUp(cfg.imgHeight, VulkanConfig::localWorkgroupY),
+        divideRoundUp(cfg.batchSize, VulkanConfig::localWorkgroupZ),
+    };
+}
+
 VulkanBackend::VulkanBackend(const RenderConfig &cfg, bool validate)
     : VulkanBackend(cfg, getBackendConfig(cfg, validate))
 {}
@@ -823,6 +832,7 @@ VulkanBackend::VulkanBackend(const RenderConfig &cfg,
       cmd_pool_(makeCmdPool(dev, dev.computeQF)),
       bsdf_precomp_(loadPrecomputedTextures(dev, alloc, compute_queues_[0],
                     dev.computeQF)),
+      launch_size_(getLaunchSize(cfg)),
       num_loaders_(0),
       max_loaders_(cfg.numLoaders),
       max_texture_resolution_(cfg.maxTextureResolution == 0 ? ~0u :
@@ -984,9 +994,9 @@ uint32_t VulkanBackend::render(const Environment *envs)
 
     dev.dt.cmdDispatch(
         render_cmd,
-        getWorkgroupSize(fb_cfg_.imgWidth),
-        getWorkgroupSize(fb_cfg_.imgHeight),
-        getWorkgroupSize(batch_size_));
+        launch_size_.x,
+        launch_size_.y,
+        launch_size_.z);
 
     REQ_VK(dev.dt.endCommandBuffer(render_cmd));
 
@@ -1006,7 +1016,7 @@ uint32_t VulkanBackend::render(const Environment *envs)
         nullptr,
     };
 
-    compute_queues_[0].submit(dev, 1, &render_submit, batch_state.fence);
+    compute_queues_[cur_batch_].submit(dev, 1, &render_submit, batch_state.fence);
 
     frame_counter_ += batch_size_;
 

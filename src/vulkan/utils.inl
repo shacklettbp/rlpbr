@@ -22,10 +22,7 @@ void QueueState::submit(const DeviceState &dev,
 
     if (shared_) {
         mutex_.unlock();
-    }
-}
-
-void QueueState::bindSubmit(const DeviceState &dev,
+    } } void QueueState::bindSubmit(const DeviceState &dev,
                             uint32_t submit_count,
                             const VkBindSparseInfo *pSubmits,
                             VkFence fence) const
@@ -183,9 +180,22 @@ VkDescriptorSet makeDescriptorSet(const DeviceState &dev,
     return desc_set;
 }
 
+template <typename T>
+T divideRoundUp(T a, T b)
+{
+    static_assert(std::is_integral_v<T>);
+
+    return (a + (b - 1)) / b;
+}
+
 VkDeviceSize alignOffset(VkDeviceSize offset, VkDeviceSize alignment)
 {
-    return ((offset + alignment - 1) / alignment) * alignment;
+    return divideRoundUp(offset, alignment) * alignment;
+}
+
+uint32_t getWorkgroupSize(uint32_t num_items)
+{
+    return divideRoundUp(num_items, VulkanConfig::compute_workgroup_size);
 }
 
 }

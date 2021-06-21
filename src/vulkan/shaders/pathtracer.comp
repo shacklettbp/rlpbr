@@ -11,6 +11,11 @@
 #extension GL_EXT_shader_explicit_arithmetic_types_float16 : require
 #extension GL_EXT_shader_16bit_storage : require
 #extension GL_EXT_shader_8bit_storage : require
+#extension GL_EXT_control_flow_attributes : require
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_KHR_shader_subgroup_vote : require
+#extension GL_KHR_shader_subgroup_ballot : require
+#extension GL_KHR_shader_subgroup_arithmetic : require
 
 #ifdef VALIDATE 
 #extension GL_EXT_debug_printf : enable
@@ -110,6 +115,12 @@ layout (set = 1, binding = 3) readonly buffer MatParams {
 layout (set = 1, binding = 4) readonly buffer MeshInfos {
     PackedMeshInfo meshInfos[];
 };
+
+// Debug functions
+
+#define ISTHREAD0 (gl_GlobalInvocationID.x == 0 && \
+                   gl_GlobalInvocationID.y == 0 && \
+                   gl_GlobalInvocationID.z == 0)
 
 // Unpacked struct definitions
 
@@ -1639,24 +1650,28 @@ LightInfo sampleLights(inout Sampler rng, in Environment env,
 
 void setOutput(uint32_t base_offset, vec3 rgb, uint32_t instance_id)
 {
+    if (ISTHREAD0) {
+        debugPrintfEXT("%f %f %f\n", rgb.x, rgb.y, rgb.z);
+    }
+
+    rgb = vec3(gl_GlobalInvocationID) / vec3(RES_X, RES_Y, 1);
+
     uint32_t ab = packHalf2x16(rgb.xy);
     uint32_t cd = packHalf2x16(vec2(rgb.z, 0));
-    cd |= (instance_id & 0xFFFF);
+    cd |= (instance_id << 16);
 
-    outputBuffer[base_offset * 4] = ab;
-    outputBuffer[base_offset * 4 + 2] = cd;
+    outputBuffer[base_offset] = ab;
+    outputBuffer[base_offset + 1] = cd;
 }
 
 // Entry point
 
+layout (local_size_x = LOCAL_WORKGROUP_X,
+        local_size_y = LOCAL_WORKGROUP_Y,
+        local_size_z = LOCAL_WORKGROUP_Z) in;
 void main()
 {
     u32vec3 idx = gl_GlobalInvocationID.xyz;
-
-    if (idx.x == 0 && idx.y == 0 && idx.z == 0) {
-        debugPrintfEXT("HIH\n");
-        debugPrintfEXT("HIH2\n");
-    }
 
     if (idx.x >= RES_X || idx.y >= RES_Y || idx.z >= BATCH_SIZE) {
         return;
@@ -1666,9 +1681,10 @@ void main()
     uint32_t batch_idx = idx.z;
 
     uint32_t base_out_offset = 
-        4 * (batch_idx * RES_Y * RES_X + idx.y * RES_X + idx.x);
+        2 * (batch_idx * RES_Y * RES_X + idx.y * RES_X + idx.x);
 
 #ifdef AUXILIARY_OUTPUTS
+    // FIXME 
     uint32_t base_aux_offset = 
         3 * (batch_idx * RES_Y * RES_X + idx.y * RES_X + idx.x);
 #endif
@@ -1686,7 +1702,7 @@ void main()
 #endif
 
 #ifdef ONE_SAMPLE
-#pragma optionNV(unroll none)
+    [[dont_unroll]]
 #endif
     for (int32_t sample_idx = 0; sample_idx < SPP; sample_idx++) {
         Sampler rng = makeSampler(idx.x, idx.y, sample_idx,
@@ -1702,7 +1718,7 @@ void main()
         uint32_t bounce_flags = 0;
 
 #ifdef PRIMARY_ONLY
-#pragma optionNV(unroll none)
+        [[dont_unroll]]
 #endif
         for (int32_t path_depth = 0; path_depth < MAX_DEPTH;
              path_depth++) {

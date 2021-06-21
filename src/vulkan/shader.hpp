@@ -30,6 +30,9 @@ constexpr uint32_t textures_per_material = 8;
 constexpr uint32_t max_lights = MAX_LIGHTS;
 constexpr uint32_t max_instances = 10000000;
 constexpr uint32_t compute_workgroup_size = WORKGROUP_SIZE;
+constexpr uint32_t localWorkgroupX = LOCAL_WORKGROUP_X;
+constexpr uint32_t localWorkgroupY = LOCAL_WORKGROUP_Y;
+constexpr uint32_t localWorkgroupZ = LOCAL_WORKGROUP_Z;
 
 }
 
@@ -72,9 +75,5 @@ private:
     std::vector<std::vector<VkDescriptorPoolSize>> base_pool_sizes_;
 };
 
-inline uint32_t getWorkgroupSize(uint32_t num_items);
-
 }
 }
-
-#include "shader.inl"

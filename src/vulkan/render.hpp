@@ -163,6 +163,7 @@ private:
     VkCommandPool cmd_pool_;
 
     BSDFPrecomputed bsdf_precomp_;
+    glm::u32vec3 launch_size_;
 
     std::atomic_int num_loaders_;
     int max_loaders_;

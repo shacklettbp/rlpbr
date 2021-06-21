@@ -28,5 +28,8 @@ struct PackedInstance {
 #define MAX_MATERIALS (1000)
 #define MAX_LIGHTS (100000)
 #define WORKGROUP_SIZE (32)
+#define LOCAL_WORKGROUP_X (8)
+#define LOCAL_WORKGROUP_Y (4)
+#define LOCAL_WORKGROUP_Z (1)
 
 #endif
