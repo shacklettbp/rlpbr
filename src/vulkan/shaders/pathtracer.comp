@@ -788,7 +788,7 @@ Material processMaterial(MaterialParams params,
     mat.transparencyMask = 1.f;
     if (bool(params.flags & MaterialFlagsHasBaseTexture)) {
         vec4 tex_value = textureLod(sampler2D(
-            textures[base_tex_idx + TextureConstantsBaseOffset],
+            textures[nonuniformEXT(base_tex_idx + TextureConstantsBaseOffset)],
             textureSampler), uv, mip_level);
 
         mat.rho.x *= tex_value.x;
@@ -801,7 +801,7 @@ Material processMaterial(MaterialParams params,
     mat.roughness = params.baseRoughness;
     if (bool(params.flags & MaterialFlagsHasMRTexture)) {
         vec2 tex_value = textureLod(sampler2D(
-            textures[base_tex_idx + TextureConstantsMROffset],
+            textures[nonuniformEXT(base_tex_idx + TextureConstantsMROffset)],
             textureSampler), uv, mip_level).xy;
 
         mat.roughness *= tex_value.x;
@@ -812,7 +812,8 @@ Material processMaterial(MaterialParams params,
     mat.specularScale = params.specularScale;
     if (bool(params.flags & MaterialFlagsHasSpecularTexture)) {
         vec4 tex_value = textureLod(sampler2D(
-            textures[base_tex_idx + TextureConstantsSpecularOffset],
+            textures[nonuniformEXT(base_tex_idx +
+                                   TextureConstantsSpecularOffset)],
             textureSampler), uv, mip_level);
 
         mat.rhoSpecular.x *= tex_value.x;
@@ -824,7 +825,8 @@ Material processMaterial(MaterialParams params,
     mat.transmission = params.baseTransmission;
     if (bool(params.flags & MaterialFlagsHasTransmissionTexture)) {
         float tex_value = textureLod(sampler2D(
-            textures[base_tex_idx + TextureConstantsTransmissionOffset],
+            textures[nonuniformEXT(base_tex_idx +
+                                   TextureConstantsTransmissionOffset)],
             textureSampler), uv, mip_level).x;
 
         mat.transmission *= tex_value;
@@ -835,7 +837,8 @@ Material processMaterial(MaterialParams params,
     mat.emittance = params.baseEmittance;
     if (bool(params.flags & MaterialFlagsHasEmittanceTexture)) {
         vec3 tex_value = textureLod(sampler2D(
-            textures[base_tex_idx + TextureConstantsEmittanceOffset],
+            textures[nonuniformEXT(base_tex_idx +
+                                   TextureConstantsEmittanceOffset)],
             textureSampler), uv, mip_level).xyz;
 
         mat.emittance.x *= tex_value.x;
@@ -847,7 +850,8 @@ Material processMaterial(MaterialParams params,
     mat.clearcoatRoughness = params.clearcoatRoughness;
     if (bool(params.flags & MaterialFlagsHasClearcoatTexture)) {
         vec2 tex_value = textureLod(sampler2D(
-            textures[base_tex_idx + TextureConstantsClearcoatOffset],
+            textures[nonuniformEXT(base_tex_idx +
+                                   TextureConstantsClearcoatOffset)],
             textureSampler), uv, mip_level).xy;
 
         mat.clearcoatScale *= tex_value.x;
@@ -858,7 +862,8 @@ Material processMaterial(MaterialParams params,
     mat.anisoRotation = params.anisoRotation;
     if (bool(params.flags & MaterialFlagsHasAnisotropicTexture)) {
         vec2 tex_value = textureLod(sampler2D(
-            textures[base_tex_idx + TextureConstantsAnisoOffset],
+            textures[nonuniformEXT(base_tex_idx +
+                                   TextureConstantsAnisoOffset)],
             textureSampler), uv, mip_level).xy;
 
         vec2 aniso_v = tex_value * 2.f - 1.f;
@@ -1659,8 +1664,8 @@ void setOutput(uint32_t base_offset, vec3 rgb, uint32_t instance_id)
     uint32_t cd = packHalf2x16(vec2(rgb.z, 0));
     cd |= (instance_id << 16);
 
-    outputBuffer[base_offset] = ab;
-    outputBuffer[base_offset + 1] = cd;
+    outputBuffer[nonuniformEXT(base_offset)] = ab;
+    outputBuffer[nonuniformEXT(base_offset + 1)] = cd;
 }
 
 // Entry point
