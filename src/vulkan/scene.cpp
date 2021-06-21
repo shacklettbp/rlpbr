@@ -1075,7 +1075,7 @@ shared_ptr<Scene> VulkanLoader::loadScene(SceneLoadData &&load_info)
     desc_updates.storage(scene_set.hdl, &index_buffer_info, 1);
 
     vector<VkDescriptorImageInfo> descriptor_views;
-    descriptor_views.reserve(load_info.hdr.numMaterials * 8);
+    descriptor_views.reserve(load_info.hdr.numMaterials * 8 + 1);
 
     for (int mat_idx = 0; mat_idx < (int)load_info.hdr.numMaterials;
          mat_idx++) {
@@ -1100,6 +1100,20 @@ shared_ptr<Scene> VulkanLoader::loadScene(SceneLoadData &&load_info)
             }
         };
 
+        if (staged_textures->envMap.has_value()) {
+            descriptor_views.push_back({
+                VK_NULL_HANDLE,
+                texture_views[staged_textures->envMap.value()],
+                VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+            });
+        } else {
+            descriptor_views.push_back({
+                VK_NULL_HANDLE,
+                VK_NULL_HANDLE,
+                VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+            });
+        }
+
         appendDescriptor(tex_indices.baseColorIdx, staged_textures->base);
         appendDescriptor(tex_indices.metallicRoughnessIdx,
                          staged_textures->metallicRoughness);
@@ -1117,7 +1131,7 @@ shared_ptr<Scene> VulkanLoader::loadScene(SceneLoadData &&load_info)
     if (load_info.hdr.numMaterials > 0) {
         assert(load_info.hdr.numMaterials < VulkanConfig::max_materials);
         desc_updates.textures(scene_set.hdl, descriptor_views.data(),
-                              load_info.hdr.numMaterials * 8, 2);
+                              descriptor_views.size(), 2);
 
         material_buffer_info.buffer = data.buffer;
         material_buffer_info.offset = load_info.hdr.materialOffset;

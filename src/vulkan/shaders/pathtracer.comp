@@ -1492,6 +1492,10 @@ vec3 evalEnvMap(uint32_t map_idx, vec3 dir)
     vec3 v =
         textureLod(sampler2D(textures[map_idx], textureSampler), uv, 0.0).xyz;
 
+    if (ISTHREAD0) {
+        debugPrintfEXT("%u (%f %f) (%f %f %f)\n", map_idx, uv.x, uv.y, v.x, v.y, v.z);
+    }
+
     v *= 90.f;
 
     return v;
@@ -1651,12 +1655,6 @@ LightInfo sampleLights(inout Sampler rng, in Environment env,
 
 void setOutput(uint32_t base_offset, vec3 rgb, uint32_t instance_id)
 {
-    if (ISTHREAD0) {
-        debugPrintfEXT("%f %f %f\n", rgb.x, rgb.y, rgb.z);
-    }
-
-    rgb = vec3(gl_GlobalInvocationID) / vec3(RES_X, RES_Y, 1);
-
     uint32_t ab = packHalf2x16(rgb.xy);
     uint32_t cd = packHalf2x16(vec2(rgb.z, 0));
     cd |= (instance_id << 16);
