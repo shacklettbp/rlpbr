@@ -97,6 +97,7 @@ struct PipelineState {
 
 struct PerBatchState {
     VkFence fence;
+    VkCommandPool cmdPool;
     VkCommandBuffer renderCmd;
 
     half *outputBuffer;
@@ -159,8 +160,6 @@ private:
     DynArray<QueueState> compute_queues_;
 
     HostBuffer render_input_buffer_;
-
-    VkCommandPool cmd_pool_;
 
     BSDFPrecomputed bsdf_precomp_;
     glm::u32vec3 launch_size_;

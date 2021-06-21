@@ -60,7 +60,6 @@ VkCommandPool makeCmdPool(const DeviceState &dev, uint32_t qf_idx)
     VkCommandPoolCreateInfo pool_info = {};
     pool_info.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
     pool_info.queueFamilyIndex = qf_idx;
-    pool_info.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
 
     VkCommandPool pool;
     REQ_VK(dev.dt.createCommandPool(dev.hdl, &pool_info, nullptr, &pool));

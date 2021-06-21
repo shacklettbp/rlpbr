@@ -364,13 +364,13 @@ static PerBatchState makePerBatchState(const DeviceState &dev,
                                        const FramebufferConfig &fb_cfg,
                                        const FramebufferState &fb,
                                        const ParamBufferConfig &param_cfg,
-                                       VkCommandPool cmd_pool,
                                        HostBuffer &param_buffer,
                                        VkDescriptorSet rt_set,
                                        const BSDFPrecomputed &precomp_tex,
                                        bool auxiliary_outputs,
                                        uint32_t global_batch_idx)
 {
+    VkCommandPool cmd_pool = makeCmdPool(dev, dev.computeQF);
     VkCommandBuffer render_cmd = makeCmdBuffer(dev, cmd_pool);
 
     VkDeviceSize output_buffer_offset =
@@ -525,6 +525,7 @@ static PerBatchState makePerBatchState(const DeviceState &dev,
 
     return PerBatchState {
         makeFence(dev),
+        cmd_pool,
         render_cmd,
         output_buffer,
         normal_buffer,
@@ -829,7 +830,6 @@ VulkanBackend::VulkanBackend(const RenderConfig &cfg,
       compute_queues_(initComputeQueues(dev)),
       render_input_buffer_(alloc.makeParamBuffer(param_cfg_.totalParamBytes *
                                                  backend_cfg.numBatches)),
-      cmd_pool_(makeCmdPool(dev, dev.computeQF)),
       bsdf_precomp_(loadPrecomputedTextures(dev, alloc, compute_queues_[0],
                     dev.computeQF)),
       launch_size_(getLaunchSize(cfg)),
@@ -845,7 +845,7 @@ VulkanBackend::VulkanBackend(const RenderConfig &cfg,
     batch_states_.reserve(backend_cfg.numBatches);
     for (int i = 0; i < (int)backend_cfg.numBatches; i++) {
         batch_states_.emplace_back(makePerBatchState(
-            dev, fb_cfg_, fb_, param_cfg_, cmd_pool_,
+            dev, fb_cfg_, fb_, param_cfg_,
             render_input_buffer_, render_state_.rtPool.makeSet(),
             bsdf_precomp_, cfg.auxiliaryOutputs, i));
     }
@@ -892,8 +892,9 @@ uint32_t VulkanBackend::render(const Environment *envs)
 {
     PerBatchState &batch_state = batch_states_[cur_batch_];
 
-    VkCommandBuffer render_cmd = batch_state.renderCmd;
+    REQ_VK(dev.dt.resetCommandPool(dev.hdl, batch_state.cmdPool, 0));
 
+    VkCommandBuffer render_cmd = batch_state.renderCmd;
     VkCommandBufferBeginInfo begin_info {};
     begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     REQ_VK(dev.dt.beginCommandBuffer(render_cmd, &begin_info));

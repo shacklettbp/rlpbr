@@ -60,7 +60,7 @@ static VkInstance createInstance(bool enable_validation,
     vector<const char *> layers;
     vector<const char *> extensions(extra_exts);
 
-    VkValidationFeatureEnableEXT debug_printf_flag;
+    vector<VkValidationFeatureEnableEXT> val_enabled;
     VkValidationFeaturesEXT val_features {};
     val_features.sType = VK_STRUCTURE_TYPE_VALIDATION_FEATURES_EXT;
 
@@ -69,9 +69,24 @@ static VkInstance createInstance(bool enable_validation,
         extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
         extensions.push_back(VK_EXT_VALIDATION_FEATURES_EXTENSION_NAME);
 
-        debug_printf_flag = VK_VALIDATION_FEATURE_ENABLE_DEBUG_PRINTF_EXT;
-        val_features.enabledValidationFeatureCount = 1;
-        val_features.pEnabledValidationFeatures = &debug_printf_flag;
+        val_enabled.push_back(
+            VK_VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT);
+
+        char *best_practices = getenv("VK_BEST_VALIDATE");
+        if (best_practices && best_practices[0] == '1') {
+            val_enabled.push_back(VK_VALIDATION_FEATURE_ENABLE_BEST_PRACTICES_EXT);
+        }
+
+        char *gpu_debug_test = getenv("VK_GPU_VALIDATE");
+        if (gpu_debug_test && gpu_debug_test[0] == '1') {
+            val_enabled.push_back(VK_VALIDATION_FEATURE_ENABLE_GPU_ASSISTED_EXT);
+        } else {
+            val_enabled.push_back(VK_VALIDATION_FEATURE_ENABLE_DEBUG_PRINTF_EXT);
+            setenv("DEBUG_PRINTF_TO_STDOUT", "1", 1);
+        }
+
+        val_features.enabledValidationFeatureCount = val_enabled.size();
+        val_features.pEnabledValidationFeatures = val_enabled.data();
     }
 
     VkInstanceCreateInfo inst_info {};

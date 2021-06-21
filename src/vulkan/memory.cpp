@@ -101,9 +101,8 @@ void AllocDeleter<host_mapped>::operator()(VkBuffer buffer) const
         dev.dt.unmapMemory(dev.hdl, mem_);
     }
 
-    dev.dt.freeMemory(dev.hdl, mem_, nullptr);
-
     dev.dt.destroyBuffer(dev.hdl, buffer, nullptr);
+    dev.dt.freeMemory(dev.hdl, mem_, nullptr);
 }
 
 template <>
@@ -113,8 +112,9 @@ void AllocDeleter<false>::operator()(VkImage image) const
 
     const DeviceState &dev = alloc_->dev;
 
-    dev.dt.freeMemory(dev.hdl, mem_, nullptr);
     dev.dt.destroyImage(dev.hdl, image, nullptr);
+
+    dev.dt.freeMemory(dev.hdl, mem_, nullptr);
 }
 
 template <bool host_mapped>
@@ -272,6 +272,8 @@ static pair<VkBuffer, VkMemoryRequirements> makeUnboundBuffer(
     buffer_info.size = num_bytes;
     buffer_info.usage = usage;
     buffer_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    buffer_info.pQueueFamilyIndices = nullptr;
+    buffer_info.queueFamilyIndexCount = 0;
 
     VkBuffer buffer;
     REQ_VK(dev.dt.createBuffer(dev.hdl, &buffer_info, nullptr, &buffer));
