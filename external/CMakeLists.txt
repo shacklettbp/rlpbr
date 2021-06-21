@@ -26,3 +26,16 @@ IF (NOT glm_FOUND OR USE_BUNDLED)
     target_include_directories(glm SYSTEM
         INTERFACE "${CMAKE_CURRENT_SOURCE_DIR}/glm")
 ENDIF()
+
+add_library(spirv_reflect SHARED
+    SPIRV-Reflect/spirv_reflect.h SPIRV-Reflect/spirv_reflect.c)
+target_include_directories(spirv_reflect
+    INTERFACE SPIRV-Reflect)
+
+add_subdirectory(glslang EXCLUDE_FROM_ALL)
+target_include_directories(glslang SYSTEM
+    INTERFACE
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/glslang/glslang/Public>
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/glslang/StandAlone>
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/glslang/SPIRV>)
+

@@ -12,6 +12,8 @@
 #include <cuda_runtime.h>
 #include <optix.h>
 
+#include <optional>
+
 namespace RLpbr {
 namespace optix {
 

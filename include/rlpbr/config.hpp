@@ -6,6 +6,7 @@ namespace RLpbr {
 
 enum class BackendSelect {
     Optix,
+    Vulkan,
 };
 
 struct RenderConfig {

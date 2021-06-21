@@ -1,0 +1,116 @@
+#version 450
+#extension GL_EXT_nonuniform_qualifier : require
+#extension GL_EXT_scalar_block_layout : require
+#extension GL_KHR_shader_subgroup_ballot : require
+#extension GL_EXT_shader_explicit_arithmetic_types : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int16 : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int32 : require
+#extension GL_GOOGLE_include_directive : require
+
+#include "shader_common.h"
+#include "mesh_common.h"
+
+struct DrawCommand {
+    uint indexCount;
+    uint instanceCount;
+    uint firstIndex;
+    uint vertexOffset;
+    uint firstInstance;
+};
+
+layout (local_size_x = 32, local_size_y = 1, local_size_z = 1) in;
+
+layout (push_constant, scalar) uniform readonly PushConstant {
+    CullPushConstant cull_const;
+};
+
+layout (set = 0, binding = 0, scalar) readonly buffer Transforms {
+    mat4x3 modelTransforms[];
+};
+
+layout (set = 0, binding = 1) readonly buffer ViewInfos {
+    ViewInfo view_info[];
+};
+
+layout (set = 0, binding = 2, scalar) readonly buffer InputCommands {
+    DrawInput inputCommands[];
+};
+
+layout (set = 0, binding = 3, scalar) writeonly buffer OutputCommands {
+    DrawCommand outputCommands[];
+};
+
+layout (set = 0, binding = 4) buffer Counts {
+    uint numOutputCommands[];
+};
+
+layout (set = 1, binding = 0, scalar) readonly buffer MeshChunks {
+    MeshChunk chunks[];
+};
+
+void main()
+{
+    // Out of bounds exit
+    if (gl_GlobalInvocationID.x >= cull_const.numDrawCommands) {
+        return;
+    }
+
+    uint draw_id = cull_const.baseDrawID + gl_GlobalInvocationID.x;
+
+    uint inst_id = inputCommands[draw_id].instanceID;
+    uint chunk_id = inputCommands[draw_id].chunkID;
+
+    vec3 center_inview = vec3(view_info[cull_const.batchIdx].view *
+        vec4(modelTransforms[inst_id] *
+            vec4(chunks[chunk_id].center, 1.f), 1.f));
+    float radius = chunks[chunk_id].radius;
+    
+    bool should_render = true;
+
+    should_render = should_render && (
+        center_inview.z * cull_const.frustumBounds.sides[1] -
+            abs(center_inview.x) *
+                cull_const.frustumBounds.sides[0] > -radius);
+
+    should_render = should_render && (
+        center_inview.z * cull_const.frustumBounds.sides[3] -
+            abs(center_inview.y) *
+                cull_const.frustumBounds.sides[2] > -radius);
+
+    should_render = should_render && (
+        center_inview.z - radius < -cull_const.frustumBounds.nearFar[0] &&
+            center_inview.z + radius > -cull_const.frustumBounds.nearFar[1]);
+
+	uvec4 cull_ballot = subgroupBallot(should_render);
+	uint subgroup_count = subgroupBallotBitCount(cull_ballot);
+
+	if (subgroup_count == 0) {
+		return;
+    }
+
+	uint subgroup_base = 0;
+
+	if (gl_LocalInvocationID.x == 0) {
+        // Thread 0
+		subgroup_base = atomicAdd(numOutputCommands[cull_const.batchIdx],
+                                  subgroup_count);
+    }
+    subgroup_base = subgroupBroadcastFirst(subgroup_base);
+
+    uint subgroup_offset = subgroupBallotExclusiveBitCount(cull_ballot);
+
+    uint batch_offset = subgroup_base + subgroup_offset;
+
+    uint out_idx = cull_const.baseDrawID + batch_offset;
+
+    if (!should_render) {
+        return;
+    }
+
+    outputCommands[out_idx].indexCount = chunks[chunk_id].numTriangles * 3;
+    outputCommands[out_idx].instanceCount = 1;
+    outputCommands[out_idx].firstIndex = chunks[chunk_id].indexOffset;
+    outputCommands[out_idx].vertexOffset = 0;
+    outputCommands[out_idx].firstInstance = inst_id;
+}

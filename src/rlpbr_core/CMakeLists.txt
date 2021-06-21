@@ -6,6 +6,7 @@ add_library(rlpbr_core SHARED
     scene.hpp scene.cpp
     utils.hpp
     physics.hpp
+    device.hpp device.h
 )
 
 target_include_directories(rlpbr_core

@@ -7,7 +7,6 @@ namespace optix {
 namespace sobol {
 
 static constexpr int matrixSize = 32;
-static constexpr int maxDims = 2;
 
 template <int dim>
 inline uint32_t sample(uint32_t sobol_idx)

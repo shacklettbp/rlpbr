@@ -1020,12 +1020,12 @@ __forceinline__ SampleResult<T> sampleMicrofacet(
                 weight = F * GG1_out;
             }
         }
-    }
 
-    if constexpr (transmission) {
-        flags |= BSDFFlags::MicrofacetTransmission;
-    } else {
-        flags |= BSDFFlags::MicrofacetReflection;
+        if constexpr (transmission) {
+            flags |= BSDFFlags::MicrofacetTransmission;
+        } else {
+            flags |= BSDFFlags::MicrofacetReflection;
+        }
     }
 
     return {

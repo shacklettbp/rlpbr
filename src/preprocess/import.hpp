@@ -2,6 +2,7 @@
 
 #include <rlpbr_core/scene.hpp>
 
+#include <optional>
 #include <vector>
 
 namespace RLpbr {

@@ -7,6 +7,7 @@ add_subdirectory(preprocess)
 
 # Backends
 add_subdirectory(optix)
+add_subdirectory(vulkan)
 
 add_library(rlpbr SHARED
     ../include/rlpbr.hpp rlpbr.cpp 
@@ -16,6 +17,7 @@ target_link_libraries(rlpbr
     PRIVATE
         rlpbr_core
         rlpbr_optix
+        rlpbr_vulkan
     INTERFACE
         CUDA::cudart
         glm

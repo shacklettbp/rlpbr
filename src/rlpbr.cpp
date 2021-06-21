@@ -4,6 +4,7 @@
 #include <rlpbr_core/utils.hpp>
 
 #include "optix/render.hpp"
+#include "vulkan/render.hpp"
 
 #include <functional>
 #include <iostream>
@@ -44,6 +45,10 @@ static RendererImpl makeBackend(const RenderConfig &cfg)
         case BackendSelect::Optix: {
             auto *renderer = new optix::OptixBackend(cfg, validate);
             return makeRendererImpl<optix::OptixBackend>(renderer);
+        }
+        case BackendSelect::Vulkan: {
+            auto *renderer = new vk::VulkanBackend(cfg, validate);
+            return makeRendererImpl<vk::VulkanBackend>(renderer);
         }
     }
 
