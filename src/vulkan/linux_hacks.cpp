@@ -51,6 +51,11 @@ static void rewrite_symbol(void *dst, void *src, uint64_t page_mask)
 // avoids the initialization crash with X forwarding.
 static __attribute__((constructor)) void nvidiaLinuxHeadlessHacksEntry()
 {
+    char *need_present = getenv("VK_FAKE_PRESENT");
+    if (need_present && need_present[0] == '1') {
+        return;
+    }
+
     const uint64_t page_size = sysconf(_SC_PAGESIZE);
     const uint64_t page_mask = ~(page_size - 1);
 

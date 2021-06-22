@@ -19,10 +19,9 @@ add_executable(load_test
 
 target_link_libraries(load_test rlpbr Threads::Threads)
 
-find_package(glfw3 3.3 QUIET)
 find_package(GLEW QUIET)
 
-if (glfw3_FOUND AND GLEW_FOUND)
+if (glfw3_found AND GLEW_FOUND)
     add_executable(fly
         fly.cpp
     )

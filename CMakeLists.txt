@@ -32,6 +32,9 @@ if (NOT USE_BUNDLED)
     find_package(glm 0.9.9.8 QUIET)
 endif()
 
+# FIXME
+find_package(glfw3 3.3 QUIET)
+
 add_subdirectory(external)
 
 add_compile_definitions("RLPBR_DATA_DIR=${CMAKE_CURRENT_SOURCE_DIR}/data")

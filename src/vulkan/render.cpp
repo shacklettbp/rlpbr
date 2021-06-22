@@ -13,11 +13,19 @@ static BackendConfig getBackendConfig(const RenderConfig &cfg, bool validate)
 {
     bool use_zsobol =  uint64_t(cfg.spp) * uint64_t(cfg.imgWidth) *
         uint64_t(cfg.imgHeight) < uint64_t(~0u);
+
+    bool need_present = false;
+    char *fake_present = getenv("VK_FAKE_PRESENT");
+    if (fake_present && fake_present[0] == '1') {
+        need_present = true;
+    }
+
     return BackendConfig {
         cfg.doubleBuffered ? 2u : 1u,
         use_zsobol,
         false,
         validate,
+        need_present,
     };
 }
 
@@ -803,6 +811,31 @@ static glm::u32vec3 getLaunchSize(const RenderConfig &cfg)
     };
 }
 
+static InstanceState makeInstance(const BackendConfig &backend_cfg)
+{
+    if (backend_cfg.needPresent) {
+        PresentationState::init();
+
+        return InstanceState(backend_cfg.validate, true,
+                             PresentationState::getInstanceExtensions());
+
+    } else {
+        return InstanceState(backend_cfg.validate, false, {});
+    }
+}
+
+static DeviceState makeDevice(const InstanceState &inst,
+                              const RenderConfig &cfg,
+                              const BackendConfig &backend_cfg)
+{
+    auto present_callback = backend_cfg.needPresent ?
+        PresentationState::deviceSupportCallback :
+        nullptr;
+
+    return inst.makeDevice(getUUIDFromCudaID(cfg.gpuID), 1, 2, cfg.numLoaders,
+                           present_callback);
+}
+
 VulkanBackend::VulkanBackend(const RenderConfig &cfg, bool validate)
     : VulkanBackend(cfg, getBackendConfig(cfg, validate))
 {}
@@ -810,12 +843,8 @@ VulkanBackend::VulkanBackend(const RenderConfig &cfg, bool validate)
 VulkanBackend::VulkanBackend(const RenderConfig &cfg,
                              const BackendConfig &backend_cfg)
     : batch_size_(cfg.batchSize),
-      inst(backend_cfg.validate, false, {}),
-      dev(inst.makeDevice(getUUIDFromCudaID(cfg.gpuID),
-                          1,
-                          2,
-                          cfg.numLoaders,
-                          nullptr)),
+      inst(makeInstance(backend_cfg)),
+      dev(makeDevice(inst, cfg, backend_cfg)),
       alloc(dev, inst),
       fb_cfg_(getFramebufferConfig(cfg, backend_cfg)),
       param_cfg_(getParamBufferConfig(cfg.batchSize, alloc)),
@@ -840,7 +869,11 @@ VulkanBackend::VulkanBackend(const RenderConfig &cfg,
       batch_states_(),
       cur_batch_(0),
       batch_mask_(backend_cfg.numBatches == 2 ? 1 : 0),
-      frame_counter_(0)
+      frame_counter_(0),
+      present_(backend_cfg.needPresent ?
+          make_optional<PresentationState>(inst, dev, compute_queues_[0],
+              dev.computeQF, backend_cfg.numBatches) :
+          optional<PresentationState>())
 {
     batch_states_.reserve(backend_cfg.numBatches);
     for (int i = 0; i < (int)backend_cfg.numBatches; i++) {
@@ -1017,7 +1050,21 @@ uint32_t VulkanBackend::render(const Environment *envs)
         nullptr,
     };
 
+    VkSemaphore render_signal;
+    uint32_t swapchain_idx = 0;
+    if (present_.has_value()) {
+        render_signal = present_->getRenderSemaphore();
+        render_submit.pSignalSemaphores = &render_signal;
+        render_submit.signalSemaphoreCount = 1;
+
+        swapchain_idx = present_->acquireNext(dev);
+    }
+
     compute_queues_[cur_batch_].submit(dev, 1, &render_submit, batch_state.fence);
+
+    if (present_.has_value()) {
+        present_->present(dev, swapchain_idx, compute_queues_[cur_batch_]);
+    }
 
     frame_counter_ += batch_size_;
 

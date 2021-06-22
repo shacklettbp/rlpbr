@@ -59,6 +59,7 @@ add_library(rlpbr_vulkan SHARED
     scene.hpp scene.cpp
     shader.hpp shader.cpp
     utils.hpp utils.cpp utils.inl
+    present.hpp present.cpp
     linux_hacks.cpp
 )
 
@@ -70,6 +71,6 @@ target_include_directories(rlpbr_vulkan
 target_link_libraries(rlpbr_vulkan
     rlpbr_core Vulkan::Vulkan CUDA::cudart
     glslang spirv_reflect SPIRV glslang-default-resource-limits
-    stb)
+    stb glfw)
 
 add_dependencies(rlpbr_vulkan generate_vk_dispatch)

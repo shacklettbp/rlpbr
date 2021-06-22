@@ -18,6 +18,7 @@
 #include "descriptors.hpp"
 #include "memory.hpp"
 #include "shader.hpp"
+#include "present.hpp"
 
 namespace RLpbr {
 namespace vk {
@@ -27,6 +28,7 @@ struct BackendConfig {
     bool useZSobol;
     bool useAdvancedMaterials;
     bool validate;
+    bool needPresent;
 };
 
 struct FramebufferConfig {
@@ -173,6 +175,8 @@ private:
     uint32_t cur_batch_;
     const uint32_t batch_mask_;
     uint32_t frame_counter_;
+
+    std::optional<PresentationState> present_;
 };
 
 }
