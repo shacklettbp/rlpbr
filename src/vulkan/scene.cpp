@@ -224,7 +224,7 @@ loadTextureFromDisk(const string &tex_path, uint32_t texel_bytes,
 struct StagedTextures {
     HostBuffer stageBuffer;
     VkDeviceMemory texMemory;
-    vector<uint32_t> stageOffsets;
+    vector<size_t> stageOffsets;
     vector<LocalTexture> textures;
     vector<VkImageView> textureViews;
     vector<uint32_t> textureTexelBytes;
@@ -261,6 +261,7 @@ static optional<StagedTextures> prepareSceneTextures(const DeviceState &dev,
 
     vector<void *> host_ptrs;
     vector<uint32_t> host_sizes;
+    vector<size_t> stage_offsets;
     vector<LocalTexture> gpu_textures;
     vector<VkFormat> texture_formats;
     vector<uint32_t> texture_texel_bytes;
@@ -269,6 +270,7 @@ static optional<StagedTextures> prepareSceneTextures(const DeviceState &dev,
 
     host_ptrs.reserve(num_textures);
     host_sizes.reserve(num_textures);
+    stage_offsets.reserve(num_textures);
     gpu_textures.reserve(num_textures);
     texture_formats.reserve(num_textures);
     texture_texel_bytes.reserve(num_textures);
@@ -355,18 +357,24 @@ static optional<StagedTextures> prepareSceneTextures(const DeviceState &dev,
     size_t num_device_bytes = cur_tex_offset;
 
     size_t num_staging_bytes = 0;
-    for (auto num_bytes : host_sizes) {
+    for (int i = 0; i < (int)host_sizes.size(); i++) {
+        uint32_t num_bytes = host_sizes[i];
+        uint32_t texel_bytes = texture_texel_bytes[i];
+
+        uint32_t alignment = max(texel_bytes, 4u);
+        num_staging_bytes = alignOffset(num_staging_bytes, alignment);
+
+        stage_offsets.push_back(num_staging_bytes);
+
         num_staging_bytes += num_bytes;
     }
 
     HostBuffer texture_staging = alloc.makeStagingBuffer(num_staging_bytes);
 
-    char *cur_ptr = (char *)texture_staging.ptr;
     for (int i = 0 ; i < (int)num_textures; i++) {
+        char *cur_ptr = (char *)texture_staging.ptr + stage_offsets[i];
         memcpy(cur_ptr, host_ptrs[i], host_sizes[i]);
         stbi_image_free(host_ptrs[i]);
-
-        cur_ptr += host_sizes[i];
     }
 
     texture_staging.flush(dev);
@@ -414,16 +422,10 @@ static optional<StagedTextures> prepareSceneTextures(const DeviceState &dev,
         texture_views.push_back(view);
     }
 
-    // Reindex size vector to be offsets for copies
-    for (int i = 0; i < (int)num_textures - 1; i++) {
-        host_sizes[i + 1] = host_sizes[i];
-    }
-    host_sizes[0] = 0;
-
     return StagedTextures {
         move(texture_staging),
         tex_mem,
-        move(host_sizes),
+        move(stage_offsets),
         move(gpu_textures),
         move(texture_views),
         move(texture_texel_bytes),
@@ -904,13 +906,10 @@ shared_ptr<Scene> VulkanLoader::loadScene(SceneLoadData &&load_info)
                     texel_bytes;
             }
 
-            // Note that number of copy commands is num_levels
-            // not copy_infos.size(), because the vector is shared
-            // between textures to avoid allocs
             dev.dt.cmdCopyBufferToImage(
                 transfer_cmd_, staged_textures->stageBuffer.buffer,
                 gpu_texture.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                num_levels, copy_infos.data());
+                copy_infos.size(), copy_infos.data());
         }
 
         // Transfer queue relinquish texture barriers
