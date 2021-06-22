@@ -79,7 +79,8 @@ struct FramebufferState {
 };
 
 struct RenderState {
-    VkSampler textureSampler;
+    VkSampler repeatSampler;
+    VkSampler clampSampler;
 
     ShaderPipeline rt;
     FixedDescriptorPool rtPool;

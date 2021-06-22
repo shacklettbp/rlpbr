@@ -620,7 +620,7 @@ __forceinline__ float fetchDiffuseDirectionalAlbedo(float lookup_f0,
 __forceinline__ float fetchMicrofacetMSAverageAlbedo(float roughness)
 {
     return textureFetch1D<float>(launchInput.precomputed.microfacetAverage,
-                           roughness, 0);
+                                 roughness, 0);
 }
 
 __forceinline__ float fetchMicrofacetMSDirectionalAlbedo(float roughness,
@@ -1346,7 +1346,7 @@ __forceinline__ float3 evalEnvMap(cudaTextureObject_t env_tex,
 
     float4 v = textureFetch2D<float4>(env_tex, uv.x, uv.y, 0.f);
 
-    v *= 90.f;
+    v *= 10.f;
 
     return make_float3(v.x, v.y, v.z);
 }
@@ -1922,6 +1922,7 @@ extern "C" __global__ void __raygen__rg()
 
             TangentFrame obj_tangent_frame =
                 computeTangentFrame(interpolated, material_params, textures);
+
             TangentFrame world_tangent_frame =
                 tangentFrameToWorld(o2w, w2o, obj_tangent_frame, ray_dir);
 
@@ -1953,25 +1954,12 @@ extern "C" __global__ void __raygen__rg()
 
             bounce_flags = cur_bounce_flags;
 
-            float alpha_check = sampler.get1D();
-            bool pass_through = material.transparencyMask == 0.f ||
-                alpha_check > material.transparencyMask;
-
-            float3 next_dir = pass_through ? ray_dir : bounce_dir;
-
             float3 bounce_offset_normal =
-                dot(next_dir, world_geo_normal) > 0 ?
+                dot(bounce_dir, world_geo_normal) > 0 ?
                     world_geo_normal : -world_geo_normal;
             ray_origin = offsetRayOrigin(world_position, bounce_offset_normal);
 
-            // Start setup for next bounce
-            if (!pass_through) {
-                path_prob *= bounce_prob;
-            }
-
-            ray_dir = next_dir;
-
-            payload_0 = pass_through;
+            payload_0 = 0;
             payload_1 = 0;
             payload_2 = uint32_t(bounce_flags);
             optixTrace(
@@ -1995,7 +1983,11 @@ extern "C" __global__ void __raygen__rg()
             bounce_flags = BSDFFlags(payload_2);
             bool unoccluded = payload_1 == ~0u;
 
-            if (unoccluded && !payload_0) {
+            float alpha_check = sampler.get1D();
+            bool pass_through = material.transparencyMask == 0.f ||
+                alpha_check > material.transparencyMask;
+
+            if (unoccluded && !pass_through) {
                 float3 contrib = path_prob * color;
 #ifdef INDIRECT_CLAMP
                 if (path_depth > 0) {
@@ -2003,6 +1995,12 @@ extern "C" __global__ void __raygen__rg()
                 }
 #endif
                 sample_radiance += contrib;
+            }
+
+            // Start setup for next bounce
+            if (!pass_through) {
+                path_prob *= bounce_prob;
+                ray_dir = bounce_dir;
             }
         }
 

@@ -78,6 +78,7 @@ static vector<uint32_t> compileToSPV(const DynArray<char> &src,
                                      VkShaderStageFlagBits vk_stage,
                                      const string &name,
                                      const string &shader_dir,
+                                     const string &full_path,
                                      const vector<string> &defines)
 {
     EShLanguage stage;
@@ -100,7 +101,12 @@ static vector<uint32_t> compileToSPV(const DynArray<char> &src,
     glslang::TShader shader(stage);
 
     const char *src_ptr = src.data();
-    shader.setStrings(&src_ptr, 1);
+    int num_src_bytes = src.size();
+
+    const char *debug_path = full_path.c_str();
+
+    shader.setStringsWithLengthsAndNames(&src_ptr, &num_src_bytes,
+                                         &debug_path, 1);
 
     string preamble = "";
     for (const string &def : defines) {
@@ -118,8 +124,10 @@ static vector<uint32_t> compileToSPV(const DynArray<char> &src,
     shader.setEnvClient(glslang::EShClientVulkan, vk_client_version);
     shader.setEnvTarget(glslang::EShTargetSpv, spv_version);
 
+    // EshMsgDebugInfo is necessary in order to output
+    // the main source file OpSource for some reason??
     EShMessages desired_msgs =
-        (EShMessages)(EShMsgSpvRules | EShMsgVulkanRules);
+        (EShMessages)(EShMsgSpvRules | EShMsgVulkanRules | EShMsgDebugInfo);
 
     TBuiltInResource resource_limits = glslang::DefaultTBuiltInResource;
 
@@ -149,6 +157,7 @@ static vector<uint32_t> compileToSPV(const DynArray<char> &src,
     vector<uint32_t> spv;
     spv::SpvBuildLogger spv_log;
     glslang::SpvOptions spv_opts;
+    spv_opts.generateDebugInfo = true;
 
     glslang::GlslangToSpv(*prog.getIntermediate(stage), spv, &spv_log,
                           &spv_opts);
@@ -280,14 +289,14 @@ ShaderPipeline::ShaderPipeline(
             fatalExit();
         }
 
-        DynArray<char> shader_src(file_size + 1);
+        DynArray<char> shader_src(file_size);
         shader_file.read(shader_src.data(), file_size);
-        shader_src[file_size] = '\0';
 
         VkShaderStageFlagBits stage = getStage(shader_name);
 
         vector<uint32_t> spv =
-            compileToSPV(shader_src, stage, shader_name, shader_dir, defines);
+            compileToSPV(shader_src, stage, shader_name, shader_dir,
+                         full_path, defines);
 
         VkShaderModuleCreateInfo shader_info;
         shader_info.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;

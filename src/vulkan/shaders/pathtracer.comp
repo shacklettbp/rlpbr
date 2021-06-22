@@ -75,25 +75,26 @@ layout (set = 0, binding = 3) readonly buffer Envs {
     PackedEnv envs[];
 };
 
-layout (set = 0, binding = 4) uniform sampler textureSampler;
+layout (set = 0, binding = 4) uniform sampler repeatSampler;
+layout (set = 0, binding = 5) uniform sampler clampSampler;
 
-layout (set = 0, binding = 5) uniform texture2D msDiffuseAverageTexture; 
-layout (set = 0, binding = 6) uniform texture3D msDiffuseDirectionalTexture;
-layout (set = 0, binding = 7) uniform texture1D msGGXAverageTexture;
-layout (set = 0, binding = 8) uniform texture2D msGGXDirectionalTexture;
-layout (set = 0, binding = 9) uniform texture2D msGGXInverseTexture;
+layout (set = 0, binding = 6) uniform texture2D msDiffuseAverageTexture; 
+layout (set = 0, binding = 7) uniform texture3D msDiffuseDirectionalTexture;
+layout (set = 0, binding = 8) uniform texture1D msGGXAverageTexture;
+layout (set = 0, binding = 9) uniform texture2D msGGXDirectionalTexture;
+layout (set = 0, binding = 10) uniform texture2D msGGXInverseTexture;
 
-layout (set = 0, binding = 10, scalar) writeonly buffer Out {
+layout (set = 0, binding = 11, scalar) writeonly buffer Out {
     uint32_t outputBuffer[];
 };
 
 #ifdef AUXILIARY_OUTPUTS
 
-layout (set = 0, binding = 11, scalar) writeonly buffer Normals {
+layout (set = 0, binding = 12, scalar) writeonly buffer Normals {
     uint16_t normalBuffer[];
 };
 
-layout (set = 0, binding = 12, scalar) writeonly buffer Albedo {
+layout (set = 0, binding = 13, scalar) writeonly buffer Albedo {
     uint16_t albedoBuffer[];
 };
 
@@ -252,11 +253,7 @@ void decodeNormalTangent(in u32vec3 packed, out vec3 normal,
     normal = vec3(ab.x, ab.y, cd.x);
     float sign = cd.y;
 
-    vec2 oct_tan_unscaled = unpackSnorm2x16(packed.z);
-    vec2 oct_tan = clamp(
-        oct_tan_unscaled * 3.0518509475997192297128208258309e-5f,
-        -1.f, 1.f);
-
+    vec2 oct_tan = unpackSnorm2x16(packed.z);
     vec3 tangent = octahedralVectorDecode(oct_tan);
 
     tangentAndSign = vec4(tangent, sign);
@@ -288,10 +285,15 @@ Vertex unpackVertex(uint32_t idx)
 Triangle fetchTriangle(uint32_t index_offset)
 {
     // FIXME: maybe change all this to triangle offset
+    u32vec3 indices = u32vec3(
+        indices[nonuniformEXT(index_offset)],
+        indices[nonuniformEXT(index_offset + 1)],
+        indices[nonuniformEXT(index_offset + 2)]);
+
     return Triangle(
-        unpackVertex(indices[nonuniformEXT(index_offset)]),
-        unpackVertex(indices[nonuniformEXT(index_offset + 1)]),
-        unpackVertex(indices[nonuniformEXT(index_offset + 2)]));
+        unpackVertex(indices.x),
+        unpackVertex(indices.y),
+        unpackVertex(indices.z));
 }
 
 uint32_t getMaterialID(uint32_t inst_material_idx)
@@ -517,32 +519,27 @@ void computeCameraRay(in Camera camera, in u32vec3 idx, inout Sampler rng,
         camera.right * screen.x + camera.up * screen.y + camera.view);
 }
 
-Vertex interpolateTriangle(Triangle tri, vec3 barys)
+Vertex interpolateTriangle(Triangle tri, vec2 barys)
 {
+#define INTERPOLATE_ATTR(tri, attr, barys) \
+    (tri.a.attr + barys.x * (tri.b.attr - tri.a.attr) + \
+     barys.y * (tri.c.attr - tri.a.attr))
+
     Vertex interp;
 
-    interp.position =
-        tri.a.position * barys.x +
-        tri.b.position * barys.y + 
-        tri.c.position * barys.z;
+    interp.position = INTERPOLATE_ATTR(tri, position, barys);
 
-    interp.normal = 
-        tri.a.normal * barys.x +
-        tri.b.normal * barys.y +
-        tri.c.normal * barys.z;
+    interp.normal = INTERPOLATE_ATTR(tri, normal, barys);
 
-    interp.tangentAndSign =
-        tri.a.tangentAndSign * barys.x +
-        tri.b.tangentAndSign * barys.y +
-        tri.c.tangentAndSign * barys.z;
+    interp.tangentAndSign = INTERPOLATE_ATTR(tri, tangentAndSign, barys);
 
-    interp.uv = 
-        tri.a.uv * barys.x +
-        tri.b.uv * barys.y +
-        tri.c.uv * barys.z;
+    interp.uv = INTERPOLATE_ATTR(tri, uv, barys);
 
     return interp;
+
+#undef INTERPOLATE_ATTR
 }
+
 
 // Returns *unnormalized vector*
 vec3 computeGeometricNormal(Triangle tri)
@@ -582,7 +579,7 @@ TangentFrame computeTangentFrame(Vertex v,
     if (bool(mat_params.flags & MaterialFlagsHasNormalMap)) {
         vec2 xy = textureLod(sampler2D(
             textures[base_tex_idx + TextureConstantsNormalOffset],
-            textureSampler), v.uv, 0.0).xy;
+            repeatSampler), v.uv, 0.0).xy;
 
         vec2 centered = xy * 2.0 - 1.0;
         float length2 = clamp(dot(centered, centered), 0.0, 1.0);
@@ -605,7 +602,7 @@ TangentFrame tangentFrameToWorld(mat4x3 o2w, mat4x3 w2o, TangentFrame frame,
     frame.tangent = normalize(transformVector(o2w, frame.tangent));
     frame.bitangent = normalize(transformVector(o2w, frame.bitangent));
     frame.normal = normalize(transformNormal(w2o, frame.normal));
-    frame.normal = faceforward(frame.normal, -ray_dir, frame.normal);
+    frame.normal = faceforward(frame.normal, ray_dir, frame.normal);
                                                                
     return frame;                                              
 }
@@ -654,25 +651,21 @@ bool traceShadowRay(in uint64_t tlas_addr, in vec3 ray_origin,
     while (rayQueryProceedEXT(ray_query)) {
         if (rayQueryGetIntersectionTypeEXT(ray_query, false) ==
             gl_RayQueryCandidateIntersectionTriangleEXT) {
-            return true;
+
+            rayQueryConfirmIntersectionEXT(ray_query);
         }
     }
 
-    return false;
+    return rayQueryGetIntersectionTypeEXT(ray_query, true) !=
+        gl_RayQueryCommittedIntersectionNoneEXT;
 }
 
-vec3 computeBarycentrics(vec2 raw)
-{
-    return vec3(1.f - raw.x - raw.y, raw.x, raw.y);
-}
-
-void processHit(in rayQueryEXT ray_query, out vec3 barys,
+void processHit(in rayQueryEXT ray_query, out vec2 barys,
                 out uint32_t tri_idx, out uint32_t instance_idx,
-                out uint32_t material_idx, out uint32_t mesh_idx,
-                out mat4x3 o2w, out mat4x3 w2o)
+                out uint32_t material_offset, out uint32_t geo_idx,
+                out uint32_t mesh_offset, out mat4x3 o2w, out mat4x3 w2o)
 {
-    vec2 raw_barys = rayQueryGetIntersectionBarycentricsEXT(ray_query, true);
-    barys = computeBarycentrics(raw_barys);
+    barys = rayQueryGetIntersectionBarycentricsEXT(ray_query, true);
 
     tri_idx =
         uint32_t(rayQueryGetIntersectionPrimitiveIndexEXT(ray_query, true));
@@ -680,17 +673,15 @@ void processHit(in rayQueryEXT ray_query, out vec3 barys,
     instance_idx =
         uint32_t(rayQueryGetIntersectionInstanceIdEXT(ray_query, true));
 
-    material_idx = uint32_t(
+    material_offset = uint32_t(
         rayQueryGetIntersectionInstanceCustomIndexEXT(ray_query, true));
 
-    uint32_t geo_idx = 
+    geo_idx = 
         uint32_t(rayQueryGetIntersectionGeometryIndexEXT(ray_query, true));
 
-    uint32_t mesh_offset = uint32_t(
+    mesh_offset = uint32_t(
         rayQueryGetIntersectionInstanceShaderBindingTableRecordOffsetEXT(
             ray_query, true));
-
-    mesh_idx = mesh_offset + geo_idx;
 
     o2w = rayQueryGetIntersectionObjectToWorldEXT(ray_query, true);
     w2o = rayQueryGetIntersectionWorldToObjectEXT(ray_query, true);
@@ -731,32 +722,32 @@ vec3 offsetRayOrigin(vec3 o, vec3 geo_normal)
 
 float fetchDiffuseAverageAlbedo(float lookup_f0, float roughness)
 {
-    return textureLod(sampler2D(msDiffuseAverageTexture, textureSampler),
+    return textureLod(sampler2D(msDiffuseAverageTexture, clampSampler),
         vec2(roughness, lookup_f0), 0.0).x;
 }
 
 float fetchDiffuseDirectionalAlbedo(float lookup_f0, float roughness,
                                     float cos_theta)
 {
-    return textureLod(sampler3D(msDiffuseDirectionalTexture, textureSampler),
+    return textureLod(sampler3D(msDiffuseDirectionalTexture, clampSampler),
         vec3(cos_theta, roughness, lookup_f0), 0.0).x;
 }
 
 float fetchMicrofacetMSAverageAlbedo(float roughness)
 {
-    return textureLod(sampler1D(msGGXAverageTexture, textureSampler),
+    return textureLod(sampler1D(msGGXAverageTexture, clampSampler),
         roughness, 0.0).x;
 }
 
 float fetchMicrofacetMSDirectionalAlbedo(float roughness, float cos_theta)
 {
-    return textureLod(sampler2D(msGGXDirectionalTexture, textureSampler),
+    return textureLod(sampler2D(msGGXDirectionalTexture, clampSampler),
         vec2(cos_theta, roughness), 0.0).x;
 }
 
 float sampleMSMicrofacetAngle(float roughness, float u)
 {
-    return textureLod(sampler2D(msGGXInverseTexture, textureSampler),
+    return textureLod(sampler2D(msGGXInverseTexture, clampSampler),
         vec2(u, roughness), 0.0).x;
 }
 
@@ -789,7 +780,7 @@ Material processMaterial(MaterialParams params,
     if (bool(params.flags & MaterialFlagsHasBaseTexture)) {
         vec4 tex_value = textureLod(sampler2D(
             textures[nonuniformEXT(base_tex_idx + TextureConstantsBaseOffset)],
-            textureSampler), uv, mip_level);
+            repeatSampler), uv, mip_level);
 
         mat.rho.x *= tex_value.x;
         mat.rho.y *= tex_value.y;
@@ -802,7 +793,7 @@ Material processMaterial(MaterialParams params,
     if (bool(params.flags & MaterialFlagsHasMRTexture)) {
         vec2 tex_value = textureLod(sampler2D(
             textures[nonuniformEXT(base_tex_idx + TextureConstantsMROffset)],
-            textureSampler), uv, mip_level).xy;
+            repeatSampler), uv, mip_level).xy;
 
         mat.roughness *= tex_value.x;
         mat.metallic *= tex_value.y;
@@ -814,7 +805,7 @@ Material processMaterial(MaterialParams params,
         vec4 tex_value = textureLod(sampler2D(
             textures[nonuniformEXT(base_tex_idx +
                                    TextureConstantsSpecularOffset)],
-            textureSampler), uv, mip_level);
+            repeatSampler), uv, mip_level);
 
         mat.rhoSpecular.x *= tex_value.x;
         mat.rhoSpecular.y *= tex_value.y;
@@ -827,7 +818,7 @@ Material processMaterial(MaterialParams params,
         float tex_value = textureLod(sampler2D(
             textures[nonuniformEXT(base_tex_idx +
                                    TextureConstantsTransmissionOffset)],
-            textureSampler), uv, mip_level).x;
+            repeatSampler), uv, mip_level).x;
 
         mat.transmission *= tex_value;
     }
@@ -839,7 +830,7 @@ Material processMaterial(MaterialParams params,
         vec3 tex_value = textureLod(sampler2D(
             textures[nonuniformEXT(base_tex_idx +
                                    TextureConstantsEmittanceOffset)],
-            textureSampler), uv, mip_level).xyz;
+            repeatSampler), uv, mip_level).xyz;
 
         mat.emittance.x *= tex_value.x;
         mat.emittance.y *= tex_value.y;
@@ -852,7 +843,7 @@ Material processMaterial(MaterialParams params,
         vec2 tex_value = textureLod(sampler2D(
             textures[nonuniformEXT(base_tex_idx +
                                    TextureConstantsClearcoatOffset)],
-            textureSampler), uv, mip_level).xy;
+            repeatSampler), uv, mip_level).xy;
 
         mat.clearcoatScale *= tex_value.x;
         mat.clearcoatRoughness *= tex_value.y;
@@ -864,7 +855,7 @@ Material processMaterial(MaterialParams params,
         vec2 tex_value = textureLod(sampler2D(
             textures[nonuniformEXT(base_tex_idx +
                                    TextureConstantsAnisoOffset)],
-            textureSampler), uv, mip_level).xy;
+            repeatSampler), uv, mip_level).xy;
 
         vec2 aniso_v = tex_value * 2.f - 1.f;
 
@@ -910,7 +901,9 @@ BSDFParams buildBSDF(Material material, vec3 wo)
         1.f - computeFresnel(dielectric_f0, vec3(dielectric_f90), wo.z);
 
     float alpha = material.roughness * material.roughness;
-    alpha = max(alpha, ShadingMinAlpha);
+    if (alpha < ShadingMinAlpha) {
+        alpha = 0;
+    }
     
     // Multiscattering / energy conservation params
     // FIXME, it is pretty ambiguous whether the lookup tables wants
@@ -937,7 +930,9 @@ BSDFParams buildBSDF(Material material, vec3 wo)
         material.clearcoatScale * computeFresnel(0.04f, 1.f, wo.z);
     float clearcoat_alpha =
         material.clearcoatRoughness * material.clearcoatRoughness;
-    clearcoat_alpha = max(clearcoat_alpha, ShadingMinAlpha);
+    if (clearcoat_alpha < ShadingMinAlpha) {
+        clearcoat_alpha = 0;
+    }
 
     float clearcoat_prob = clearcoat_reflectance_estimate;
     float not_clearcoat_prob = 1.f - clearcoat_prob;
@@ -1495,13 +1490,9 @@ vec3 evalEnvMap(uint32_t map_idx, vec3 dir)
     vec2 uv = dirToLatLong(dir);
 
     vec3 v =
-        textureLod(sampler2D(textures[map_idx], textureSampler), uv, 0.0).xyz;
+        textureLod(sampler2D(textures[map_idx], repeatSampler), uv, 0.0).xyz;
 
-    if (ISTHREAD0) {
-        debugPrintfEXT("%u (%f %f) (%f %f %f)\n", map_idx, uv.x, uv.y, v.x, v.y, v.z);
-    }
-
-    v *= 90.f;
+    v *= 10.f;
 
     return v;
 }
@@ -1745,17 +1736,18 @@ void main()
                 break;
             }
 
-            vec3 barys;
-            uint32_t tri_idx, instance_idx, material_offset, mesh_idx;
+            vec2 barys;
+            uint32_t tri_idx, instance_idx, material_offset, geo_idx,
+                mesh_offset;
             mat4x3 o2w, w2o;
             processHit(shade_query, barys, tri_idx, instance_idx,
-                       material_offset, mesh_idx, o2w, w2o);
+                       material_offset, geo_idx, mesh_offset, o2w, w2o);
 
             if (path_depth == 0) {
                 instance_id = instance_idx;
             }
 
-            MeshInfo mesh_info = unpackMeshInfo(mesh_idx);
+            MeshInfo mesh_info = unpackMeshInfo(mesh_offset + geo_idx);
 
             uint32_t index_offset = mesh_info.indexOffset + tri_idx * 3;
             Triangle hit_tri = fetchTriangle(index_offset);
@@ -1770,7 +1762,7 @@ void main()
 
             // Unpack materials
             uint32_t material_id = getMaterialID(
-                env.baseMaterialOffset + material_offset + mesh_idx);
+                env.baseMaterialOffset + material_offset + geo_idx);
 
             MaterialParams material_params = unpackMaterialParams(material_id);
 
@@ -1780,6 +1772,7 @@ void main()
             TangentFrame obj_tangent_frame =
                 computeTangentFrame(interpolated, material_params,
                                     base_texture_idx);
+
             TangentFrame world_tangent_frame =
                 tangentFrameToWorld(o2w, w2o, obj_tangent_frame, ray_dir);
 
@@ -1810,27 +1803,21 @@ void main()
 
             bounce_flags = shade_result.flags;
 
-            float alpha_check = samplerGet1D(rng);
-            bool pass_through = material.transparencyMask == 0.f ||
-                alpha_check > material.transparencyMask;
-
-            ray_dir = pass_through ? ray_dir : shade_result.bounceDir;
-
             vec3 bounce_offset_normal =
-                dot(ray_dir, world_geo_normal) > 0 ?
+                dot(shade_result.bounceDir, world_geo_normal) > 0 ?
                     world_geo_normal : -world_geo_normal;
             ray_origin = offsetRayOrigin(world_position, bounce_offset_normal);
-
-            // Start setup for next bounce
-            if (!pass_through) {
-                path_prob *= shade_result.bounceProb;
-            }
 
             bool occluded = traceShadowRay(env.tlasAddr,
                                            light_info.shadowRayOrigin,
                                            light_info.lightSample.toLight,
                                            light_info.shadowRayLength,
                                            1);
+
+            float alpha_check = samplerGet1D(rng);
+            bool pass_through = material.transparencyMask == 0.f ||
+                alpha_check > material.transparencyMask;
+
             if (!occluded && !pass_through) {
                 vec3 contrib = path_prob * shade_result.color;
 #ifdef INDIRECT_CLAMP
@@ -1839,6 +1826,13 @@ void main()
                 }
 #endif
                 sample_radiance += contrib;
+            }
+
+            // Start setup for next bounce
+
+            if (!pass_through) {
+                ray_dir = shade_result.bounceDir;
+                path_prob *= shade_result.bounceProb;
             }
         }
 

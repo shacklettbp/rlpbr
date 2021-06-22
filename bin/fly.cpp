@@ -187,9 +187,9 @@ int main(int argc, char *argv[]) {
     auto scene = loader.loadScene(argv[1]);
 
     CameraState cam {
-        glm::vec3(0, 0, 0),
-        glm::vec3(0, 0, 1),
-        glm::vec3(0, 1, 0)
+        glm::vec3(7.298413, 1.741776, -0.801094),
+        glm::vec3(8.157918, 2.166959, -0.517406),
+        glm::vec3(-0.480265, 0.861752, 0.163510),
     };
     glm::vec2 mouse_prev = cursorPosition(window);
 

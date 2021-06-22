@@ -666,9 +666,9 @@ void TLAS::build(const DeviceState &dev,
         } else {
             inst_info.mask = 1;
         }
-        inst_info.instanceCustomIndex = objects[inst.objectIndex].meshIndex;
+        inst_info.instanceCustomIndex = inst.materialOffset;
         inst_info.instanceShaderBindingTableRecordOffset = 
-            inst.materialOffset;
+            objects[inst.objectIndex].meshIndex;
         inst_info.flags = 0;
         inst_info.accelerationStructureReference =
             blases.accelStructs[inst.objectIndex].devAddr;
@@ -1076,6 +1076,20 @@ shared_ptr<Scene> VulkanLoader::loadScene(SceneLoadData &&load_info)
     vector<VkDescriptorImageInfo> descriptor_views;
     descriptor_views.reserve(load_info.hdr.numMaterials * 8 + 1);
 
+    if (staged_textures->envMap.has_value()) {
+        descriptor_views.push_back({
+            VK_NULL_HANDLE,
+            texture_views[staged_textures->envMap.value()],
+            VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+        });
+    } else {
+        descriptor_views.push_back({
+            VK_NULL_HANDLE,
+            VK_NULL_HANDLE,
+            VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+        });
+    }
+
     for (int mat_idx = 0; mat_idx < (int)load_info.hdr.numMaterials;
          mat_idx++) {
         const MaterialTextures &tex_indices =
@@ -1098,20 +1112,6 @@ shared_ptr<Scene> VulkanLoader::loadScene(SceneLoadData &&load_info)
                 });
             }
         };
-
-        if (staged_textures->envMap.has_value()) {
-            descriptor_views.push_back({
-                VK_NULL_HANDLE,
-                texture_views[staged_textures->envMap.value()],
-                VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-            });
-        } else {
-            descriptor_views.push_back({
-                VK_NULL_HANDLE,
-                VK_NULL_HANDLE,
-                VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-            });
-        }
 
         appendDescriptor(tex_indices.baseColorIdx, staged_textures->base);
         appendDescriptor(tex_indices.metallicRoughnessIdx,

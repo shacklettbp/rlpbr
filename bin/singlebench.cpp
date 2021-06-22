@@ -55,7 +55,7 @@ int main(int argc, char *argv[]) {
 
     cout << "Loaded " << views.size() << " views" << endl;
 
-    Renderer renderer({0, 1, batch_size, res, res, spp, path_depth, 1, false,
+    Renderer renderer({0, 1, batch_size, res, res, spp, path_depth, 0, false,
         false, false, 0.f, BackendSelect::Vulkan});
 
     auto loader = renderer.makeLoader();
@@ -68,6 +68,9 @@ int main(int argc, char *argv[]) {
             glm::vec3(0.f), glm::vec3(0.f, 0.f, 1.f),
             glm::vec3(0.f, 1.f, 0.f), glm::vec3(1.f, 0.f, 0.f)));
     }
+
+    renderer.render(envs.data());
+    renderer.waitForFrame();
 
     auto start = chrono::steady_clock::now();
 

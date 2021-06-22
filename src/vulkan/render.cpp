@@ -132,7 +132,8 @@ static FramebufferConfig getFramebufferConfig(const RenderConfig &cfg,
     };
 }
 
-static VkSampler makeImmutableSampler(const DeviceState &dev)
+static VkSampler makeImmutableSampler(const DeviceState &dev,
+                                      VkSamplerAddressMode address_mode)
 {
     VkSampler sampler;
 
@@ -143,9 +144,9 @@ static VkSampler makeImmutableSampler(const DeviceState &dev)
     sampler_info.magFilter = VK_FILTER_LINEAR;
     sampler_info.minFilter = VK_FILTER_LINEAR;
     sampler_info.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
-    sampler_info.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-    sampler_info.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-    sampler_info.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    sampler_info.addressModeU = address_mode;
+    sampler_info.addressModeV = address_mode;
+    sampler_info.addressModeW = address_mode;
     sampler_info.mipLodBias = 0;
     sampler_info.anisotropyEnable = VK_FALSE;
     sampler_info.maxAnisotropy = 0;
@@ -165,7 +166,11 @@ static RenderState makeRenderState(const DeviceState &dev,
                                    const RenderConfig &cfg,
                                    const BackendConfig &backend_cfg)
 {
-    VkSampler texture_sampler = makeImmutableSampler(dev);
+    VkSampler repeat_sampler =
+        makeImmutableSampler(dev, VK_SAMPLER_ADDRESS_MODE_REPEAT);
+
+    VkSampler clamp_sampler =
+        makeImmutableSampler(dev, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE);
 
     auto log2Int = [](uint32_t v) {
         return 32 - __builtin_clz(v) - 1;
@@ -231,7 +236,8 @@ static RenderState makeRenderState(const DeviceState &dev,
 
     ShaderPipeline shader(dev, {"pathtracer.comp"},
         {
-            {0, 4, texture_sampler, 1, 0},
+            {0, 4, repeat_sampler, 1, 0},
+            {0, 5, clamp_sampler, 1, 0},
             {1, 2, VK_NULL_HANDLE,
                 VulkanConfig::max_materials *
                     VulkanConfig::textures_per_material,
@@ -242,7 +248,8 @@ static RenderState makeRenderState(const DeviceState &dev,
     FixedDescriptorPool desc_pool(dev, shader, 0, backend_cfg.numBatches);
 
     return RenderState {
-        texture_sampler,
+        repeat_sampler,
+        clamp_sampler,
         move(shader),
         move(desc_pool),
     };
@@ -421,7 +428,7 @@ static PerBatchState makePerBatchState(const DeviceState &dev,
     PackedEnv *env_ptr =
         reinterpret_cast<PackedEnv *>(base_ptr + param_cfg.envOffset);
 
-    DescriptorUpdates desc_updates(7);
+    DescriptorUpdates desc_updates(14);
 
     VkDescriptorBufferInfo transform_info {
         param_buffer.buffer,
@@ -464,7 +471,7 @@ static PerBatchState makePerBatchState(const DeviceState &dev,
         VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
     };
 
-    desc_updates.textures(rt_set, &diffuse_avg_info, 1, 5);
+    desc_updates.textures(rt_set, &diffuse_avg_info, 1, 6);
 
     VkDescriptorImageInfo diffuse_dir_info {
         VK_NULL_HANDLE,
@@ -472,7 +479,7 @@ static PerBatchState makePerBatchState(const DeviceState &dev,
         VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
     };
 
-    desc_updates.textures(rt_set, &diffuse_dir_info, 1, 6);
+    desc_updates.textures(rt_set, &diffuse_dir_info, 1, 7);
 
     VkDescriptorImageInfo ggx_avg_info {
         VK_NULL_HANDLE,
@@ -480,7 +487,7 @@ static PerBatchState makePerBatchState(const DeviceState &dev,
         VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
     };
 
-    desc_updates.textures(rt_set, &ggx_avg_info, 1, 7);
+    desc_updates.textures(rt_set, &ggx_avg_info, 1, 8);
 
     VkDescriptorImageInfo ggx_dir_info {
         VK_NULL_HANDLE,
@@ -488,7 +495,7 @@ static PerBatchState makePerBatchState(const DeviceState &dev,
         VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
     };
 
-    desc_updates.textures(rt_set, &ggx_dir_info, 1, 8);
+    desc_updates.textures(rt_set, &ggx_dir_info, 1, 9);
 
     VkDescriptorImageInfo ggx_inv_info {
         VK_NULL_HANDLE,
@@ -496,7 +503,7 @@ static PerBatchState makePerBatchState(const DeviceState &dev,
         VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
     };
 
-    desc_updates.textures(rt_set, &ggx_inv_info, 1, 9);
+    desc_updates.textures(rt_set, &ggx_inv_info, 1, 10);
 
     VkDescriptorBufferInfo out_info {
         fb.outputs[0].buffer,
@@ -504,7 +511,7 @@ static PerBatchState makePerBatchState(const DeviceState &dev,
         fb_cfg.linearOutputBytesPerBatch,
     };
 
-    desc_updates.buffer(rt_set, &out_info, 10,
+    desc_updates.buffer(rt_set, &out_info, 11,
                         VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
 
     VkDescriptorBufferInfo normal_info;
@@ -523,9 +530,9 @@ static PerBatchState makePerBatchState(const DeviceState &dev,
             fb_cfg.linearAlbedoBytesPerBatch,
         };
 
-        desc_updates.buffer(rt_set, &normal_info, 11,
+        desc_updates.buffer(rt_set, &normal_info, 12,
                             VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
-        desc_updates.buffer(rt_set, &albedo_info, 12,
+        desc_updates.buffer(rt_set, &albedo_info, 13,
                             VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
     }
 
@@ -556,7 +563,7 @@ static BSDFPrecomputed loadPrecomputedTextures(const DeviceState &dev,
     vector<pair<string, vector<uint32_t>>> names_and_dims {
         { "diffuse_avg_albedo.bin", { 16, 16 } },
         { "diffuse_dir_albedo.bin", { 16, 16, 16 } },
-        { "ggx_avg_albedo.bin", { 16 } },
+        { "ggx_avg_albedo.bin", { 32 } },
         { "ggx_dir_albedo.bin", { 32, 32 } },
         { "ggx_dir_inv.bin", { 128, 32 } },
     };

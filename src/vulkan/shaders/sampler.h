@@ -77,10 +77,14 @@ uint32_t zSobolPermutationDigit(uint32_t p, uint32_t d)
     return (perm >> (d * 2)) & 3;
 }
 
+uint32_t zSobolHashMortonPrefix(uint32_t dim, uint32_t idx)
+{
+    return mix32(idx ^ (0x55555555 * dim));
+}
+
 uint32_t zSobolHashPermute(uint32_t dim, uint32_t idx)
 {
-    uint32_t hash = mix32(idx ^ (0x55555555 * dim));
-
+    uint32_t hash = zSobolHashMortonPrefix(dim, idx);
     return (hash >> 24) % 24;
 }
 
@@ -91,7 +95,7 @@ uint32_t zSobolCurrentSampleIndex(uint32_t dim, uint32_t morton_idx)
 #ifdef ZSOBOL_ODD_POWER
     const int last_digit = 1;
 #else
-    const int last_digit = 2;
+    const int last_digit = 0;
 #endif
 
     for (int i = int(ZSOBOL_NUM_BASE4) - 1; i >= last_digit; --i) {
@@ -104,10 +108,10 @@ uint32_t zSobolCurrentSampleIndex(uint32_t dim, uint32_t morton_idx)
     }
 
 #ifdef ZSOBOL_ODD_POWER
-     int final_digit = morton_idx & 3;
+     uint32_t final_digit = morton_idx & 3;
      sample_idx |= final_digit;
      sample_idx >>= 1;
-     sample_idx ^= hashMortonPrefix(morton_idx >> 2) & 1;
+     sample_idx ^= zSobolHashMortonPrefix(dim, morton_idx >> 2) & 1;
 #endif
 
     return sample_idx;
@@ -174,7 +178,7 @@ Sampler makeSampler(uint32_t pixel_x, uint32_t pixel_y,
     return rng;
 }
 
-float samplerGet1D(Sampler rng)
+float samplerGet1D(inout Sampler rng)
 {
     uint32_t idx = zSobolCurrentSampleIndex(rng.dim, rng.mortonIdx);
     uint32_t hash_seed = mix32(rng.dim ^ rng.seed);
@@ -183,7 +187,7 @@ float samplerGet1D(Sampler rng)
     return zSobolSequenceDimZero(idx, hash_seed);
 }
 
-vec2 samplerGet2D(Sampler rng)
+vec2 samplerGet2D(inout Sampler rng)
 {
     uint32_t idx = zSobolCurrentSampleIndex(rng.dim, rng.mortonIdx);
     u32vec2 hash_seed = mix32x2(rng.dim ^ rng.seed);
@@ -222,7 +226,7 @@ Sampler makeSampler(uint32_t pixel_x, uint32_t pixel_y,
     return rng;
 }
 
-float samplerGet1D(Sampler rng)
+float samplerGet1D(inout Sampler rng)
 {
     const uint32_t LCG_A = 1664525u;
     const uint32_t LCG_C = 1013904223u;
@@ -232,7 +236,7 @@ float samplerGet1D(Sampler rng)
     return float(next) / float(0x01000000);
 }
 
-vec2 samplerGet2D(Sampler rng)
+vec2 samplerGet2D(inout Sampler rng)
 {
     return vec2(samplerGet1D(rng), samplerGet1D(rng));
 }
