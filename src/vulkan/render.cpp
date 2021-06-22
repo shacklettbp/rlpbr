@@ -971,6 +971,8 @@ uint32_t VulkanBackend::render(const Environment *envs)
             env_backend.tlas.build(dev, alloc, env.getInstances(),
                                    env.getTransforms(), env.getInstanceFlags(),
                                    scene.objectInfo, scene.blases, render_cmd);
+
+            env.clearDirty();
         }
     }
 
