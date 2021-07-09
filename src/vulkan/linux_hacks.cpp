@@ -59,9 +59,9 @@ static __attribute__((constructor)) void nvidiaLinuxHeadlessHacksEntry()
     const uint64_t page_size = sysconf(_SC_PAGESIZE);
     const uint64_t page_mask = ~(page_size - 1);
 
-    void *mesa_egl = dlopen("libEGL_mesa.so", RTLD_LAZY | RTLD_NODELETE);
-    void *nvidia_egl = dlopen("libEGL_nvidia.so", RTLD_LAZY | RTLD_NODELETE);
-    void *nvidia_glx = dlopen("libGLX_nvidia.so", RTLD_LAZY | RTLD_NODELETE);
+    void *mesa_egl = dlopen("libEGL_mesa.so.0", RTLD_LAZY | RTLD_NODELETE);
+    void *nvidia_egl = dlopen("libEGL_nvidia.so.0", RTLD_LAZY | RTLD_NODELETE);
+    void *nvidia_glx = dlopen("libGLX_nvidia.so.0", RTLD_LAZY | RTLD_NODELETE);
     if (!mesa_egl || !nvidia_egl || !nvidia_glx) return;
 
     void *egl_main = dlsym(mesa_egl, "__egl_Main");
