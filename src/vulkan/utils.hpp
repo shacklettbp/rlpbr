@@ -52,6 +52,9 @@ int exportBinarySemaphore(const DeviceState &dev, VkSemaphore semaphore);
 
 inline VkFence makeFence(const DeviceState &dev, bool pre_signal = false);
 
+VkSampler makeImmutableSampler(const DeviceState &dev,
+                               VkSamplerAddressMode mode);
+
 inline void waitForFenceInfinitely(const DeviceState &dev, VkFence fence);
 
 inline void resetFence(const DeviceState &dev, VkFence fence);

@@ -22,6 +22,36 @@ int exportBinarySemaphore(const DeviceState &dev, VkSemaphore semaphore)
     return fd;
 }
 
+VkSampler makeImmutableSampler(const DeviceState &dev,
+                               VkSamplerAddressMode address_mode)
+{
+    VkSampler sampler;
+
+    VkSamplerCreateInfo sampler_info;
+    sampler_info.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+    sampler_info.pNext = nullptr;
+    sampler_info.flags = 0;
+    sampler_info.magFilter = VK_FILTER_LINEAR;
+    sampler_info.minFilter = VK_FILTER_LINEAR;
+    sampler_info.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+    sampler_info.addressModeU = address_mode;
+    sampler_info.addressModeV = address_mode;
+    sampler_info.addressModeW = address_mode;
+    sampler_info.mipLodBias = 0;
+    sampler_info.anisotropyEnable = VK_FALSE;
+    sampler_info.maxAnisotropy = 0;
+    sampler_info.compareEnable = VK_FALSE;
+    sampler_info.compareOp = VK_COMPARE_OP_ALWAYS;
+    sampler_info.minLod = 0;
+    sampler_info.maxLod = VK_LOD_CLAMP_NONE;
+    sampler_info.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK;
+    sampler_info.unnormalizedCoordinates = VK_FALSE;
+
+    REQ_VK(dev.dt.createSampler(dev.hdl, &sampler_info, nullptr, &sampler));
+
+    return sampler;
+}
+
 void printVkError(VkResult res, const char *msg)
 {
 #define ERR_CASE(val) \

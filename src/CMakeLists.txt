@@ -14,10 +14,11 @@ add_library(rlpbr SHARED
 )
 
 target_link_libraries(rlpbr
-    PRIVATE
+    PUBLIC 
         rlpbr_core
         rlpbr_optix
         rlpbr_vulkan
+        rlpbr_vulkan_headless
     INTERFACE
         CUDA::cudart
         glm
@@ -27,3 +28,6 @@ target_include_directories(rlpbr
     INTERFACE
         ${MAIN_INCLUDE_DIR}
 )
+
+add_subdirectory(editor)
+

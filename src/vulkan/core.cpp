@@ -214,6 +214,7 @@ DeviceState InstanceState::makeDevice(
         VK_KHR_RAY_QUERY_EXTENSION_NAME,
         VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME,
         VK_EXT_ROBUSTNESS_2_EXTENSION_NAME,
+        VK_EXT_LINE_RASTERIZATION_EXTENSION_NAME,
     };
 
     bool need_present = present_check != nullptr;
@@ -335,10 +336,16 @@ DeviceState InstanceState::makeDevice(
     robustness_features.pNext = &rq_features;
     robustness_features.nullDescriptor = true;
 
+    VkPhysicalDeviceLineRasterizationFeaturesEXT line_features {};
+    line_features.sType =
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_LINE_RASTERIZATION_FEATURES_EXT;
+    line_features.pNext = &robustness_features;
+    line_features.smoothLines = true;
+
     VkPhysicalDeviceVulkan12Features vk12_features {};
     vk12_features.sType =
         VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
-    vk12_features.pNext = &robustness_features;
+    vk12_features.pNext = &line_features;
     vk12_features.bufferDeviceAddress = true;
     vk12_features.descriptorIndexing = true;
     vk12_features.descriptorBindingPartiallyBound = true;
@@ -362,6 +369,8 @@ DeviceState InstanceState::makeDevice(
     requested_features.features.samplerAnisotropy = false;
     requested_features.features.shaderInt16 = true;
     requested_features.features.shaderInt64 = true;
+    requested_features.features.wideLines = true;
+    requested_features.features.fillModeNonSolid = true;
 
     dev_create_info.pNext = &requested_features;
 

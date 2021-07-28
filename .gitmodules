@@ -1,6 +1,3 @@
-[submodule "external/simdjson"]
-	path = external/simdjson
-	url = https://github.com/simdjson/simdjson.git
 [submodule "external/meshoptimizer"]
 	path = external/meshoptimizer
 	url = https://github.com/zeux/meshoptimizer.git
@@ -25,3 +22,12 @@
 [submodule "external/SPIRV-Reflect"]
 	path = external/SPIRV-Reflect
 	url = https://github.com/KhronosGroup/SPIRV-Reflect.git
+[submodule "external/recastnavigation"]
+	path = external/recastnavigation
+	url = https://github.com/recastnavigation/recastnavigation.git
+[submodule "external/imgui"]
+	path = external/imgui
+	url = https://github.com/ocornut/imgui.git
+[submodule "external/simdjson"]
+	path = external/simdjson
+	url = https://github.com/simdjson/simdjson.git

@@ -1,9 +1,14 @@
+include(FetchContent)
+
+FetchContent_Declare(
+  simdjson
+  SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/simdjson
+)
+
+FetchContent_MakeAvailable(simdjson)
+
 set(MESHOPT_BUILD_SHARED_LIBS ON)
 add_subdirectory(meshoptimizer EXCLUDE_FROM_ALL)
-
-set(SIMDJSON_JUST_LIBRARY ON CACHE INTERNAL "")
-set(SIMDJSON_BUILD_STATIC ON CACHE INTERNAL "")
-add_subdirectory(simdjson EXCLUDE_FROM_ALL)
 
 add_library(stb INTERFACE)
 target_include_directories(stb SYSTEM INTERFACE stb)
@@ -37,5 +42,15 @@ target_include_directories(glslang SYSTEM
     INTERFACE
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/glslang/glslang/Public>
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/glslang/StandAlone>
-        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/glslang/SPIRV>)
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/glslang/SPIRV>
+)
 
+set(OpenGL_GL_PREFERENCE "GLVND" CACHE INTERNAL "")
+
+set(BUILD_SHARED_LIBS ON)
+add_subdirectory(recastnavigation EXCLUDE_FROM_ALL)
+
+add_library(imgui INTERFACE)
+target_include_directories(imgui INTERFACE
+    ${CMAKE_CURRENT_SOURCE_DIR}/imgui
+)

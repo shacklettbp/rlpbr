@@ -60,6 +60,9 @@ add_library(rlpbr_vulkan SHARED
     shader.hpp shader.cpp
     utils.hpp utils.cpp utils.inl
     present.hpp present.cpp
+)
+
+add_library(rlpbr_vulkan_headless SHARED
     linux_hacks.cpp
 )
 

@@ -8,6 +8,7 @@
 #include <unordered_set>
 
 #include <glm/gtc/type_precision.hpp>
+#include <glm/gtc/type_ptr.hpp>
 #include <glm/gtc/packing.hpp>
 #include <glm/gtx/string_cast.hpp>
 #include <glm/gtx/hash.hpp>
@@ -953,7 +954,6 @@ void ScenePreprocessor::dump(string_view out_path_name)
 {
     auto [processed_geometry, processed_instances] =
         processScene(scene_data_->desc);
-
 
     auto processed_lights = processLights(scene_data_->desc.defaultLights,
         processed_geometry, processed_instances);

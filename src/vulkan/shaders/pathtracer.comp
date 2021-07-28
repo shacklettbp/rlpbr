@@ -41,19 +41,8 @@
 
 #include "shader_common.h"
 #include "sampler.h"
-
-// Packed Structs
-struct PackedVertex {
-    vec4 data[2];
-};
-
-struct PackedMaterial {
-    u32vec4 data[2];
-};
-
-struct PackedMeshInfo {
-    u32vec4 data;
-};
+#include "utils.h"
+#include "packed.h"
 
 layout (push_constant, scalar) uniform PushConstant {
     RTPushConstant push_const;
@@ -118,6 +107,14 @@ layout (set = 1, binding = 4) readonly buffer MeshInfos {
     PackedMeshInfo meshInfos[];
 };
 
+vec4 fetchSceneTexture(uint32_t idx, vec2 uv, float mip_level)
+{
+    return textureLod(sampler2D(textures[nonuniformEXT(idx)],
+        repeatSampler), uv, mip_level);
+}
+
+#include "materials.h"
+
 // Debug functions
 
 #define ISTHREAD0 (gl_GlobalInvocationID.x == 0 && \
@@ -156,27 +153,6 @@ struct Environment {
 
 struct MeshInfo {
     uint32_t indexOffset;
-};
-
-struct MaterialParams {
-    vec3 baseColor;
-    float baseTransmission;
-    vec3 baseSpecular;
-    float specularScale;
-    float ior;
-    float baseMetallic;
-    float baseRoughness;
-    uint32_t flags;
-
-#ifdef ADVANCED_MATERIAL
-    float clearcoat;
-    float clearcoatRoughness;
-    vec3 attenuationColor;
-    float attenuationDistance;
-    float anisoScale;
-    float anisoRotation;
-    vec3 baseEmittance;
-#endif
 };
 
 // LightType "enum"
@@ -234,31 +210,6 @@ MeshInfo unpackMeshInfo(uint32_t mesh_idx)
     return mesh_info;
 }
 
-vec3 octahedralVectorDecode(vec2 f) {
-     f = f * 2.0 - 1.0;
-     // https://twitter.com/Stubbesaurus/status/937994790553227264
-     vec3 n = vec3(f.x, f.y, 1.f - abs(f.x) - abs(f.y));
-     float t = clamp(-n.z, 0.0, 1.0);
-     n.x += n.x >= 0.0 ? -t : t;
-     n.y += n.y >= 0.0 ? -t : t;
-     return normalize(n);
-}
-
-void decodeNormalTangent(in u32vec3 packed, out vec3 normal,
-                         out vec4 tangentAndSign)
-{
-    vec2 ab = unpackHalf2x16(packed.x);
-    vec2 cd = unpackHalf2x16(packed.y);
-
-    normal = vec3(ab.x, ab.y, cd.x);
-    float sign = cd.y;
-
-    vec2 oct_tan = unpackSnorm2x16(packed.z);
-    vec3 tangent = octahedralVectorDecode(oct_tan);
-
-    tangentAndSign = vec4(tangent, sign);
-}
-
 Vertex unpackVertex(uint32_t idx)
 {
     PackedVertex packed = vertices[nonuniformEXT(idx)];
@@ -299,74 +250,6 @@ Triangle fetchTriangle(uint32_t index_offset)
 uint32_t getMaterialID(uint32_t inst_material_idx)
 {
     return instanceMaterials[nonuniformEXT(inst_material_idx)];
-}
-
-MaterialParams unpackMaterialParams(uint32_t material_id)
-{
-    u32vec4 data0 = matParams[nonuniformEXT(material_id)].data[0];
-
-    MaterialParams params;
-    {
-        vec4 unpack = unpackUnorm4x8(data0.x);
-        params.baseColor = unpack.xyz * unpack.xyz;
-        params.baseTransmission = unpack.w;
-    }
-
-    {
-        vec4 unpack = unpackUnorm4x8(data0.y);
-        params.specularScale = unpack.x;
-        params.baseMetallic = unpack.z;
-        params.baseRoughness = unpack.w;
-
-        params.ior = float(uint8_t(data0.y >> 8)) / 170.0 + 1.0;
-    }
-
-    {
-        vec2 xy = unpackHalf2x16(data0.z);
-        vec2 zw = unpackHalf2x16(data0.w);
-
-        params.baseSpecular = vec3(xy, zw.x);
-        params.flags = uint16_t(data0.w >> 16);
-    }
-
-#ifdef ADVANCED_MATERIAL
-    if (bool(params.flags & MaterialFlags::Complex)) {
-        u32vec4 data1 = matParams[nonuniformEXT(material_idx)].data[1];
-
-        {
-            vec4 unpack = unpackUnorm4x8(data1.x);
-            params.clearcoat = unpack.x;
-            params.clearcoatRoughness = unpack.y;
-            params.attenuationColor.xy = unpack.zw;
-
-            vec4 unpack2 = unpackUnorm4x8(data1.y);
-            params.attenuationColor.z = unpack2.x;
-
-            params.attenuationColor *= params.attenuationColor;
-
-            params.anisoScale = unpack2.y;
-            params.anisoRotation = unpack2.z;
-            // unpack2.w currently unused
-        }
-
-        {
-            vec2 xy = unpackHalf2x16(data1.z);
-            params.attenuationDistance = xy.x;
-            vec2 zw = unpackHalf2x16(data1.w);
-            params.baseEmittance = vec3(xy.y, zw.x, zw.y);
-        }
-    } else {
-        params.clearcoat = 0.0;
-        params.clearcoatRoughness = 0.0;
-        params.attenuationColor = vec3(1.0);
-        params.anisoScale = 0.0;
-        params.anisoRotation = 0.0;
-        params.attenuationDistance = INFINITY;
-        params.baseEmittance = vec3(0.0);
-    }
-#endif
-
-    return params;
 }
 
 PointLight unpackPointLight(vec4 data0, vec4 data1)
@@ -425,27 +308,6 @@ struct TangentFrame {
     vec3 tangent;
     vec3 bitangent;
     vec3 normal;
-};
-
-struct Material {
-    vec3 rho;
-    float transmission;
-    vec3 rhoSpecular;
-    float specularScale;
-    float ior;
-    float metallic;
-    float roughness;
-    float transparencyMask;
-
-#ifdef ADVANCED_MATERIAL
-    float clearcoatScale;
-    float clearcoatRoughness;
-    vec3 attenuationColor;
-    float attenuationDistance;
-    float anisoScale;
-    float anisoRotation;
-    vec3 emittance;
-#endif
 };
 
 struct BSDFParams {
@@ -548,21 +410,6 @@ vec3 computeGeometricNormal(Triangle tri)
     vec3 v2 = tri.c.position - tri.a.position;
 
     return cross(v1, v2);
-}
-
-vec3 transformPosition(mat4x3 o2w, vec3 p)
-{
-    return o2w[0] * p.x + o2w[1] * p.y + o2w[2] * p.z + o2w[3];
-}
-
-vec3 transformVector(mat4x3 o2w, vec3 v)
-{
-    return o2w[0] * v.x + o2w[1] * v.y + o2w[2] * v.z;
-}
-
-vec3 transformNormal(mat4x3 w2o, vec3 n)
-{
-    return vec3(dot(w2o[0], n), dot(w2o[1], n), dot(w2o[2], n));
 }
 
 TangentFrame computeTangentFrame(Vertex v,
@@ -772,107 +619,6 @@ COMPUTE_FRESNEL(float)
 COMPUTE_FRESNEL(vec3)
 
 #undef COMPUTE_FRESNEL
-
-Material processMaterial(MaterialParams params,
-                         uint32_t base_tex_idx,
-                         vec2 uv, float mip_level)
-{
-    Material mat;
-
-    mat.rho = params.baseColor;
-    mat.transparencyMask = 1.f;
-    if (bool(params.flags & MaterialFlagsHasBaseTexture)) {
-        vec4 tex_value = textureLod(sampler2D(
-            textures[nonuniformEXT(base_tex_idx + TextureConstantsBaseOffset)],
-            repeatSampler), uv, mip_level);
-
-        mat.rho.x *= tex_value.x;
-        mat.rho.y *= tex_value.y;
-        mat.rho.z *= tex_value.z;
-        mat.transparencyMask *= tex_value.w;
-    }
-
-    mat.metallic = params.baseMetallic;
-    mat.roughness = params.baseRoughness;
-    if (bool(params.flags & MaterialFlagsHasMRTexture)) {
-        vec2 tex_value = textureLod(sampler2D(
-            textures[nonuniformEXT(base_tex_idx + TextureConstantsMROffset)],
-            repeatSampler), uv, mip_level).xy;
-
-        mat.roughness *= tex_value.x;
-        mat.metallic *= tex_value.y;
-    }
-    
-    mat.rhoSpecular = params.baseSpecular;
-    mat.specularScale = params.specularScale;
-    if (bool(params.flags & MaterialFlagsHasSpecularTexture)) {
-        vec4 tex_value = textureLod(sampler2D(
-            textures[nonuniformEXT(base_tex_idx +
-                                   TextureConstantsSpecularOffset)],
-            repeatSampler), uv, mip_level);
-
-        mat.rhoSpecular.x *= tex_value.x;
-        mat.rhoSpecular.y *= tex_value.y;
-        mat.rhoSpecular.z *= tex_value.z;
-        mat.specularScale *= tex_value.w;
-    }
-
-    mat.transmission = params.baseTransmission;
-    if (bool(params.flags & MaterialFlagsHasTransmissionTexture)) {
-        float tex_value = textureLod(sampler2D(
-            textures[nonuniformEXT(base_tex_idx +
-                                   TextureConstantsTransmissionOffset)],
-            repeatSampler), uv, mip_level).x;
-
-        mat.transmission *= tex_value;
-    }
-    mat.ior = params.ior;
-
-#ifdef ADVANCED_MATERIAL
-    mat.emittance = params.baseEmittance;
-    if (bool(params.flags & MaterialFlagsHasEmittanceTexture)) {
-        vec3 tex_value = textureLod(sampler2D(
-            textures[nonuniformEXT(base_tex_idx +
-                                   TextureConstantsEmittanceOffset)],
-            repeatSampler), uv, mip_level).xyz;
-
-        mat.emittance.x *= tex_value.x;
-        mat.emittance.y *= tex_value.y;
-        mat.emittance.z *= tex_value.z;
-    }
-
-    mat.clearcoatScale = params.clearcoat;
-    mat.clearcoatRoughness = params.clearcoatRoughness;
-    if (bool(params.flags & MaterialFlagsHasClearcoatTexture)) {
-        vec2 tex_value = textureLod(sampler2D(
-            textures[nonuniformEXT(base_tex_idx +
-                                   TextureConstantsClearcoatOffset)],
-            repeatSampler), uv, mip_level).xy;
-
-        mat.clearcoatScale *= tex_value.x;
-        mat.clearcoatRoughness *= tex_value.y;
-    }
-
-    mat.anisoScale = params.anisoScale;
-    mat.anisoRotation = params.anisoRotation;
-    if (bool(params.flags & MaterialFlagsHasAnisotropicTexture)) {
-        vec2 tex_value = textureLod(sampler2D(
-            textures[nonuniformEXT(base_tex_idx +
-                                   TextureConstantsAnisoOffset)],
-            repeatSampler), uv, mip_level).xy;
-
-        vec2 aniso_v = tex_value * 2.f - 1.f;
-
-        mat.anisoScale = length(aniso_v);
-        mat.anisoRotation = atan2f(aniso_v.y, aniso_v.x);
-    }
-
-    mat.attenuationColor = params.attenuationColor;
-    mat.attenuationDistance = params.attenuationDistance;
-#endif
-
-    return mat;
-}
 
 const float ShadingMinAlpha = 0.0064f;
 

@@ -157,7 +157,8 @@ struct SceneLoadData {
 
     std::variant<std::ifstream, std::vector<char>> data;
 
-    static SceneLoadData loadFromDisk(std::string_view scene_path);
+    static SceneLoadData loadFromDisk(std::string_view scene_path,
+                                      bool load_full_file = false);
 };
 
 struct Scene {

@@ -49,7 +49,8 @@ public:
     ShaderPipeline(const DeviceState &dev,
                    const std::vector<std::string> &shader_paths,
                    const std::vector<BindingOverride> &binding_overrides,
-                   const std::vector<std::string> &defines);
+                   const std::vector<std::string> &defines,
+                   const char *shader_dir);
     ShaderPipeline(const ShaderPipeline &) = delete;
     ShaderPipeline(ShaderPipeline &&) = default;
     ~ShaderPipeline();

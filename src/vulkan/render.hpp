@@ -100,6 +100,8 @@ struct PipelineState {
 
 struct PerBatchState {
     VkFence fence;
+    VkSemaphore renderSignal;
+    VkSemaphore swapchainReady;
     VkCommandPool cmdPool;
     VkCommandBuffer renderCmd;
 

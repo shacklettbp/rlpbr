@@ -132,36 +132,6 @@ static FramebufferConfig getFramebufferConfig(const RenderConfig &cfg,
     };
 }
 
-static VkSampler makeImmutableSampler(const DeviceState &dev,
-                                      VkSamplerAddressMode address_mode)
-{
-    VkSampler sampler;
-
-    VkSamplerCreateInfo sampler_info;
-    sampler_info.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
-    sampler_info.pNext = nullptr;
-    sampler_info.flags = 0;
-    sampler_info.magFilter = VK_FILTER_LINEAR;
-    sampler_info.minFilter = VK_FILTER_LINEAR;
-    sampler_info.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
-    sampler_info.addressModeU = address_mode;
-    sampler_info.addressModeV = address_mode;
-    sampler_info.addressModeW = address_mode;
-    sampler_info.mipLodBias = 0;
-    sampler_info.anisotropyEnable = VK_FALSE;
-    sampler_info.maxAnisotropy = 0;
-    sampler_info.compareEnable = VK_FALSE;
-    sampler_info.compareOp = VK_COMPARE_OP_ALWAYS;
-    sampler_info.minLod = 0;
-    sampler_info.maxLod = VK_LOD_CLAMP_NONE;
-    sampler_info.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK;
-    sampler_info.unnormalizedCoordinates = VK_FALSE;
-
-    REQ_VK(dev.dt.createSampler(dev.hdl, &sampler_info, nullptr, &sampler));
-
-    return sampler;
-}
-
 static RenderState makeRenderState(const DeviceState &dev,
                                    const RenderConfig &cfg,
                                    const BackendConfig &backend_cfg)
@@ -243,7 +213,8 @@ static RenderState makeRenderState(const DeviceState &dev,
                     VulkanConfig::textures_per_material,
              VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT},
         },
-        shader_defines);
+        shader_defines,
+        STRINGIFY(SHADER_DIR));
 
     FixedDescriptorPool desc_pool(dev, shader, 0, backend_cfg.numBatches);
 
@@ -383,6 +354,7 @@ static PerBatchState makePerBatchState(const DeviceState &dev,
                                        VkDescriptorSet rt_set,
                                        const BSDFPrecomputed &precomp_tex,
                                        bool auxiliary_outputs,
+                                       bool need_present,
                                        uint32_t global_batch_idx)
 {
     VkCommandPool cmd_pool = makeCmdPool(dev, dev.computeQF);
@@ -540,6 +512,8 @@ static PerBatchState makePerBatchState(const DeviceState &dev,
 
     return PerBatchState {
         makeFence(dev),
+        need_present ? makeBinarySemaphore(dev) : VK_NULL_HANDLE,
+        need_present ? makeBinarySemaphore(dev) : VK_NULL_HANDLE,
         cmd_pool,
         render_cmd,
         output_buffer,
@@ -878,16 +852,18 @@ VulkanBackend::VulkanBackend(const RenderConfig &cfg,
       batch_mask_(backend_cfg.numBatches == 2 ? 1 : 0),
       frame_counter_(0),
       present_(backend_cfg.needPresent ?
-          make_optional<PresentationState>(inst, dev, compute_queues_[0],
-              dev.computeQF, backend_cfg.numBatches) :
+          make_optional<PresentationState>(inst, dev, dev.computeQF,
+              backend_cfg.numBatches, glm::u32vec2(1, 1), true) :
           optional<PresentationState>())
 {
+    present_->forceTransition(dev, compute_queues_[0], dev.computeQF);
+
     batch_states_.reserve(backend_cfg.numBatches);
     for (int i = 0; i < (int)backend_cfg.numBatches; i++) {
         batch_states_.emplace_back(makePerBatchState(
             dev, fb_cfg_, fb_, param_cfg_,
             render_input_buffer_, render_state_.rtPool.makeSet(),
-            bsdf_precomp_, cfg.auxiliaryOutputs, i));
+            bsdf_precomp_, cfg.auxiliaryOutputs, backend_cfg.needPresent, i));
     }
 }
 
@@ -898,8 +874,9 @@ LoaderImpl VulkanBackend::makeLoader()
 
     auto loader = new VulkanLoader(
         dev, alloc, transfer_queues_[loader_idx % transfer_queues_.size()],
-        compute_queues_.back(), render_state_.rt, dev.computeQF,
-        max_texture_resolution_);
+        compute_queues_.back(), render_state_.rt, {
+            0, 1, 2, 3, 4,
+        }, dev.computeQF, max_texture_resolution_);
 
     return makeLoaderImpl<VulkanLoader>(loader);
 }
@@ -1059,20 +1036,24 @@ uint32_t VulkanBackend::render(const Environment *envs)
         nullptr,
     };
 
-    VkSemaphore render_signal;
     uint32_t swapchain_idx = 0;
     if (present_.has_value()) {
-        render_signal = present_->getRenderSemaphore();
-        render_submit.pSignalSemaphores = &render_signal;
+        render_submit.pSignalSemaphores = &batch_state.renderSignal;
         render_submit.signalSemaphoreCount = 1;
 
-        swapchain_idx = present_->acquireNext(dev);
+        swapchain_idx = present_->acquireNext(dev, batch_state.swapchainReady);
     }
 
     compute_queues_[cur_batch_].submit(dev, 1, &render_submit, batch_state.fence);
 
     if (present_.has_value()) {
-        present_->present(dev, swapchain_idx, compute_queues_[cur_batch_]);
+        array present_wait_semas {
+            batch_state.swapchainReady,
+            batch_state.renderSignal,
+        };
+        present_->present(dev, swapchain_idx, compute_queues_[cur_batch_],
+                          present_wait_semas.size(),
+                          present_wait_semas.data());
     }
 
     frame_counter_ += batch_size_;

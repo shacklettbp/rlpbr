@@ -25,7 +25,7 @@ struct PackedInstance {
     uint32_t meshOffset;
 };
 
-#define MAX_MATERIALS (1000)
+#define MAX_MATERIALS (5000)
 #define MAX_LIGHTS (100000)
 #define WORKGROUP_SIZE (32)
 #define LOCAL_WORKGROUP_X (8)

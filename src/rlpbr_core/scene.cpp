@@ -12,7 +12,8 @@ using namespace std;
 
 namespace RLpbr {
 
-SceneLoadData SceneLoadData::loadFromDisk(string_view scene_path_name)
+SceneLoadData SceneLoadData::loadFromDisk(string_view scene_path_name,
+                                          bool load_full_file)
 {
     filesystem::path scene_path(scene_path_name);
     filesystem::path scene_dir = scene_path.parent_path();
@@ -151,6 +152,13 @@ SceneLoadData SceneLoadData::loadFromDisk(string_view scene_path_name)
 
     alignSkip();
 
+    auto loadRemainingData = [&]() {
+        vector<char> file_data(hdr.totalBytes);
+        scene_file.read(file_data.data(), hdr.totalBytes);
+
+        return file_data;
+    };
+
     return SceneLoadData {
         hdr,
         move(mesh_infos),
@@ -168,7 +176,9 @@ SceneLoadData SceneLoadData::loadFromDisk(string_view scene_path_name)
             move(dynamic_instances),
             move(dynamic_transforms),
         },
-        variant<ifstream, vector<char>>(move(scene_file)),
+        load_full_file ? 
+            variant<ifstream, vector<char>>(loadRemainingData()) :
+            variant<ifstream, vector<char>>(move(scene_file)),
     };
 }
 

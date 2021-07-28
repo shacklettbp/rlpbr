@@ -36,12 +36,24 @@ VkBool32 PresentationState::deviceSupportCallback(VkInstance inst,
     return glfw_ret == GLFW_TRUE ? VK_TRUE : VK_FALSE;
 }
 
-static GLFWwindow *makeWindow()
+static GLFWwindow *makeWindow(glm::u32vec2 dims)
 {
     glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
+    glfwWindowHint(GLFW_DECORATED, GLFW_FALSE);
 
-    return glfwCreateWindow(1, 1, "RLPBR", nullptr, nullptr);
+#if 0
+    auto monitor = glfwGetPrimaryMonitor();
+    auto mode = glfwGetVideoMode(monitor);
+
+    glfwWindowHint(GLFW_RED_BITS, mode->redBits);
+    glfwWindowHint(GLFW_GREEN_BITS, mode->greenBits);
+    glfwWindowHint(GLFW_BLUE_BITS, mode->blueBits);
+    glfwWindowHint(GLFW_REFRESH_RATE, mode->refreshRate);
+    return glfwCreateWindow(mode->width, mode->height, "RLPBR", monitor, nullptr);
+#endif
+
+    return glfwCreateWindow(dims.x, dims.y, "RLPBR", nullptr, nullptr);
 }
 
 VkSurfaceKHR getWindowSurface(const InstanceState &inst, GLFWwindow *window)
@@ -82,7 +94,8 @@ static VkSurfaceFormatKHR selectSwapchainFormat(const InstanceState &inst,
 
 static VkPresentModeKHR selectSwapchainMode(const InstanceState &inst,
                                             VkPhysicalDevice phy,
-                                            VkSurfaceKHR surface)
+                                            VkSurfaceKHR surface,
+                                            bool need_immediate)
 {
     uint32_t num_modes;
     REQ_VK(inst.dt.getPhysicalDeviceSurfacePresentModesKHR(
@@ -93,21 +106,29 @@ static VkPresentModeKHR selectSwapchainMode(const InstanceState &inst,
             phy, surface, &num_modes, modes.data()));
 
     for (VkPresentModeKHR mode : modes) {
-        if (mode == VK_PRESENT_MODE_IMMEDIATE_KHR) {
+        if (need_immediate && mode == VK_PRESENT_MODE_IMMEDIATE_KHR) {
+            return mode;
+        } else if (!need_immediate &&
+                   mode == VK_PRESENT_MODE_FIFO_KHR) {
             return mode;
         }
     }
-    
-    cerr << "Could not find immediate swapchain" << endl;
-    fatalExit();
+
+    if (!need_immediate) {
+        return modes[0];
+    } else {
+        cerr << "Could not find immediate swapchain" << endl;
+        fatalExit();
+    }
 }
 
-static VkSwapchainKHR makeSwapchain(const InstanceState &inst,
-                                    const DeviceState &dev,
-                                    GLFWwindow *window,
-                                    VkSurfaceKHR surface,
-                                    uint32_t qf_idx,
-                                    uint32_t num_frames_inflight)
+static Swapchain makeSwapchain(const InstanceState &inst,
+                               const DeviceState &dev,
+                               GLFWwindow *window,
+                               VkSurfaceKHR surface,
+                               uint32_t qf_idx,
+                               uint32_t num_frames_inflight,
+                               bool need_immediate)
 {
     // Need to include this call despite the platform specific check
     // earlier (pre surface creation), or validation layers complain
@@ -121,7 +142,8 @@ static VkSwapchainKHR makeSwapchain(const InstanceState &inst,
     }
 
     VkSurfaceFormatKHR format = selectSwapchainFormat(inst, dev.phy, surface);
-    VkPresentModeKHR mode = selectSwapchainMode(inst, dev.phy, surface);
+    VkPresentModeKHR mode = selectSwapchainMode(inst, dev.phy, surface,
+                                                need_immediate);
 
     VkSurfaceCapabilitiesKHR caps;
     REQ_VK(inst.dt.getPhysicalDeviceSurfaceCapabilitiesKHR(
@@ -172,7 +194,10 @@ static VkSwapchainKHR makeSwapchain(const InstanceState &inst,
     REQ_VK(dev.dt.createSwapchainKHR(dev.hdl, &swapchain_info, nullptr,
                                      &swapchain));
 
-    return swapchain;
+    return Swapchain {
+        swapchain,
+        glm::u32vec2(swapchain_size.width, swapchain_size.height),
+    };
 }
 
 static DynArray<VkImage> getSwapchainImages(const DeviceState &dev,
@@ -189,33 +214,23 @@ static DynArray<VkImage> getSwapchainImages(const DeviceState &dev,
     return swapchain_images;
 }
 
-static DynArray<pair<VkSemaphore, VkSemaphore>> makePresentSemaphores(
-    const DeviceState &dev, uint32_t num_semas)
-{
-    DynArray<pair<VkSemaphore, VkSemaphore>> ready_semaphores(num_semas);
-
-    for (int i = 0; i < (int)num_semas; i++) {
-        ready_semaphores[i] = {
-            makeBinarySemaphore(dev),
-            makeBinarySemaphore(dev),
-        };
-    }
-
-    return ready_semaphores;
-}
-
 PresentationState::PresentationState(const InstanceState &inst,
                                      const DeviceState &dev,
-                                     const QueueState &present_queue,
                                      uint32_t qf_idx,
-                                     uint32_t num_frames_inflight)
-    : window_(makeWindow()),
+                                     uint32_t num_frames_inflight,
+                                     glm::u32vec2 window_dims,
+                                     bool need_immediate)
+    : window_(makeWindow(window_dims)),
       surface_(getWindowSurface(inst, window_)),
       swapchain_(makeSwapchain(inst, dev, window_, surface_,
-                               qf_idx, num_frames_inflight)),
-      swapchain_imgs_(getSwapchainImages(dev, swapchain_)),
-      present_semas_(makePresentSemaphores(dev, num_frames_inflight)),
-      cur_sema_(0)
+                               qf_idx, num_frames_inflight,
+                               need_immediate)),
+      swapchain_imgs_(getSwapchainImages(dev, swapchain_.hdl))
+{
+}
+
+void PresentationState::forceTransition(const DeviceState &dev,
+    const QueueState &present_queue, uint32_t qf_idx)
 {
     VkCommandPool tmp_pool = makeCmdPool(dev, qf_idx);
     VkCommandBuffer cmd = makeCmdBuffer(dev, tmp_pool);
@@ -269,44 +284,45 @@ PresentationState::PresentationState(const InstanceState &inst,
     dev.dt.destroyCommandPool(dev.hdl, tmp_pool, nullptr);
 }
 
-uint32_t PresentationState::acquireNext(const DeviceState &dev)
+uint32_t PresentationState::acquireNext(const DeviceState &dev,
+                                        VkSemaphore signal_sema)
 {
     uint32_t swapchain_idx;
-    REQ_VK(dev.dt.acquireNextImageKHR(dev.hdl,swapchain_,
-                                      0, present_semas_[cur_sema_].first,
+    REQ_VK(dev.dt.acquireNextImageKHR(dev.hdl, swapchain_.hdl,
+                                      0, signal_sema,
                                       VK_NULL_HANDLE,
                                       &swapchain_idx));
 
     return swapchain_idx;
 }
 
-VkSemaphore PresentationState::getRenderSemaphore()
+VkImage PresentationState::getImage(uint32_t idx) const
 {
-    return present_semas_[cur_sema_].second;
+    return swapchain_imgs_[idx];
+}
+
+uint32_t PresentationState::numSwapchainImages() const
+{
+    return swapchain_imgs_.size();
 }
 
 void PresentationState::present(const DeviceState &dev, uint32_t swapchain_idx,
-                                const QueueState &present_queue)
+                                const QueueState &present_queue,
+                                uint32_t num_wait_semas,
+                                const VkSemaphore *wait_semas)
 {
-    array wait_semas {
-        present_semas_[cur_sema_].first,
-        present_semas_[cur_sema_].second,
-    };
-
     VkPresentInfoKHR present_info;
     present_info.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
     present_info.pNext = nullptr;
-    present_info.waitSemaphoreCount = wait_semas.size();
-    present_info.pWaitSemaphores = wait_semas.data();
+    present_info.waitSemaphoreCount = num_wait_semas;
+    present_info.pWaitSemaphores = wait_semas;
 
     present_info.swapchainCount = 1;
-    present_info.pSwapchains = &swapchain_;
+    present_info.pSwapchains = &swapchain_.hdl;
     present_info.pImageIndices = &swapchain_idx;
     present_info.pResults = nullptr;
 
     present_queue.presentSubmit(dev, &present_info);
-
-    cur_sema_ = (cur_sema_ + 1) % present_semas_.size();
 }
 
 }

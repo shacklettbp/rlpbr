@@ -87,6 +87,14 @@ struct TextureData {
     std::vector<VkImageView> views;
 };
 
+struct SceneDescriptorBindings {
+    uint32_t vertexBinding;
+    uint32_t indexBinding;
+    uint32_t textureBinding;
+    uint32_t materialBinding;
+    uint32_t meshInfoBinding;
+};
+
 struct VulkanScene : public Scene {
     TextureData textures;
     DescriptorSet descSet;
@@ -105,6 +113,7 @@ public:
                  const QueueState &transfer_queue,
                  const QueueState &render_queue,
                  const ShaderPipeline &shader,
+                 const SceneDescriptorBindings &binding_defn,
                  uint32_t render_qf,
                  uint32_t max_texture_resolution);
 
@@ -125,6 +134,7 @@ private:
     VkFence fence_;
 
     DescriptorManager desc_mgr_;
+    SceneDescriptorBindings binding_defn_;
 
     uint32_t render_qf_;
     uint32_t max_texture_resolution_;

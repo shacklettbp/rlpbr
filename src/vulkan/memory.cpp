@@ -26,7 +26,7 @@ static constexpr VkBufferUsageFlags shaderUsage =
     VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
 
 static constexpr VkBufferUsageFlags paramUsage =
-    VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
+    VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT;
 
 static constexpr VkBufferUsageFlags hostRTUsage =
     VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR |
@@ -515,9 +515,15 @@ MemoryAllocator::MemoryAllocator(const DeviceState &d,
       alignments_(getMemoryAlignments(inst, dev.phy)),
       local_buffer_usage_flags_(BufferFlags::localUsage),
       texture_formats_(chooseTextureFormats(dev, inst)),
-      type_indices_(findTypeIndices(dev, inst, texture_formats_))
+      type_indices_(findTypeIndices(dev, inst, texture_formats_)),
+      color_attach_fmt_(chooseFormat(dev.phy, inst,
+                                     ImageFlags::colorAttachmentReqs,
+                                     array {VK_FORMAT_R8G8B8A8_SRGB})),
+      depth_attach_fmt_(chooseFormat(dev.phy, inst,
+                                     ImageFlags::depthAttachmentReqs,
+                                     array {VK_FORMAT_D32_SFLOAT,
+                                            VK_FORMAT_D32_SFLOAT_S8_UINT}))
 {}
-
 
 HostBuffer MemoryAllocator::makeHostBuffer(VkDeviceSize num_bytes,
                                            bool dev_addr)
@@ -724,6 +730,24 @@ optional<VkDeviceMemory> MemoryAllocator::alloc(VkDeviceSize num_bytes)
     }
 
     return mem;
+}
+
+LocalImage MemoryAllocator::makeColorAttachment(uint32_t width,
+                                                uint32_t height)
+{
+    return makeDedicatedImage(width, height, 1,
+                              color_attach_fmt_,
+                              ImageFlags::colorAttachmentUsage,
+                              type_indices_.local);
+}
+
+LocalImage MemoryAllocator::makeDepthAttachment(uint32_t width,
+                                                uint32_t height)
+{
+    return makeDedicatedImage(width, height, 1,
+                              depth_attach_fmt_,
+                              ImageFlags::depthAttachmentUsage,
+                              type_indices_.local);
 }
 
 LocalImage MemoryAllocator::makeDedicatedImage(uint32_t width,

@@ -22,7 +22,10 @@ void QueueState::submit(const DeviceState &dev,
 
     if (shared_) {
         mutex_.unlock();
-    } } void QueueState::bindSubmit(const DeviceState &dev,
+    }
+} 
+
+void QueueState::bindSubmit(const DeviceState &dev,
                             uint32_t submit_count,
                             const VkBindSparseInfo *pSubmits,
                             VkFence fence) const

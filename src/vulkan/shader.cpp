@@ -133,7 +133,8 @@ static vector<uint32_t> compileToSPV(const DynArray<char> &src,
 
     DirStackFileIncluder preprocess_includer;
     preprocess_includer.pushExternalLocalDirectory(shader_dir);
-    preprocess_includer.pushExternalLocalDirectory(shader_dir + "../../");
+    preprocess_includer.pushExternalLocalDirectory(
+        string(STRINGIFY(SHADER_DIR)) + "../../");
 
     auto handleError = [&](const char *prefix) {
         cerr << prefix << " for shader: " << name << endl;
@@ -265,7 +266,8 @@ ShaderPipeline::ShaderPipeline(
     const DeviceState &d,
     const vector<string> &shader_names,
     const vector<BindingOverride> &binding_overrides,
-    const vector<string> &defines)
+    const vector<string> &defines,
+    const char *shader_dir)
     : dev(d),
       shaders_(),
       layouts_(),
@@ -273,7 +275,6 @@ ShaderPipeline::ShaderPipeline(
 {
     vector<ReflectedSetInfo> reflected_sets;
 
-    const char *shader_dir = STRINGIFY(SHADER_DIR);
     for (const auto &shader_name : shader_names) {
         const string full_path = string(shader_dir) + shader_name;
 

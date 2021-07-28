@@ -77,6 +77,7 @@ VulkanLoader::VulkanLoader(const DeviceState &d,
                            const QueueState &transfer_queue,
                            const QueueState &render_queue,
                            const ShaderPipeline &shader,
+                           const SceneDescriptorBindings &binding_defn,
                            uint32_t render_qf,
                            uint32_t max_texture_resolution)
     : dev(d),
@@ -90,6 +91,7 @@ VulkanLoader::VulkanLoader(const DeviceState &d,
       transfer_sema_(makeBinarySemaphore(dev)),
       fence_(makeFence(dev)),
       desc_mgr_(dev, shader, 1),
+      binding_defn_(binding_defn),
       render_qf_(render_qf),
       max_texture_resolution_(max_texture_resolution)
 {}
@@ -1063,7 +1065,11 @@ shared_ptr<Scene> VulkanLoader::loadScene(SceneLoadData &&load_info)
         0,
         load_info.hdr.numVertices * sizeof(Vertex),
     };
-    desc_updates.storage(scene_set.hdl, &vertex_buffer_info, 0);
+
+    if (binding_defn_.vertexBinding != ~0u) {
+        desc_updates.storage(scene_set.hdl, &vertex_buffer_info,
+                             binding_defn_.vertexBinding);
+    }
 
     VkDescriptorBufferInfo index_buffer_info {
         data.buffer,
@@ -1071,7 +1077,10 @@ shared_ptr<Scene> VulkanLoader::loadScene(SceneLoadData &&load_info)
         load_info.hdr.numIndices * sizeof(uint32_t),
     };
 
-    desc_updates.storage(scene_set.hdl, &index_buffer_info, 1);
+    if (binding_defn_.indexBinding != ~0u) {
+        desc_updates.storage(scene_set.hdl, &index_buffer_info,
+                             binding_defn_.indexBinding);
+    }
 
     vector<VkDescriptorImageInfo> descriptor_views;
     descriptor_views.reserve(load_info.hdr.numMaterials * 8 + 1);
@@ -1129,14 +1138,21 @@ shared_ptr<Scene> VulkanLoader::loadScene(SceneLoadData &&load_info)
 
     if (load_info.hdr.numMaterials > 0) {
         assert(load_info.hdr.numMaterials < VulkanConfig::max_materials);
-        desc_updates.textures(scene_set.hdl, descriptor_views.data(),
-                              descriptor_views.size(), 2);
+
+        if (binding_defn_.textureBinding != ~0u) {
+            desc_updates.textures(scene_set.hdl, descriptor_views.data(),
+                descriptor_views.size(), binding_defn_.textureBinding);
+        }
 
         material_buffer_info.buffer = data.buffer;
         material_buffer_info.offset = load_info.hdr.materialOffset;
         material_buffer_info.range =
             load_info.hdr.numMaterials * sizeof(MaterialParams);
-        desc_updates.storage(scene_set.hdl, &material_buffer_info, 3);
+
+        if (binding_defn_.materialBinding != ~0u) {
+            desc_updates.storage(scene_set.hdl, &material_buffer_info,
+                                 binding_defn_.materialBinding);
+        }
     }
 
     VkDescriptorBufferInfo mesh_buffer_info {
@@ -1145,7 +1161,10 @@ shared_ptr<Scene> VulkanLoader::loadScene(SceneLoadData &&load_info)
         load_info.hdr.numMeshes * sizeof(MeshInfo),
     };
 
-    desc_updates.storage(scene_set.hdl, &mesh_buffer_info, 4);
+    if (binding_defn_.meshInfoBinding != ~0u) {
+        desc_updates.storage(scene_set.hdl, &mesh_buffer_info,
+                             binding_defn_.meshInfoBinding);
+    }
 
     desc_updates.update(dev);
 

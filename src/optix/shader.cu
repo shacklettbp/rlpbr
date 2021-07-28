@@ -1415,41 +1415,11 @@ __forceinline__ pair<LightSample, float> samplePointLight(
 
 __forceinline__ LightInfo sampleLights(Sampler &sampler,
     const Environment &env, cudaTextureObject_t env_tex, 
-    float3 origin, float3 base_normal)
+    float3 origin, float3 base_normal, float3 cam_pos)
 {
-    uint32_t total_lights = env.numLights + 1;
+    float3 light_position = cam_pos + make_float3(0.f, 0.1f, 0.f);
 
-    uint32_t light_idx = min(uint32_t(sampler.get1D() * total_lights),
-                             total_lights - 1);
-
-    float2 light_sample_uv = sampler.get2D();
-
-    float inv_selection_pdf = float(total_lights);
-
-    PointLight point_light {};
-    PortalLight portal_light {};
-    LightType light_type {};
-
-    if (light_idx < env.numLights) {
-        light_type =
-            unpackLight(env, light_idx, &point_light, &portal_light);
-    } else {
-        light_type = LightType::Environment;
-    }
-
-    float3 light_position {};
-    float3 dir_check {};
-    LightSample light_sample {};
-    if (light_type == LightType::Point) {
-        light_position = point_light.position;
-        dir_check = light_position - origin;
-    } else if (light_type == LightType::Portal) {
-        light_position = getPortalLightPoint(portal_light, light_sample_uv);
-        dir_check = light_position - origin;
-    } else {
-        light_sample = sampleEnvMap(env_tex, light_sample_uv, inv_selection_pdf);
-        dir_check = light_sample.toLight;
-    }
+    float3 dir_check = light_position - origin;
 
     float3 shadow_offset_normal =
         dot(dir_check, base_normal) > 0 ? base_normal : -base_normal;
@@ -1457,22 +1427,10 @@ __forceinline__ LightInfo sampleLights(Sampler &sampler,
     float3 shadow_origin =
         offsetRayOrigin(origin, shadow_offset_normal);
 
-    float shadow_len {};
-    if (light_type == LightType::Point) {
-        float shadow_len2;
-        tie(light_sample, shadow_len2) =
-            samplePointLight(point_light, shadow_origin, inv_selection_pdf);
-
-        shadow_len = sqrtf(shadow_len2);
-    } else if (light_type == LightType::Portal) {
-        float3 to_light = light_position - shadow_origin;
-        light_sample = samplePortal(portal_light, env_tex, to_light,
-                                    inv_selection_pdf);
-
-        shadow_len = 10000.f;
-    } else {
-        shadow_len = 10000.f;
-    }
+    LightSample light_sample;
+    light_sample.toLight = normalize(light_position - shadow_origin);
+    light_sample.weight = make_float3(5.f);
+    float shadow_len = 0;
 
     return LightInfo {
         light_sample,
@@ -1946,7 +1904,7 @@ extern "C" __global__ void __raygen__rg()
 #endif
 
             LightInfo light_info = sampleLights(sampler, env, env_tex,
-                world_position, world_geo_normal);
+                world_position, world_geo_normal, cam.origin);
 
             auto [color, bounce_dir, bounce_prob, cur_bounce_flags] =
                 shade(sampler, material, light_info.sample, -ray_dir,

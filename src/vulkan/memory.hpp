@@ -162,7 +162,9 @@ public:
     std::pair<LocalBuffer, VkDeviceMemory> makeDedicatedBuffer(
         VkDeviceSize num_bytes);
 
-    inline VkFormat getTextureFormat(TextureFormat fmt);
+    inline VkFormat getTextureFormat(TextureFormat fmt) const;
+    inline VkFormat getColorAttachmentFormat() const;
+    inline VkFormat getDepthAttachmentFormat() const;
 
     std::pair<LocalTexture, TextureRequirements>
     makeTexture1D(uint32_t width, uint32_t mip_levels, VkFormat fmt);
@@ -181,6 +183,9 @@ public:
 
     VkDeviceSize alignUniformBufferOffset(VkDeviceSize offset) const;
     VkDeviceSize alignStorageBufferOffset(VkDeviceSize offset) const;
+
+    LocalImage makeColorAttachment(uint32_t width, uint32_t height);
+    LocalImage makeDepthAttachment(uint32_t width, uint32_t height);
 
 private:
     HostBuffer makeHostBuffer(VkDeviceSize num_bytes,
@@ -209,6 +214,8 @@ private:
     VkBufferUsageFlags local_buffer_usage_flags_;
     std::array<VkFormat, size_t(TextureFormat::COUNT)> texture_formats_;
     MemoryTypeIndices type_indices_;
+    VkFormat color_attach_fmt_;
+    VkFormat depth_attach_fmt_;
 
     template <bool>
     friend class AllocDeleter;
