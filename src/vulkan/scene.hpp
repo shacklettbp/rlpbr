@@ -61,6 +61,12 @@ struct TLAS {
     void free(const DeviceState &dev);
 };
 
+struct ReservoirGrid {
+    AABB bbox;
+    VkDeviceMemory memory;
+    LocalBuffer grid;
+};
+
 struct VulkanEnvironment : public EnvironmentBackend {
     VulkanEnvironment(const VulkanScene &scene);
 
@@ -71,6 +77,8 @@ struct VulkanEnvironment : public EnvironmentBackend {
     std::vector<PackedLight> lights;
 
     TLAS tlas;
+
+    ReservoirGrid reservoirGrid;
 };
 
 struct TextureData {

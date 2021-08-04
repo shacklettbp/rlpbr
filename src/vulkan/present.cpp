@@ -108,8 +108,7 @@ static VkPresentModeKHR selectSwapchainMode(const InstanceState &inst,
     for (VkPresentModeKHR mode : modes) {
         if (need_immediate && mode == VK_PRESENT_MODE_IMMEDIATE_KHR) {
             return mode;
-        } else if (!need_immediate &&
-                   mode == VK_PRESENT_MODE_FIFO_KHR) {
+        } else if (!need_immediate && mode == VK_PRESENT_MODE_FIFO_KHR) {
             return mode;
         }
     }

@@ -6,11 +6,6 @@
 namespace RLpbr {
 namespace editor {
 
-struct AABB {
-    glm::vec3 pMin;
-    glm::vec3 pMax;
-};
-
 struct FreeDeleter {
     inline void operator()(void *ptr) const { return free(ptr); }
 };

@@ -561,8 +561,14 @@ SceneDescription<VertexType, MaterialType> mergeStaticInstances(
     return new_desc;
 }
 
+struct ProcessedScene {
+    ProcessedGeometry<PackedVertex> geometry;
+    vector<InstanceProperties> instances;
+    AABB bbox;
+};
+
 template <typename VertexType, typename MaterialType>
-static pair<ProcessedGeometry<PackedVertex>, vector<InstanceProperties>>
+static ProcessedScene
 processScene(const SceneDescription<VertexType, MaterialType> &orig_desc)
 {
     SceneDescription<VertexType, MaterialType> desc =
@@ -621,9 +627,57 @@ processScene(const SceneDescription<VertexType, MaterialType> &orig_desc)
         new_insts.emplace_back(new_inst);
     }
 
+    AABB bbox {
+        glm::vec3(INFINITY, INFINITY, INFINITY),
+        glm::vec3(-INFINITY, -INFINITY, -INFINITY),
+    };
+
+    auto updateBounds = [&bbox](const glm::vec3 &point) {
+        bbox.pMin = glm::min(bbox.pMin, point);
+        bbox.pMax = glm::max(bbox.pMax, point);
+    };
+
+    for (int inst_idx = 0; inst_idx < (int)new_insts.size(); inst_idx++) {
+        const InstanceProperties &inst = new_insts[inst_idx];
+
+        const ObjectInfo &obj = geometry.objectInfos[inst.objectIndex];
+        for (int mesh_offset = 0; mesh_offset < (int)obj.numMeshes;
+             mesh_offset++) {
+            uint32_t mesh_idx = obj.meshIndex + mesh_offset;
+            const MeshInfo &mesh = geometry.meshInfos[mesh_idx];
+
+            for (int tri_idx = 0; tri_idx < (int)mesh.numTriangles;
+                 tri_idx++) {
+                uint32_t base_idx = tri_idx * 3 + mesh.indexOffset;
+
+                glm::u32vec3 tri_indices(geometry.indices[base_idx],
+                                         geometry.indices[base_idx + 1],
+                                         geometry.indices[base_idx + 2]);
+
+                auto a = geometry.vertices[tri_indices.x].position;
+                auto b = geometry.vertices[tri_indices.y].position;
+                auto c = geometry.vertices[tri_indices.z].position;
+
+                // FIXME remove redundant calculation
+                glm::mat4 rot_mat = glm::mat4_cast(inst.rotation);
+                glm::mat4 txfm = glm::translate(inst.position) *
+                    rot_mat;
+
+                a = txfm * glm::vec4(a, 1.f);
+                b = txfm * glm::vec4(b, 1.f);
+                c = txfm * glm::vec4(c, 1.f);
+
+                updateBounds(a);
+                updateBounds(b);
+                updateBounds(c);
+            }
+        }
+    }
+
     return {
         move(geometry),
         move(new_insts),
+        bbox,
     };
 }
 
@@ -952,7 +1006,7 @@ static void dumpIDMap(string_view scene_path_base,
 
 void ScenePreprocessor::dump(string_view out_path_name)
 {
-    auto [processed_geometry, processed_instances] =
+    auto [processed_geometry, processed_instances, default_bbox] =
         processScene(scene_data_->desc);
 
     auto processed_lights = processLights(scene_data_->desc.defaultLights,
@@ -1102,7 +1156,8 @@ void ScenePreprocessor::dump(string_view out_path_name)
             sizeof(MaterialTextures) * metadata.materialTextures.size());
     };
 
-    auto write_instances = [&](const auto &instance_props) {
+    auto write_instances = [&](const auto &instance_props,
+                               const AABB &bbox) {
         uint32_t num_instances = instance_props.size();
 
         vector<PhysicsInstance> static_instances;
@@ -1169,6 +1224,9 @@ void ScenePreprocessor::dump(string_view out_path_name)
         out.write(reinterpret_cast<const char *>(instance_materials.data()),
                   sizeof(uint32_t) * instance_materials.size());
 
+        out.write(reinterpret_cast<const char *>(&bbox),
+                  sizeof(AABB));
+
         write(uint32_t(num_instances));
         out.write(reinterpret_cast<const char *>(instances.data()),
                   sizeof(ObjectInstance) * instances.size());
@@ -1225,6 +1283,7 @@ void ScenePreprocessor::dump(string_view out_path_name)
 
     auto write_scene = [&](const auto &geometry,
                            const auto &instances,
+                           const AABB &bbox,
                            const auto &lights,
                            const auto &desc,
                            const auto &data_dir) {
@@ -1242,7 +1301,7 @@ void ScenePreprocessor::dump(string_view out_path_name)
 
         write_materials(material_metadata);
 
-        write_instances(instances);
+        write_instances(instances, bbox);
 
         write_sdfs(processed_physics_state, data_dir, scene_data_->dumpSDFs);
 
@@ -1252,8 +1311,8 @@ void ScenePreprocessor::dump(string_view out_path_name)
 
     // Header: magic
     write(uint32_t(0x55555555));
-    write_scene(processed_geometry, processed_instances, processed_lights,
-                scene_data_->desc, scene_data_->dataDir);
+    write_scene(processed_geometry, processed_instances, default_bbox,
+                processed_lights, scene_data_->desc, scene_data_->dataDir);
     out.close();
 }
 

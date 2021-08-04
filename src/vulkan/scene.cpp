@@ -21,10 +21,24 @@ using namespace std;
 namespace RLpbr {
 namespace vk {
 
+namespace InternalConfig {
+constexpr float reservoirCellSize = 0.001f;
+}
+
+static ReservoirGrid makeReservoirGrid(const VulkanScene &scene)
+{
+    AABB bbox = scene.envInit.defaultBBox;
+
+    //return ReservoirGrid {
+    //    bbox,
+    //};
+}
+
 VulkanEnvironment::VulkanEnvironment(const VulkanScene &scene)
     : EnvironmentBackend {},
       lights(),
-      tlas()
+      tlas(),
+      reservoirGrid(makeReservoirGrid(scene))
 {
     for (const LightProperties &light : scene.envInit.lights) {
         PackedLight packed;

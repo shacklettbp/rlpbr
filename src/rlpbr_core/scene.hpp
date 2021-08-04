@@ -69,12 +69,14 @@ struct LightProperties {
 };
 
 struct EnvironmentInit {
-    EnvironmentInit(std::vector<ObjectInstance> instances,
+    EnvironmentInit(const AABB &bbox,
+                    std::vector<ObjectInstance> instances,
                     std::vector<uint32_t> instance_materials,
                     std::vector<InstanceTransform> transforms,
                     std::vector<InstanceFlags> instance_flags,
                     std::vector<LightProperties> lights);
 
+    AABB defaultBBox;
     std::vector<ObjectInstance> defaultInstances;
     std::vector<uint32_t> defaultInstanceMaterials;
     std::vector<InstanceTransform> defaultTransforms;

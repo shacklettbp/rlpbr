@@ -108,6 +108,10 @@ SceneLoadData SceneLoadData::loadFromDisk(string_view scene_path_name,
     scene_file.read(reinterpret_cast<char *>(instance_materials.data()),
                     sizeof(uint32_t) * num_instance_materials);
 
+    AABB default_bbox;
+    scene_file.read(reinterpret_cast<char *>(&default_bbox),
+                    sizeof(AABB));
+
     uint32_t num_instances = read_uint();
 
     vector<ObjectInstance> instances(num_instances);
@@ -165,7 +169,8 @@ SceneLoadData SceneLoadData::loadFromDisk(string_view scene_path_name,
         move(obj_infos),
         move(textures),
         move(texture_indices),
-        EnvironmentInit(move(instances), 
+        EnvironmentInit(default_bbox,
+                        move(instances), 
                         move(instance_materials),
                         move(default_transforms),
                         move(default_inst_flags),
@@ -182,12 +187,14 @@ SceneLoadData SceneLoadData::loadFromDisk(string_view scene_path_name,
     };
 }
 
-EnvironmentInit::EnvironmentInit(vector<ObjectInstance> instances,
+EnvironmentInit::EnvironmentInit(const AABB &bbox,
+    vector<ObjectInstance> instances,
     vector<uint32_t> instance_materials,
     vector<InstanceTransform> transforms,
     vector<InstanceFlags> instance_flags,
     vector<LightProperties> l)
-    : defaultInstances(move(instances)),
+    : defaultBBox(bbox),
+      defaultInstances(move(instances)),
       defaultInstanceMaterials(move(instance_materials)),
       defaultTransforms(move(transforms)),
       defaultInstanceFlags(move(instance_flags)),
