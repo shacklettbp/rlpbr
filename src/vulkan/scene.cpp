@@ -22,23 +22,62 @@ namespace RLpbr {
 namespace vk {
 
 namespace InternalConfig {
-constexpr float reservoirCellSize = 0.001f;
+constexpr float reservoirCellSize = 1.f;
 }
 
-static ReservoirGrid makeReservoirGrid(const VulkanScene &scene)
+static ReservoirGrid makeReservoirGrid(
+    const DeviceState &dev,
+    MemoryAllocator &alloc,
+    const VulkanScene &scene)
 {
     AABB bbox = scene.envInit.defaultBBox;
+    // Round bbox size out to reservoirCellSize
+    glm::vec3 min_remainder = glm::vec3(
+        fmodf(bbox.pMin.x, InternalConfig::reservoirCellSize),
+        fmodf(bbox.pMin.y, InternalConfig::reservoirCellSize),
+        fmodf(bbox.pMin.z, InternalConfig::reservoirCellSize));
 
-    //return ReservoirGrid {
-    //    bbox,
-    //};
+    bbox.pMin -= min_remainder;
+
+    glm::vec3 max_remainder = glm::vec3(
+        fmodf(bbox.pMax.x, InternalConfig::reservoirCellSize),
+        fmodf(bbox.pMax.y, InternalConfig::reservoirCellSize),
+        fmodf(bbox.pMax.z, InternalConfig::reservoirCellSize));
+
+    bbox.pMax += 1.f - max_remainder;
+
+    glm::vec3 bbox_size = bbox.pMax - bbox.pMin;
+    glm::vec3 num_cells_frac = bbox_size / InternalConfig::reservoirCellSize;
+    glm::u32vec3 num_cells = glm::ceil(num_cells_frac);
+
+    uint32_t total_cells = num_cells.x * num_cells.y * num_cells.z;
+
+    auto [grid_buffer, grid_memory] =
+        alloc.makeDedicatedBuffer(total_cells * sizeof(Reservoir), true);
+
+    VkDeviceAddress dev_addr;
+    VkBufferDeviceAddressInfo addr_info;
+    addr_info.sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO;
+    addr_info.pNext = nullptr;
+    addr_info.buffer = grid_buffer.buffer;
+    dev_addr = dev.dt.getBufferDeviceAddress(dev.hdl, &addr_info);
+
+    return ReservoirGrid {
+        bbox,
+        grid_memory,
+        dev_addr,
+        move(grid_buffer),
+    };
 }
 
-VulkanEnvironment::VulkanEnvironment(const VulkanScene &scene)
+VulkanEnvironment::VulkanEnvironment(const DeviceState &d,
+                                     MemoryAllocator &alloc,
+                                     const VulkanScene &scene)
     : EnvironmentBackend {},
       lights(),
+      dev(d),
       tlas(),
-      reservoirGrid(makeReservoirGrid(scene))
+      reservoirGrid(makeReservoirGrid(dev, alloc, scene))
 {
     for (const LightProperties &light : scene.envInit.lights) {
         PackedLight packed;
@@ -67,6 +106,12 @@ VulkanEnvironment::VulkanEnvironment(const VulkanScene &scene)
 
         lights.push_back(packed);
     }
+}
+
+VulkanEnvironment::~VulkanEnvironment()
+{
+    tlas.free(dev);
+    dev.dt.freeMemory(dev.hdl, reservoirGrid.storage, nullptr);
 }
 
 uint32_t VulkanEnvironment::addLight(const glm::vec3 &position,

@@ -22,6 +22,7 @@ using Shader::PackedCamera;
 using Shader::PackedLight;
 using Shader::PackedEnv;
 using Shader::RTPushConstant;
+using Shader::Reservoir;
 
 namespace VulkanConfig {
 

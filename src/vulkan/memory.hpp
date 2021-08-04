@@ -160,7 +160,7 @@ public:
                                                bool dev_addr = false);
 
     std::pair<LocalBuffer, VkDeviceMemory> makeDedicatedBuffer(
-        VkDeviceSize num_bytes);
+        VkDeviceSize num_bytes, bool dev_addr = false);
 
     inline VkFormat getTextureFormat(TextureFormat fmt) const;
     inline VkFormat getColorAttachmentFormat() const;

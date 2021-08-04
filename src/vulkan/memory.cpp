@@ -630,10 +630,15 @@ optional<LocalBuffer> MemoryAllocator::makeIndirectBuffer(
 }
 
 pair<LocalBuffer, VkDeviceMemory> MemoryAllocator::makeDedicatedBuffer(
-    VkDeviceSize num_bytes)
+    VkDeviceSize num_bytes, bool dev_addr)
 {
+    auto usage = BufferFlags::dedicatedUsage;
+    if (dev_addr) {
+        usage |= VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
+    }
+
     auto [buffer, reqs] =
-        makeUnboundBuffer(dev, num_bytes, BufferFlags::dedicatedUsage);
+        makeUnboundBuffer(dev, num_bytes, usage);
 
     VkMemoryDedicatedAllocateInfo dedicated;
     dedicated.sType = VK_STRUCTURE_TYPE_MEMORY_DEDICATED_ALLOCATE_INFO;

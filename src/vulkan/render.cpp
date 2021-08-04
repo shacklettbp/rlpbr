@@ -884,7 +884,8 @@ LoaderImpl VulkanBackend::makeLoader()
 EnvironmentImpl VulkanBackend::makeEnvironment(const shared_ptr<Scene> &scene)
 {
     const VulkanScene &vk_scene = *static_cast<VulkanScene *>(scene.get());
-    VulkanEnvironment *environment = new VulkanEnvironment(vk_scene);
+    VulkanEnvironment *environment =
+        new VulkanEnvironment(dev, alloc, vk_scene);
     return makeEnvironmentImpl<VulkanEnvironment>(environment);
 }
 
@@ -1010,6 +1011,7 @@ uint32_t VulkanBackend::render(const Environment *envs)
         light_offset += env_backend.lights.size();
 
         packed_env.tlasAddr = env_backend.tlas.tlasStorageDevAddr;
+        packed_env.reservoirGridAddr = env_backend.reservoirGrid.devAddr;
     }
 
     dev.dt.cmdDispatch(

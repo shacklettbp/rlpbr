@@ -9,7 +9,7 @@ struct PackedEnv {
     PackedCamera cam;
     u32vec4 data;
     uint64_t tlasAddr;
-    uint64_t pad;
+    uint64_t reservoirGridAddr;
 };
 
 struct RTPushConstant {
@@ -23,6 +23,14 @@ struct PackedLight {
 struct PackedInstance {
     uint32_t materialOffset;
     uint32_t meshOffset;
+};
+
+struct Reservoir {
+    vec3 dir;
+};
+
+struct ReGIRCell {
+    Reservoir reservoirs[64];
 };
 
 #define MAX_MATERIALS (5000)
