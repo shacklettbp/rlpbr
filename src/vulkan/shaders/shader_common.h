@@ -7,6 +7,7 @@ struct PackedCamera {
 
 struct PackedEnv {
     PackedCamera cam;
+    PackedCamera prevCam;
     u32vec4 data;
     uint64_t tlasAddr;
     uint64_t reservoirGridAddr;

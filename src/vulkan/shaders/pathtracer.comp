@@ -77,13 +77,21 @@ layout (set = 0, binding = 11, scalar) writeonly buffer Out {
     uint32_t outputBuffer[];
 };
 
+layout (set = 0, binding = 12, scalar) writeonly buffer CurReservoirs {
+    Reservoir currentReservoirs[];
+};
+
+layout (set = 0, binding = 13, scalar) writeonly buffer PrevReservoirs {
+    Reservoir prevReservoirs[];
+};
+
 #ifdef AUXILIARY_OUTPUTS
 
-layout (set = 0, binding = 12, scalar) writeonly buffer Normals {
+layout (set = 0, binding = 14, scalar) writeonly buffer Normals {
     uint16_t normalBuffer[];
 };
 
-layout (set = 0, binding = 13, scalar) writeonly buffer Albedo {
+layout (set = 0, binding = 15, scalar) writeonly buffer Albedo {
     uint16_t albedoBuffer[];
 };
 
@@ -185,11 +193,14 @@ Camera unpackCamera(PackedCamera packed)
     return Camera(origin, view, up, right);
 }
 
-void unpackEnv(in uint32_t batch_idx, out Camera cam,
+void unpackEnv(in uint32_t batch_idx,
+               out Camera cam,
+               out Camera prev_cam,
                out Environment env)
 {
     PackedEnv packed = envs[nonuniformEXT(batch_idx)];
     cam = unpackCamera(packed.cam);
+    prev_cam = unpackCamera(packed.prevCam);
 
     u32vec4 data = packed.data;
 
@@ -381,6 +392,10 @@ void computeCameraRay(in Camera camera, in u32vec3 idx, inout Sampler rng,
         camera.right * screen.x + camera.up * screen.y + camera.view);
 }
 
+vec3 getScreenSpacePosition(Camera cam, vec3 world_pos)
+{
+}
+
 Vertex interpolateTriangle(Triangle tri, vec2 barys)
 {
 #define INTERPOLATE_ATTR(tri, attr, barys) \
@@ -411,6 +426,8 @@ vec3 computeGeometricNormal(Triangle tri)
 
     return cross(v1, v2);
 }
+
+vec3 getPriorSc
 
 TangentFrame computeTangentFrame(Vertex v,
                                  MaterialParams mat_params,
@@ -1434,9 +1451,9 @@ void main()
         3 * (batch_idx * RES_Y * RES_X + idx.y * RES_X + idx.x);
 #endif
 
-    Camera cam;
+    Camera cam, prev_cam;
     Environment env;
-    unpackEnv(batch_idx, cam, env);
+    unpackEnv(batch_idx, cam, prev_cam, env);
 
     vec3 pixel_radiance = vec3(0);
     uint32_t instance_id = 0xFFFF;
