@@ -357,7 +357,10 @@ static PerBatchState makePerBatchState(const DeviceState &dev,
                                        bool auxiliary_outputs,
                                        bool need_present)
 {
-    VkDescriptorSet rt_set = rt_pool.makeSet();
+    array rt_sets {
+        rt_pool.makeSet(),
+        rt_pool.makeSet(),
+    };
 
     VkCommandPool cmd_pool = makeCmdPool(dev, dev.computeQF);
     VkCommandBuffer render_cmd = makeCmdBuffer(dev, cmd_pool);
@@ -396,16 +399,11 @@ static PerBatchState makePerBatchState(const DeviceState &dev,
         param_cfg.totalTransformBytes,
     };
 
-    desc_updates.buffer(rt_set, &transform_info, 0,
-                        VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
-
     VkDescriptorBufferInfo mat_info {
         param_buffer.buffer,
         param_cfg.materialIndicesOffset,
         param_cfg.totalMaterialIndexBytes,
     };
-    desc_updates.buffer(rt_set, &mat_info, 1,
-                        VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
 
     VkDescriptorBufferInfo light_info {
         param_buffer.buffer,
@@ -413,17 +411,11 @@ static PerBatchState makePerBatchState(const DeviceState &dev,
         param_cfg.totalLightParamBytes,
     };
 
-    desc_updates.buffer(rt_set, &light_info, 2,
-                        VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
-
     VkDescriptorBufferInfo env_info {
         param_buffer.buffer,
         param_cfg.envOffset,
         param_cfg.totalEnvParamBytes,
     };
-
-    desc_updates.buffer(rt_set, &env_info, 3,
-                        VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
 
     VkDescriptorImageInfo diffuse_avg_info {
         VK_NULL_HANDLE,
@@ -431,15 +423,11 @@ static PerBatchState makePerBatchState(const DeviceState &dev,
         VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
     };
 
-    desc_updates.textures(rt_set, &diffuse_avg_info, 1, 6);
-
     VkDescriptorImageInfo diffuse_dir_info {
         VK_NULL_HANDLE,
         precomp_tex.msDiffuseDirectional.second,
         VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
     };
-
-    desc_updates.textures(rt_set, &diffuse_dir_info, 1, 7);
 
     VkDescriptorImageInfo ggx_avg_info {
         VK_NULL_HANDLE,
@@ -447,15 +435,11 @@ static PerBatchState makePerBatchState(const DeviceState &dev,
         VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
     };
 
-    desc_updates.textures(rt_set, &ggx_avg_info, 1, 8);
-
     VkDescriptorImageInfo ggx_dir_info {
         VK_NULL_HANDLE,
         precomp_tex.msGGXDirectional.second,
         VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
     };
-
-    desc_updates.textures(rt_set, &ggx_dir_info, 1, 9);
 
     VkDescriptorImageInfo ggx_inv_info {
         VK_NULL_HANDLE,
@@ -463,24 +447,54 @@ static PerBatchState makePerBatchState(const DeviceState &dev,
         VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
     };
 
-    desc_updates.textures(rt_set, &ggx_inv_info, 1, 10);
-
     VkDescriptorBufferInfo out_info {
         fb.outputs[0].buffer,
         0,
         fb_cfg.outputBytes,
     };
 
-    desc_updates.buffer(rt_set, &out_info, 11,
-                        VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
+    for (int i = 0; i < (int)rt_sets.size(); i++) {
+        desc_updates.buffer(rt_sets[i], &transform_info, 0,
+                            VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
 
-    VkDescriptorBufferInfo reservoir_info {
+        desc_updates.buffer(rt_sets[i], &mat_info, 1,
+                            VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
+
+        desc_updates.buffer(rt_sets[i], &light_info, 2,
+                            VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
+
+        desc_updates.buffer(rt_sets[i], &env_info, 3,
+                            VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
+
+        desc_updates.textures(rt_sets[i], &diffuse_avg_info, 1, 6);
+        desc_updates.textures(rt_sets[i], &diffuse_dir_info, 1, 7);
+        desc_updates.textures(rt_sets[i], &ggx_avg_info, 1, 8);
+        desc_updates.textures(rt_sets[i], &ggx_dir_info, 1, 9);
+        desc_updates.textures(rt_sets[i], &ggx_inv_info, 1, 10);
+        desc_updates.buffer(rt_sets[i], &out_info, 11,
+                            VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
+    }
+
+    VkDescriptorBufferInfo cur_reservoir_info {
         fb.reservoirs[0].buffer,
         0,
         fb_cfg.reservoirBytes,
     };
 
-    desc_updates.buffer(rt_set, &reservoir_info, 12,
+    desc_updates.buffer(rt_sets[0], &cur_reservoir_info, 12,
+                        VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
+    desc_updates.buffer(rt_sets[1], &cur_reservoir_info, 13,
+                        VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
+
+    VkDescriptorBufferInfo prev_reservoir_info {
+        fb.reservoirs[1].buffer,
+        0,
+        fb_cfg.reservoirBytes,
+    };
+
+    desc_updates.buffer(rt_sets[0], &prev_reservoir_info, 13,
+                        VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
+    desc_updates.buffer(rt_sets[1], &prev_reservoir_info, 12,
                         VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
 
     VkDescriptorBufferInfo normal_info;
@@ -499,10 +513,12 @@ static PerBatchState makePerBatchState(const DeviceState &dev,
             fb_cfg.albedoBytes,
         };
 
-        desc_updates.buffer(rt_set, &normal_info, 14,
-                            VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
-        desc_updates.buffer(rt_set, &albedo_info, 15,
-                            VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
+        for (int i = 0; i < (int)rt_sets.size(); i++) {
+            desc_updates.buffer(rt_sets[i], &normal_info, 14,
+                                VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
+            desc_updates.buffer(rt_sets[i], &albedo_info, 15,
+                                VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
+        }
     }
 
     desc_updates.update(dev);
@@ -517,7 +533,7 @@ static PerBatchState makePerBatchState(const DeviceState &dev,
         normal_buffer,
         albedo_buffer,
         move(rt_pool),
-        rt_set,
+        move(rt_sets),
         transform_ptr,
         material_ptr,
         light_ptr,
@@ -893,7 +909,7 @@ RenderBatch::Handle VulkanBackend::makeRenderBatch()
     PerBatchState batch_state = makePerBatchState(
             dev, fb_cfg_, fb, param_cfg_,
             render_input_buffer,
-            FixedDescriptorPool(dev, render_state_.rt, 0, 1),
+            FixedDescriptorPool(dev, render_state_.rt, 0, 2),
             bsdf_precomp_, cfg_.auxiliaryOutputs,
             present_.has_value());
 
@@ -958,7 +974,8 @@ void VulkanBackend::render(RenderBatch &batch)
 
     dev.dt.cmdBindDescriptorSets(render_cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
                                  pipeline_.rtState.layout, 0, 1,
-                                 &batch_state.rtSet, 0, nullptr);
+                                 &batch_state.rtSets[batch_backend.curBuffer],
+                                 0, nullptr);
 
     // Hack
     {

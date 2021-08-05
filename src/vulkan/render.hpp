@@ -107,7 +107,7 @@ struct PerBatchState {
     half *albedoBuffer;
 
     FixedDescriptorPool rtPool;
-    VkDescriptorSet rtSet;
+    std::array<VkDescriptorSet, 2> rtSets;
 
     InstanceTransform *transformPtr;
     uint32_t *materialPtr;
