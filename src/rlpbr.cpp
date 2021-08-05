@@ -56,6 +56,11 @@ static RendererImpl makeBackend(const RenderConfig &cfg)
     abort();
 }
 
+void Renderer::BatchInitializer::addEnvironment(shared_ptr<Scene> scene)
+{
+    scenes_.emplace_back(move(scene));
+}
+
 Renderer::Renderer(const RenderConfig &cfg)
     : backend_(makeBackend(cfg)),
       aspect_ratio_(float(cfg.imgWidth) / float(cfg.imgHeight))
@@ -68,7 +73,10 @@ AssetLoader Renderer::makeLoader()
 
 Environment Renderer::makeEnvironment(const shared_ptr<Scene> &scene)
 {
-    return Environment(backend_.makeEnvironment(scene), scene);
+    Camera cam(glm::vec3(0.f), glm::vec3(0.f, 0.f, 1.f),
+               glm::vec3(0.f, 1.f, 0.f), 90.f, aspect_ratio_);
+
+    return Environment(backend_.makeEnvironment(scene, cam), scene, cam);
 }
 
 Environment Renderer::makeEnvironment(const shared_ptr<Scene> &scene,
@@ -76,18 +84,20 @@ Environment Renderer::makeEnvironment(const shared_ptr<Scene> &scene,
                                       const glm::vec3 &up, float vertical_fov,
                                       float aspect_ratio)
 {
-    return Environment(backend_.makeEnvironment(scene),
-                       scene, eye, target, up, vertical_fov,
-                       aspect_ratio == 0.f ? aspect_ratio_ : aspect_ratio);
+    Camera cam(eye, target, up, vertical_fov,
+               aspect_ratio == 0.f ? aspect_ratio_ : aspect_ratio);
+
+    return Environment(backend_.makeEnvironment(scene, cam), scene, cam);
 }
 
 Environment Renderer::makeEnvironment(const shared_ptr<Scene> &scene,
                                       const glm::mat4 &camera_to_world,
                                       float vertical_fov, float aspect_ratio)
 {
-    return Environment(backend_.makeEnvironment(scene),
-                       scene, camera_to_world, vertical_fov,
-                       aspect_ratio == 0.f ? aspect_ratio_ : aspect_ratio);
+    Camera cam(camera_to_world, vertical_fov, 
+               aspect_ratio == 0.f ? aspect_ratio_ : aspect_ratio);
+
+    return Environment(backend_.makeEnvironment(scene, cam), scene, cam);
 }
 
 Environment Renderer::makeEnvironment(const std::shared_ptr<Scene> &scene,
@@ -97,15 +107,34 @@ Environment Renderer::makeEnvironment(const std::shared_ptr<Scene> &scene,
                                       const glm::vec3 &right,
                                       float vertical_fov, float aspect_ratio)
 {
-    return Environment(backend_.makeEnvironment(scene),
-                       scene, pos, fwd, up, right,
-                       vertical_fov,
-                       aspect_ratio == 0.f ? aspect_ratio_ : aspect_ratio);
+    Camera cam(pos, fwd, up, right, vertical_fov,
+               aspect_ratio == 0.f ? aspect_ratio_ : aspect_ratio);
+
+    return Environment(backend_.makeEnvironment(scene, cam), scene, cam);
 }
 
-uint32_t Renderer::render(const Environment *envs)
+RenderBatch::RenderBatch(Handle &&backend, vector<Environment> &&envs)
+    : backend_(move(backend)),
+      envs_(move(envs))
 {
-    return backend_.render(envs);
+}
+
+RenderBatch Renderer::makeRenderBatch(BatchInitializer &&init)
+{
+    int num_envs = init.scenes_.size();
+
+    vector<Environment> envs;
+
+    for (int i = 0; i < num_envs; i++) {
+        envs.emplace_back(makeEnvironment(move(init.scenes_[i])));
+    }
+
+    return RenderBatch(backend_.makeRenderBatch(), move(envs));
+}
+
+uint32_t Renderer::render(RenderBatch &batch)
+{
+    return backend_.render(batch);
 }
 
 void Renderer::waitForFrame(uint32_t frame_idx)
@@ -143,42 +172,6 @@ Environment::Environment(EnvironmentImpl &&backend,
 {
     // FIXME use EnvironmentInit lights
 }
-
-Environment::Environment(EnvironmentImpl &&backend,
-                         const shared_ptr<Scene> &scene)
-    : Environment(move(backend), scene,
-                  Camera(glm::vec3(0.f), glm::vec3(0.f, 0.f, 1.f),
-                         glm::vec3(0.f, 1.f, 0.f), 90.f, 1.f))
-{}
-
-Environment::Environment(EnvironmentImpl &&backend,
-                         const shared_ptr<Scene> &scene,
-                         const glm::vec3 &eye, const glm::vec3 &target,
-                         const glm::vec3 &up, float vertical_fov,
-                         float aspect_ratio)
-    : Environment(move(backend), scene,
-                  Camera(eye, target, up, vertical_fov, aspect_ratio))
-{}
-
-Environment::Environment(EnvironmentImpl &&backend,
-                         const shared_ptr<Scene> &scene,
-                         const glm::mat4 &camera_to_world, float vertical_fov,
-                         float aspect_ratio)
-    : Environment(move(backend), scene,
-                  Camera(camera_to_world, vertical_fov, aspect_ratio))
-{}
-
-Environment::Environment(EnvironmentImpl &&backend,
-                         const shared_ptr<Scene> &scene,
-                         const glm::vec3 &position_vec,
-                         const glm::vec3 &forward_vec,
-                         const glm::vec3 &up_vec,
-                         const glm::vec3 &right_vec,
-                         float vertical_fov, float aspect_ratio)
-    : Environment(move(backend), scene,
-                  Camera(position_vec, forward_vec, up_vec, right_vec,
-                         vertical_fov, aspect_ratio))
-{}
 
 void Environment::reset()
 {
@@ -272,14 +265,19 @@ LoaderImpl RendererImpl::makeLoader()
 }
 
 EnvironmentImpl RendererImpl::makeEnvironment(
-    const std::shared_ptr<Scene> &scene) const
+    const std::shared_ptr<Scene> &scene, const Camera &cam) const
 {
-    return invoke(make_env_ptr_, state_, scene);
+    return invoke(make_env_ptr_, state_, scene, cam);
 }
 
-uint32_t RendererImpl::render(const Environment *envs)
+RenderBatch::Handle RendererImpl::makeRenderBatch() const
 {
-    return invoke(render_ptr_, state_, envs);
+    return invoke(make_batch_ptr_, state_);
+}
+
+uint32_t RendererImpl::render(RenderBatch &batch)
+{
+    return invoke(render_ptr_, state_, batch);
 }
 
 void RendererImpl::waitForFrame(uint32_t frame_idx)
@@ -297,6 +295,10 @@ AuxiliaryOutputs RendererImpl::getAuxiliaryOutputs(uint32_t frame_idx) const
     return invoke(get_aux_ptr_, state_, frame_idx);
 }
 
+void BatchDeleter::operator()(BatchBackend *ptr) const
+{
+    deletePtr(state, ptr);
+}
 
 }
 

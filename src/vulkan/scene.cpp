@@ -72,12 +72,14 @@ static ReservoirGrid makeReservoirGrid(
 
 VulkanEnvironment::VulkanEnvironment(const DeviceState &d,
                                      MemoryAllocator &alloc,
-                                     const VulkanScene &scene)
+                                     const VulkanScene &scene,
+                                     const Camera &cam)
     : EnvironmentBackend {},
       lights(),
       dev(d),
       tlas(),
-      reservoirGrid(makeReservoirGrid(dev, alloc, scene))
+      reservoirGrid(makeReservoirGrid(dev, alloc, scene)),
+      prevCam(cam)
 {
     for (const LightProperties &light : scene.envInit.lights) {
         PackedLight packed;

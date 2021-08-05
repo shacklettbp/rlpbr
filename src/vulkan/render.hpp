@@ -8,6 +8,7 @@
 #include <vector>
 
 #include <rlpbr/config.hpp>
+#include <rlpbr/render.hpp>
 #include <rlpbr_core/common.hpp>
 
 #include <glm/glm.hpp>
@@ -47,13 +48,13 @@ struct FramebufferConfig {
     uint32_t totalWidth;
     uint32_t totalHeight;
 
-    uint64_t linearOutputBytesPerBatch;
-    uint64_t linearNormalBytesPerBatch;
-    uint64_t linearAlbedoBytesPerBatch;
+    uint32_t pixelsPerBatch;
+    uint32_t totalPixels;
 
-    uint64_t totalLinearOutputBytes;
-    uint64_t totalLinearNormalBytes;
-    uint64_t totalLinearAlbedoBytes;
+    uint32_t outputPixelSize;
+    uint32_t normalPixelSize;
+    uint32_t albedoPixelSize;
+    uint32_t reservoirPixelSize;
 };
 
 struct ParamBufferConfig {
@@ -76,6 +77,8 @@ struct FramebufferState {
     std::vector<VkDeviceMemory> backings;
 
     std::vector<CudaImportedBuffer> exported;
+
+    std::vector<LocalBuffer> reservoir;
 };
 
 struct RenderState {
@@ -134,9 +137,12 @@ public:
     VulkanBackend(const RenderConfig &cfg, bool validate);
     LoaderImpl makeLoader();
 
-    EnvironmentImpl makeEnvironment(const std::shared_ptr<Scene> &scene);
+    EnvironmentImpl makeEnvironment(const std::shared_ptr<Scene> &scene,
+                                    const Camera &cam);
 
-    uint32_t render(const Environment *envs);
+    RenderBatch::Handle makeRenderBatch();
+
+    uint32_t render(RenderBatch &batch);
 
     void waitForFrame(uint32_t batch_idx);
 

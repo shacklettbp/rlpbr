@@ -27,7 +27,7 @@ struct PackedInstance {
 };
 
 struct Reservoir {
-    vec3 dir;
+    vec4 val;
 };
 
 struct ReGIRCell {

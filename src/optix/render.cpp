@@ -575,12 +575,20 @@ LoaderImpl OptixBackend::makeLoader()
     return makeLoaderImpl<OptixLoader>(loader);
 }
 
-EnvironmentImpl OptixBackend::makeEnvironment(const shared_ptr<Scene> &scene)
+EnvironmentImpl OptixBackend::makeEnvironment(const shared_ptr<Scene> &scene,
+                                              const Camera &)
 {
     const OptixScene &optix_scene = *static_cast<OptixScene *>(scene.get());
     OptixEnvironment *environment = new OptixEnvironment(
         OptixEnvironment::make(ctx_, tlas_strm_, optix_scene));
     return makeEnvironmentImpl<OptixEnvironment>(environment);
+}
+
+RenderBatch::Handle OptixBackend::makeRenderBatch()
+{
+    auto batch_deleter = [](void *, BatchBackend *) {};
+
+    return RenderBatch::Handle(nullptr, {nullptr, batch_deleter});
 }
 
 static array<float4, 3> packCamera(const Camera &cam)
@@ -651,8 +659,9 @@ static PackedEnv packEnv(const Environment &env,
     };
 }
 
-uint32_t OptixBackend::render(const Environment *envs)
+uint32_t OptixBackend::render(RenderBatch &batch)
 {
+    const Environment *envs = batch.getEnvironments();
     //physics_->simulate(envs);
 
     ShaderBuffers &buffers = render_state_.shaderBuffers[active_idx_];

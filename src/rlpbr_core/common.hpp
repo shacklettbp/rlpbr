@@ -58,6 +58,8 @@ RendererImpl makeRendererImpl(RenderBackend *ptr)
             &RendererType::makeLoader),
         static_cast<RendererImpl::MakeEnvironmentType>(
             &RendererType::makeEnvironment),
+        static_cast<RendererImpl::MakeBatchType>(
+            &RendererType::makeRenderBatch),
         static_cast<RendererImpl::RenderType>(
             &RendererType::render),
         static_cast<RendererImpl::WaitType>(

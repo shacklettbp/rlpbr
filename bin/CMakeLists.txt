@@ -13,11 +13,11 @@ add_executable(save_frame
 )
 target_link_libraries(save_frame rlpbr stb)
 
-add_executable(load_test
-    load_test.cpp
-)
-
-target_link_libraries(load_test rlpbr Threads::Threads)
+#add_executable(load_test
+#    load_test.cpp
+#)
+#
+#target_link_libraries(load_test rlpbr Threads::Threads)
 
 find_package(GLEW QUIET)
 

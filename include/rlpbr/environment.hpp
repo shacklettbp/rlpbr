@@ -63,25 +63,7 @@ class Environment {
 public:
     Environment(EnvironmentImpl &&backend,
                 const std::shared_ptr<Scene> &scene,
-                const glm::vec3 &eye, const glm::vec3 &target,
-                const glm::vec3 &up, float vertical_fov,
-                float aspect_ratio);
-
-    Environment(EnvironmentImpl &&backend,
-                const std::shared_ptr<Scene> &scene,
-                const glm::mat4 &camera_to_world,
-                float vertical_fov, float aspect_ratio);
-
-    Environment(EnvironmentImpl &&backend,
-                const std::shared_ptr<Scene> &scene,
-                const glm::vec3 &position_vec,
-                const glm::vec3 &forward_vec,
-                const glm::vec3 &up_vec,
-                const glm::vec3 &right_vec,
-                float vertical_fov, float aspect_ratio);
-
-    Environment(EnvironmentImpl &&backend,
-                const std::shared_ptr<Scene> &scene);
+                const Camera &cam);
 
     Environment(const Environment &) = delete;
     Environment & operator=(const Environment &) = delete;
@@ -146,10 +128,6 @@ public:
     void reset();
 
 private:
-    Environment(EnvironmentImpl &&backend,
-                const std::shared_ptr<Scene> &scene,
-                const Camera &cam);
-
     EnvironmentImpl backend_;
     std::shared_ptr<Scene> scene_;
 

@@ -5,6 +5,7 @@
 #include <rlpbr/backend.hpp>
 #include <rlpbr/utils.hpp>
 #include <rlpbr/environment.hpp>
+#include <rlpbr/render.hpp>
 
 #include <string_view>
 
@@ -24,6 +25,16 @@ friend class BatchRenderer;
 
 class Renderer {
 public:
+    class BatchInitializer {
+    public:
+        void addEnvironment(std::shared_ptr<Scene> scene);
+
+    private:
+        std::vector<std::shared_ptr<Scene>> scenes_;
+
+    friend class Renderer;
+    };
+
     Renderer(const RenderConfig &cfg);
 
     AssetLoader makeLoader();
@@ -44,8 +55,10 @@ public:
                                 const glm::vec3 &right,
                                 float vertical_fov = 90.f,
                                 float aspect_ratio = 0.f);
-    
-    uint32_t render(const Environment *envs);
+
+    RenderBatch makeRenderBatch(BatchInitializer &&init);
+
+    uint32_t render(RenderBatch &batch);
 
     void waitForFrame(uint32_t frame_idx = 0);
 

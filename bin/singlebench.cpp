@@ -63,13 +63,15 @@ int main(int argc, char *argv[]) {
 
     vector<Environment> envs;
 
+    Renderer::BatchInitializer init;
+
     for (uint32_t batch_idx = 0; batch_idx < batch_size; batch_idx++) {
-        envs.emplace_back(renderer.makeEnvironment(scene,
-            glm::vec3(0.f), glm::vec3(0.f, 0.f, 1.f),
-            glm::vec3(0.f, 1.f, 0.f), glm::vec3(1.f, 0.f, 0.f)));
+        init.addEnvironment(scene);
     }
 
-    renderer.render(envs.data());
+    RenderBatch batch = renderer.makeRenderBatch(move(init));
+
+    renderer.render(batch);
     renderer.waitForFrame();
 
     auto start = chrono::steady_clock::now();
@@ -79,16 +81,18 @@ int main(int argc, char *argv[]) {
     uint32_t cur_view = 0;
 
     for (uint32_t i = 0; i < num_iters; i++) {
-        for (auto &env : envs) {
+        for (int env_idx = 0; env_idx < (int)batch_size; env_idx++) {
             auto [position, rotation] = views[cur_view];
             cur_view = (cur_view + 1) % views.size();
+
+            auto &env = batch.getEnvironment(env_idx);
 
             env.setCameraView(position,
                 rotation * glm::vec3(0.f, 0.f, 1.f),
                 glm::vec3(0.f, 1.f, 0.f),
                 rotation * glm::vec3(1.f, 0.f, 0.f));
         }
-        renderer.render(envs.data());
+        renderer.render(batch);
         renderer.waitForFrame();
     }
 

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <rlpbr/config.hpp>
+#include <rlpbr/render.hpp>
 #include <rlpbr_core/common.hpp>
 
 #include "scene.hpp"
@@ -54,9 +55,12 @@ public:
     OptixBackend(const RenderConfig &cfg, bool validate);
     LoaderImpl makeLoader();
 
-    EnvironmentImpl makeEnvironment(const std::shared_ptr<Scene> &scene);
+    EnvironmentImpl makeEnvironment(const std::shared_ptr<Scene> &scene,
+                                    const Camera &);
 
-    uint32_t render(const Environment *envs);
+    RenderBatch::Handle makeRenderBatch();
+
+    uint32_t render(RenderBatch &batch);
 
     void waitForFrame(uint32_t frame_idx);
 

@@ -108,7 +108,6 @@ int main(int argc, char *argv[]) {
 
     auto loader = renderer.makeLoader();
     auto scene = loader.loadScene(argv[1]);
-    vector<Environment> envs;
 
     // Vase
     //glm::vec3 eye(10.573854, 1.332727, -2.085712);
@@ -128,18 +127,25 @@ int main(int argc, char *argv[]) {
 
     glm::vec3 to_look = look - eye;
     
+    Renderer::BatchInitializer init;
     
     for (uint32_t batch_idx = 0; batch_idx < batch_size; batch_idx++) {
+        init.addEnvironment(scene);
+    }
+
+    RenderBatch batch = renderer.makeRenderBatch(move(init));
+
+    for (uint32_t batch_idx = 0; batch_idx < batch_size; batch_idx++) {
         glm::mat3 r = glm::rotate(glm::radians(10.f * batch_idx), up);
-        envs.emplace_back(renderer.makeEnvironment(scene, 
-            eye, eye + r * to_look, up, 60.f));
+        batch.getEnvironment(batch_idx) =
+            renderer.makeEnvironment(scene, eye, eye + r * to_look, up, 60.f);
     }
     //envs.back().addLight(glm::vec3(-1.950218, 1.623819, 0.863453), glm::vec3(10.f));
     //envs.back().addLight(glm::vec3(1.762336, 1.211801, -4.574429), glm::vec3(10.f));
     //envs.back().addLight(glm::vec3(8.107919, 1.345027, -1.867001), glm::vec3(10.f));
     //envs.back().addLight(glm::vec3(12.499360, 2.102839, 1.691340), glm::vec3(10.f));
 
-    renderer.render(envs.data());
+    renderer.render(batch);
     renderer.waitForFrame();
 
     half *base_out_ptr = renderer.getOutputPointer();

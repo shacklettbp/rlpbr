@@ -392,8 +392,14 @@ void computeCameraRay(in Camera camera, in u32vec3 idx, inout Sampler rng,
         camera.right * screen.x + camera.up * screen.y + camera.view);
 }
 
-vec3 getScreenSpacePosition(Camera cam, vec3 world_pos)
+vec2 getScreenSpacePosition(Camera camera, vec3 world_pos)
 {
+    vec3 to_pos = world_pos - camera.origin;
+
+    float right = dot(to_pos, camera.right);
+    float up = dot(to_pos, camera.up);
+
+    return vec2(right, up);
 }
 
 Vertex interpolateTriangle(Triangle tri, vec2 barys)
@@ -426,8 +432,6 @@ vec3 computeGeometricNormal(Triangle tri)
 
     return cross(v1, v2);
 }
-
-vec3 getPriorSc
 
 TangentFrame computeTangentFrame(Vertex v,
                                  MaterialParams mat_params,

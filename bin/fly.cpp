@@ -193,9 +193,11 @@ int main(int argc, char *argv[]) {
     };
     glm::vec2 mouse_prev = cursorPosition(window);
 
-    vector<Environment> envs;
-    envs.emplace_back(
-        renderer.makeEnvironment(scene, cam.eye, cam.look, cam.up, 60.f));
+    Renderer::BatchInitializer init;
+    init.addEnvironment(scene);
+
+    RenderBatch batch = renderer.makeRenderBatch(move(init));
+    batch.getEnvironment(0).setCameraView(cam.eye, cam.look, cam.up);
     //envs.back().addLight(glm::vec3(-1.950218, 1.623819, 0.863453), glm::vec3(10.f));
     //envs.back().addLight(glm::vec3(1.762336, 1.211801, -4.574429), glm::vec3(10.f));
     //envs.back().addLight(glm::vec3(8.107919, 1.345027, -1.867001), glm::vec3(10.f));
@@ -210,7 +212,7 @@ int main(int argc, char *argv[]) {
         glfwSetInputMode(window, GLFW_RAW_MOUSE_MOTION, GLFW_TRUE);
     }
 
-    uint32_t prev_frame = renderer.render(envs.data());
+    uint32_t prev_frame = renderer.render(batch);
 
     auto time_prev = chrono::steady_clock::now();
     while (!glfwWindowShouldClose(window)) {
@@ -253,14 +255,14 @@ int main(int argc, char *argv[]) {
 
         cam.look = cam.eye + to_look;
 
-        envs[0].setCameraView(cam.eye, cam.look, cam.up);
+        batch.getEnvironment(0).setCameraView(cam.eye, cam.look, cam.up);
         if (show_camera) {
             cout << "E: " << glm::to_string(cam.eye) << "\n"
                  << "L: " << glm::to_string(cam.look) << "\n"
                  << "U: " << glm::to_string(cam.up) << "\n";
         }
 
-        uint32_t new_frame = renderer.render(envs.data());
+        uint32_t new_frame = renderer.render(batch);
         renderer.waitForFrame(prev_frame);
 
         half *output = renderer.getOutputPointer(prev_frame);
