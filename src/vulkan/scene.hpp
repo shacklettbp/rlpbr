@@ -71,6 +71,7 @@ struct ReservoirGrid {
 struct VulkanEnvironment : public EnvironmentBackend {
     VulkanEnvironment(const DeviceState &dev, MemoryAllocator &alloc,
                       const VulkanScene &scene, const Camera &cam);
+    VulkanEnvironment(const VulkanEnvironment &) = delete;
     ~VulkanEnvironment();
 
     uint32_t addLight(const glm::vec3 &position, const glm::vec3 &color);

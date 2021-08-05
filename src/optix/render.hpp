@@ -60,12 +60,12 @@ public:
 
     RenderBatch::Handle makeRenderBatch();
 
-    uint32_t render(RenderBatch &batch);
+    void render(RenderBatch &batch);
 
-    void waitForFrame(uint32_t frame_idx);
+    void waitForBatch(RenderBatch &batch);
 
-    half *getOutputPointer(uint32_t frame_idx);
-    AuxiliaryOutputs getAuxiliaryOutputs(uint32_t frame_idx);
+    half *getOutputPointer(RenderBatch &batch);
+    AuxiliaryOutputs getAuxiliaryOutputs(RenderBatch &batch);
 
 private:
     OptixDeviceContext ctx_;

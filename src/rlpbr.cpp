@@ -132,24 +132,24 @@ RenderBatch Renderer::makeRenderBatch(BatchInitializer &&init)
     return RenderBatch(backend_.makeRenderBatch(), move(envs));
 }
 
-uint32_t Renderer::render(RenderBatch &batch)
+void Renderer::render(RenderBatch &batch)
 {
-    return backend_.render(batch);
+    backend_.render(batch);
 }
 
-void Renderer::waitForFrame(uint32_t frame_idx)
+void Renderer::waitForBatch(RenderBatch &batch)
 {
-    backend_.waitForFrame(frame_idx);
+    backend_.waitForBatch(batch);
 }
 
-half *Renderer::getOutputPointer(uint32_t frame_idx) const
+half *Renderer::getOutputPointer(RenderBatch &batch) const
 {
-    return backend_.getOutputPointer(frame_idx);
+    return backend_.getOutputPointer(batch);
 }
 
-AuxiliaryOutputs Renderer::getAuxiliaryOutputs(uint32_t frame_idx) const
+AuxiliaryOutputs Renderer::getAuxiliaryOutputs(RenderBatch &batch) const
 {
-    return backend_.getAuxiliaryOutputs(frame_idx);
+    return backend_.getAuxiliaryOutputs(batch);
 }
 
 Environment::Environment(EnvironmentImpl &&backend,
@@ -275,24 +275,24 @@ RenderBatch::Handle RendererImpl::makeRenderBatch() const
     return invoke(make_batch_ptr_, state_);
 }
 
-uint32_t RendererImpl::render(RenderBatch &batch)
+void RendererImpl::render(RenderBatch &batch)
 {
     return invoke(render_ptr_, state_, batch);
 }
 
-void RendererImpl::waitForFrame(uint32_t frame_idx)
+void RendererImpl::waitForBatch(RenderBatch &batch)
 {
-    invoke(wait_ptr_, state_, frame_idx);
+    invoke(wait_ptr_, state_, batch);
 }
 
-half *RendererImpl::getOutputPointer(uint32_t frame_idx) const
+half *RendererImpl::getOutputPointer(RenderBatch &batch) const
 {
-    return invoke(get_output_ptr_, state_, frame_idx);
+    return invoke(get_output_ptr_, state_, batch);
 }
 
-AuxiliaryOutputs RendererImpl::getAuxiliaryOutputs(uint32_t frame_idx) const
+AuxiliaryOutputs RendererImpl::getAuxiliaryOutputs(RenderBatch &batch) const
 {
-    return invoke(get_aux_ptr_, state_, frame_idx);
+    return invoke(get_aux_ptr_, state_, batch);
 }
 
 void BatchDeleter::operator()(BatchBackend *ptr) const

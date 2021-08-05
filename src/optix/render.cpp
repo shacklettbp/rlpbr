@@ -418,9 +418,9 @@ static cudaStream_t makeStream()
     return strm;
 }
 
-static inline uint32_t getNumFrames(const RenderConfig &cfg)
+static inline uint32_t getNumFrames(const RenderConfig &)
 {
-    return cfg.doubleBuffered ? 2 : 1;
+    return 1;
 }
 
 static BSDFLookupTables loadBSDFLookupTables(TextureManager &tex_mgr,
@@ -659,7 +659,7 @@ static PackedEnv packEnv(const Environment &env,
     };
 }
 
-uint32_t OptixBackend::render(RenderBatch &batch)
+void OptixBackend::render(RenderBatch &batch)
 {
     const Environment *envs = batch.getEnvironments();
     //physics_->simulate(envs);
@@ -694,26 +694,24 @@ uint32_t OptixBackend::render(RenderBatch &batch)
 
     frame_counter_ += batch_size_;
 
-    uint32_t cur_idx = active_idx_;
     active_idx_ = (active_idx_ + 1) & frame_mask_;
-    return cur_idx;
 }
 
-void OptixBackend::waitForFrame(uint32_t frame_idx)
+void OptixBackend::waitForBatch(RenderBatch &)
 {
-    REQ_CUDA(cudaStreamSynchronize(streams_[frame_idx]));
+    REQ_CUDA(cudaStreamSynchronize(streams_[0]));
 }
 
-half *OptixBackend::getOutputPointer(uint32_t frame_idx)
+half *OptixBackend::getOutputPointer(RenderBatch &)
 {
-    return render_state_.shaderBuffers[frame_idx].outputBuffer;
+    return render_state_.shaderBuffers[0].outputBuffer;
 }
 
-AuxiliaryOutputs OptixBackend::getAuxiliaryOutputs(uint32_t frame_idx)
+AuxiliaryOutputs OptixBackend::getAuxiliaryOutputs(RenderBatch &)
 {
     return {
-        render_state_.shaderBuffers[frame_idx].normalBuffer,
-        render_state_.shaderBuffers[frame_idx].albedoBuffer,
+        render_state_.shaderBuffers[0].normalBuffer,
+        render_state_.shaderBuffers[0].albedoBuffer,
     };
 }
 

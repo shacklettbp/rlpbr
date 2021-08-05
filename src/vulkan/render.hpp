@@ -24,8 +24,7 @@
 namespace RLpbr {
 namespace vk {
 
-struct BackendConfig {
-    uint32_t numBatches;
+struct InitConfig {
     bool useZSobol;
     bool useAdvancedMaterials;
     bool validate;
@@ -45,16 +44,11 @@ struct FramebufferConfig {
 
     uint32_t frameWidth;
     uint32_t frameHeight;
-    uint32_t totalWidth;
-    uint32_t totalHeight;
 
-    uint32_t pixelsPerBatch;
-    uint32_t totalPixels;
-
-    uint32_t outputPixelSize;
-    uint32_t normalPixelSize;
-    uint32_t albedoPixelSize;
-    uint32_t reservoirPixelSize;
+    uint32_t outputBytes;
+    uint32_t normalBytes;
+    uint32_t albedoBytes;
+    uint32_t reservoirBytes;
 };
 
 struct ParamBufferConfig {
@@ -78,7 +72,8 @@ struct FramebufferState {
 
     std::vector<CudaImportedBuffer> exported;
 
-    std::vector<LocalBuffer> reservoir;
+    std::vector<LocalBuffer> reservoirs;
+    std::vector<VkDeviceMemory> reservoirMemory;
 };
 
 struct RenderState {
@@ -86,7 +81,6 @@ struct RenderState {
     VkSampler clampSampler;
 
     ShaderPipeline rt;
-    FixedDescriptorPool rtPool;
 };
 
 struct RTPipelineState {
@@ -112,6 +106,7 @@ struct PerBatchState {
     half *normalBuffer;
     half *albedoBuffer;
 
+    FixedDescriptorPool rtPool;
     VkDescriptorSet rtSet;
 
     InstanceTransform *transformPtr;
@@ -132,8 +127,25 @@ struct BSDFPrecomputed {
     ImgAndView msGGXInverse;
 };
 
+struct VulkanBatch : public BatchBackend {
+    FramebufferState fb;
+
+    HostBuffer renderInputBuffer;
+    PerBatchState state;
+
+    uint32_t curBuffer;
+};
+
 class VulkanBackend : public RenderBackend {
 public:
+    struct Config {
+        int gpuID;
+        uint32_t batchSize;
+        uint32_t maxLoaders;
+        uint32_t maxTextureResolution;
+        bool auxiliaryOutputs;
+    };
+
     VulkanBackend(const RenderConfig &cfg, bool validate);
     LoaderImpl makeLoader();
 
@@ -142,18 +154,18 @@ public:
 
     RenderBatch::Handle makeRenderBatch();
 
-    uint32_t render(RenderBatch &batch);
+    void render(RenderBatch &batch);
 
-    void waitForFrame(uint32_t batch_idx);
+    void waitForBatch(RenderBatch &batch);
 
-    half *getOutputPointer(uint32_t batch_idx);
-    AuxiliaryOutputs getAuxiliaryOutputs(uint32_t batch_idx);
+    half *getOutputPointer(RenderBatch &batch);
+    AuxiliaryOutputs getAuxiliaryOutputs(RenderBatch &batch);
 
 private:
     VulkanBackend(const RenderConfig &cfg,
-                  const BackendConfig &backend_cfg);
+                  const InitConfig &backend_cfg);
 
-    const uint32_t batch_size_;
+    const Config cfg_;
 
     const InstanceState inst;
     const DeviceState dev;
@@ -164,25 +176,17 @@ private:
     const ParamBufferConfig param_cfg_;
     RenderState render_state_;
     PipelineState pipeline_;
-    FramebufferState fb_;
 
     DynArray<QueueState> transfer_queues_;
     DynArray<QueueState> graphics_queues_;
     DynArray<QueueState> compute_queues_;
 
-    HostBuffer render_input_buffer_;
-
     BSDFPrecomputed bsdf_precomp_;
     glm::u32vec3 launch_size_;
 
     std::atomic_int num_loaders_;
-    int max_loaders_;
-    uint32_t max_texture_resolution_;
 
-    std::vector<PerBatchState> batch_states_;
-
-    uint32_t cur_batch_;
-    const uint32_t batch_mask_;
+    uint32_t cur_queue_;
     uint32_t frame_counter_;
 
     std::optional<PresentationState> present_;

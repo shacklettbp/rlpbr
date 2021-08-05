@@ -55,7 +55,7 @@ int main(int argc, char *argv[]) {
 
     cout << "Loaded " << views.size() << " views" << endl;
 
-    Renderer renderer({0, 1, batch_size, res, res, spp, path_depth, 0, false,
+    Renderer renderer({0, 1, batch_size, res, res, spp, path_depth, 0,
         false, false, 0.f, BackendSelect::Vulkan});
 
     auto loader = renderer.makeLoader();
@@ -72,7 +72,7 @@ int main(int argc, char *argv[]) {
     RenderBatch batch = renderer.makeRenderBatch(move(init));
 
     renderer.render(batch);
-    renderer.waitForFrame();
+    renderer.waitForBatch(batch);
 
     auto start = chrono::steady_clock::now();
 
@@ -93,7 +93,7 @@ int main(int argc, char *argv[]) {
                 rotation * glm::vec3(1.f, 0.f, 0.f));
         }
         renderer.render(batch);
-        renderer.waitForFrame();
+        renderer.waitForBatch(batch);
     }
 
     auto end = chrono::steady_clock::now();

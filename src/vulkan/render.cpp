@@ -9,7 +9,7 @@ using namespace std;
 namespace RLpbr {
 namespace vk {
 
-static BackendConfig getBackendConfig(const RenderConfig &cfg, bool validate)
+static InitConfig getInitConfig(const RenderConfig &cfg, bool validate)
 {
     bool use_zsobol =  uint64_t(cfg.spp) * uint64_t(cfg.imgWidth) *
         uint64_t(cfg.imgHeight) < uint64_t(~0u);
@@ -20,8 +20,7 @@ static BackendConfig getBackendConfig(const RenderConfig &cfg, bool validate)
         need_present = true;
     }
 
-    return BackendConfig {
-        cfg.doubleBuffered ? 2u : 1u,
+    return InitConfig {
         use_zsobol,
         false,
         validate,
@@ -63,11 +62,9 @@ static ParamBufferConfig getParamBufferConfig(uint32_t batch_size,
     return cfg;
 }
 
-static FramebufferConfig getFramebufferConfig(const RenderConfig &cfg,
-                                              const BackendConfig &backend_cfg)
+static FramebufferConfig getFramebufferConfig(const RenderConfig &cfg)
 {
     uint32_t batch_size = cfg.batchSize;
-    uint32_t num_batches = backend_cfg.numBatches;
 
     uint32_t minibatch_size =
         max(batch_size / VulkanConfig::minibatch_divisor, batch_size);
@@ -98,16 +95,12 @@ static FramebufferConfig getFramebufferConfig(const RenderConfig &cfg,
     uint32_t batch_fb_width = cfg.imgWidth * batch_fb_images_wide;
     uint32_t batch_fb_height = cfg.imgHeight * batch_fb_images_tall;
 
-    uint32_t total_fb_width = batch_fb_width * num_batches;
-    uint32_t total_fb_height = batch_fb_height;
-
     uint32_t pixels_per_batch = batch_fb_width * batch_fb_height;
-    uint32_t total_pixels = pixels_per_batch * num_batches;
 
-    uint32_t output_pixel_size = 4 * sizeof(uint16_t);
-    uint32_t normal_pixel_size = 3 * sizeof(uint16_t);
-    uint32_t albedo_pixel_size = 4 * sizeof(uint16_t);
-    uint32_t reservoir_pixel_size = sizeof(Reservoir);
+    uint32_t output_bytes = 4 * sizeof(uint16_t) * pixels_per_batch;
+    uint32_t normal_bytes = 3 * sizeof(uint16_t) * pixels_per_batch;
+    uint32_t albedo_bytes = 4 * sizeof(uint16_t) * pixels_per_batch;
+    uint32_t reservoir_bytes = sizeof(Reservoir) * pixels_per_batch;
 
     return FramebufferConfig {
         cfg.imgWidth,
@@ -119,20 +112,16 @@ static FramebufferConfig getFramebufferConfig(const RenderConfig &cfg,
         batch_fb_images_tall,
         batch_fb_width,
         batch_fb_height,
-        total_fb_width,
-        total_fb_height,
-        pixels_per_batch,
-        total_pixels,
-        output_pixel_size,
-        normal_pixel_size,
-        albedo_pixel_size,
-        reservoir_pixel_size,
+        output_bytes,
+        normal_bytes,
+        albedo_bytes,
+        reservoir_bytes,
     };
 }
 
 static RenderState makeRenderState(const DeviceState &dev,
                                    const RenderConfig &cfg,
-                                   const BackendConfig &backend_cfg)
+                                   const InitConfig &init_cfg)
 {
     VkSampler repeat_sampler =
         makeImmutableSampler(dev, VK_SAMPLER_ADDRESS_MODE_REPEAT);
@@ -175,7 +164,7 @@ static RenderState makeRenderState(const DeviceState &dev,
         string("ZSOBOL_INDEX_SHIFT (") + to_string(index_shift) + "u)",
     };
 
-    if (backend_cfg.validate) {
+    if (init_cfg.validate) {
         shader_defines.push_back("VALIDATE");
     }
 
@@ -214,13 +203,10 @@ static RenderState makeRenderState(const DeviceState &dev,
         shader_defines,
         STRINGIFY(SHADER_DIR));
 
-    FixedDescriptorPool desc_pool(dev, shader, 0, backend_cfg.numBatches);
-
     return RenderState {
         repeat_sampler,
         clamp_sampler,
         move(shader),
-        move(desc_pool),
     };
 }
 
@@ -293,7 +279,7 @@ static PipelineState makePipeline(const DeviceState &dev,
 }
 
 static FramebufferState makeFramebuffer(const DeviceState &dev,
-                                        const RenderConfig &cfg,
+                                        const VulkanBackend::Config &cfg,
                                         const FramebufferConfig &fb_cfg,
                                         MemoryAllocator &alloc)
 {
@@ -311,49 +297,53 @@ static FramebufferState makeFramebuffer(const DeviceState &dev,
         exported.reserve(1);
     }
 
-    uint64_t linear_output_bytes = fb_cfg.totalPixels * fb_cfg.outputPixelSize;
     auto [main_buffer, main_mem] =
-        alloc.makeDedicatedBuffer(linear_output_bytes);
+        alloc.makeDedicatedBuffer(fb_cfg.outputBytes);
 
     outputs.emplace_back(move(main_buffer));
     backings.emplace_back(move(main_mem));
     exported.emplace_back(dev, cfg.gpuID, backings.back(),
-                          linear_output_bytes);
+                          fb_cfg.outputBytes);
 
     if (cfg.auxiliaryOutputs) {
-        uint64_t linear_normal_bytes =
-            fb_cfg.totalPixels * fb_cfg.normalPixelSize;
-
         auto [normal_buffer, normal_mem] =
-            alloc.makeDedicatedBuffer(linear_normal_bytes);
+            alloc.makeDedicatedBuffer(fb_cfg.normalBytes);
 
         outputs.emplace_back(move(normal_buffer));
         backings.emplace_back(move(normal_mem));
         exported.emplace_back(dev, cfg.gpuID, backings.back(),
-                              linear_normal_bytes);
-
-        uint64_t linear_albedo_bytes =
-            fb_cfg.totalPixels * fb_cfg.albedoPixelSize;
+                              fb_cfg.normalBytes);
 
         auto [albedo_buffer, albedo_mem] =
-            alloc.makeDedicatedBuffer(linear_albedo_bytes);
+            alloc.makeDedicatedBuffer(fb_cfg.albedoBytes);
 
         outputs.emplace_back(move(albedo_buffer));
         backings.emplace_back(move(albedo_mem));
         exported.emplace_back(dev, cfg.gpuID, backings.back(),
-                              linear_albedo_bytes);
+                              fb_cfg.albedoBytes);
     }
 
-    auto [reservoir_buffer, reservoir_mem] = alloc.makeDedicatedBuffer(
-        fb_cfg.totalPixels * fb_cfg.reservoirPixelSize);
+    vector<LocalBuffer> reservoirs;
+    vector<VkDeviceMemory> reservoir_mem;
 
-    outputs.emplace_back(move(reservoir_buffer));
-    backings.emplace_back(move(reservoir_mem));
+    auto [prev_reservoir_buffer, prev_reservoir_mem] =
+        alloc.makeDedicatedBuffer(fb_cfg.reservoirBytes);
+
+    reservoirs.emplace_back(move(prev_reservoir_buffer));
+    reservoir_mem.emplace_back(move(prev_reservoir_mem));
+
+    auto [cur_reservoir_buffer, cur_reservoir_mem] =
+        alloc.makeDedicatedBuffer(fb_cfg.reservoirBytes);
+
+    reservoirs.emplace_back(move(cur_reservoir_buffer));
+    reservoir_mem.emplace_back(move(cur_reservoir_mem));
 
     return FramebufferState {
         move(outputs),
         move(backings),
         move(exported),
+        move(reservoirs),
+        move(reservoir_mem),
     };
 }
 
@@ -362,44 +352,29 @@ static PerBatchState makePerBatchState(const DeviceState &dev,
                                        const FramebufferState &fb,
                                        const ParamBufferConfig &param_cfg,
                                        HostBuffer &param_buffer,
-                                       VkDescriptorSet rt_set,
+                                       FixedDescriptorPool &&rt_pool,
                                        const BSDFPrecomputed &precomp_tex,
                                        bool auxiliary_outputs,
-                                       bool need_present,
-                                       uint32_t global_batch_idx)
+                                       bool need_present)
 {
+    VkDescriptorSet rt_set = rt_pool.makeSet();
+
     VkCommandPool cmd_pool = makeCmdPool(dev, dev.computeQF);
     VkCommandBuffer render_cmd = makeCmdBuffer(dev, cmd_pool);
 
-    VkDeviceSize output_bytes = fb_cfg.pixelsPerBatch * fb_cfg.outputPixelSize;
-    VkDeviceSize normal_bytes = fb_cfg.pixelsPerBatch * fb_cfg.normalPixelSize;
-    VkDeviceSize albedo_bytes = fb_cfg.pixelsPerBatch * fb_cfg.albedoPixelSize;
-    VkDeviceSize reservoir_bytes = fb_cfg.pixelsPerBatch *
-        fb_cfg.reservoirPixelSize;
-
-    VkDeviceSize output_buffer_offset = global_batch_idx * output_bytes;
-    VkDeviceSize normal_buffer_offset = global_batch_idx * normal_bytes;
-    VkDeviceSize albedo_buffer_offset = global_batch_idx * albedo_bytes;
-    VkDeviceSize reservoir_buffer_offset = global_batch_idx * reservoir_bytes;
-
-    half *output_buffer = (half *)((char *)fb.exported[0].getDevicePointer() +
-                                   output_buffer_offset);
+    half *output_buffer = (half *)((char *)fb.exported[0].getDevicePointer());
 
     half *normal_buffer = nullptr, *albedo_buffer = nullptr;
     if (auxiliary_outputs) {
-        normal_buffer = (half *)((char *)fb.exported[1].getDevicePointer() +
-                                       normal_buffer_offset);
+        normal_buffer = (half *)((char *)fb.exported[1].getDevicePointer());
 
-        albedo_buffer = (half *)((char *)fb.exported[2].getDevicePointer() +
-                                       albedo_buffer_offset);
+        albedo_buffer = (half *)((char *)fb.exported[2].getDevicePointer());
     }
 
     vector<VkWriteDescriptorSet> desc_set_updates;
 
-    VkDeviceSize base_offset = global_batch_idx * param_cfg.totalParamBytes;
-
     uint8_t *base_ptr =
-        reinterpret_cast<uint8_t *>(param_buffer.ptr) + base_offset;
+        reinterpret_cast<uint8_t *>(param_buffer.ptr);
 
     InstanceTransform *transform_ptr =
         reinterpret_cast<InstanceTransform *>(base_ptr);
@@ -417,7 +392,7 @@ static PerBatchState makePerBatchState(const DeviceState &dev,
 
     VkDescriptorBufferInfo transform_info {
         param_buffer.buffer,
-        base_offset,
+        0,
         param_cfg.totalTransformBytes,
     };
 
@@ -426,7 +401,7 @@ static PerBatchState makePerBatchState(const DeviceState &dev,
 
     VkDescriptorBufferInfo mat_info {
         param_buffer.buffer,
-        base_offset + param_cfg.materialIndicesOffset,
+        param_cfg.materialIndicesOffset,
         param_cfg.totalMaterialIndexBytes,
     };
     desc_updates.buffer(rt_set, &mat_info, 1,
@@ -434,7 +409,7 @@ static PerBatchState makePerBatchState(const DeviceState &dev,
 
     VkDescriptorBufferInfo light_info {
         param_buffer.buffer,
-        base_offset + param_cfg.lightsOffset,
+        param_cfg.lightsOffset,
         param_cfg.totalLightParamBytes,
     };
 
@@ -443,7 +418,7 @@ static PerBatchState makePerBatchState(const DeviceState &dev,
 
     VkDescriptorBufferInfo env_info {
         param_buffer.buffer,
-        base_offset + param_cfg.envOffset,
+        param_cfg.envOffset,
         param_cfg.totalEnvParamBytes,
     };
 
@@ -492,17 +467,17 @@ static PerBatchState makePerBatchState(const DeviceState &dev,
 
     VkDescriptorBufferInfo out_info {
         fb.outputs[0].buffer,
-        output_buffer_offset,
-        output_bytes,
+        0,
+        fb_cfg.outputBytes,
     };
 
     desc_updates.buffer(rt_set, &out_info, 11,
                         VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
 
     VkDescriptorBufferInfo reservoir_info {
-        fb.outputs.back().buffer,
-        reservoir_buffer_offset,
-        reservoir_bytes,
+        fb.reservoirs[0].buffer,
+        0,
+        fb_cfg.reservoirBytes,
     };
 
     desc_updates.buffer(rt_set, &reservoir_info, 12,
@@ -514,14 +489,14 @@ static PerBatchState makePerBatchState(const DeviceState &dev,
     if (auxiliary_outputs) {
         normal_info = {
             fb.outputs[1].buffer,
-            normal_buffer_offset,
-            normal_bytes,
+            0,
+            fb_cfg.normalBytes,
         };
 
         albedo_info = {
             fb.outputs[2].buffer,
-            albedo_buffer_offset,
-            albedo_bytes,
+            0,
+            fb_cfg.albedoBytes,
         };
 
         desc_updates.buffer(rt_set, &normal_info, 14,
@@ -541,6 +516,7 @@ static PerBatchState makePerBatchState(const DeviceState &dev,
         output_buffer,
         normal_buffer,
         albedo_buffer,
+        move(rt_pool),
         rt_set,
         transform_ptr,
         material_ptr,
@@ -814,24 +790,24 @@ static glm::u32vec3 getLaunchSize(const RenderConfig &cfg)
     };
 }
 
-static InstanceState makeInstance(const BackendConfig &backend_cfg)
+static InstanceState makeInstance(const InitConfig &init_cfg)
 {
-    if (backend_cfg.needPresent) {
+    if (init_cfg.needPresent) {
         PresentationState::init();
 
-        return InstanceState(backend_cfg.validate, true,
+        return InstanceState(init_cfg.validate, true,
                              PresentationState::getInstanceExtensions());
 
     } else {
-        return InstanceState(backend_cfg.validate, false, {});
+        return InstanceState(init_cfg.validate, false, {});
     }
 }
 
 static DeviceState makeDevice(const InstanceState &inst,
                               const RenderConfig &cfg,
-                              const BackendConfig &backend_cfg)
+                              const InitConfig &init_cfg)
 {
-    auto present_callback = backend_cfg.needPresent ?
+    auto present_callback = init_cfg.needPresent ?
         PresentationState::deviceSupportCallback :
         nullptr;
 
@@ -840,73 +816,55 @@ static DeviceState makeDevice(const InstanceState &inst,
 }
 
 VulkanBackend::VulkanBackend(const RenderConfig &cfg, bool validate)
-    : VulkanBackend(cfg, getBackendConfig(cfg, validate))
+    : VulkanBackend(cfg, getInitConfig(cfg, validate))
 {}
 
 VulkanBackend::VulkanBackend(const RenderConfig &cfg,
-                             const BackendConfig &backend_cfg)
-    : batch_size_(cfg.batchSize),
-      inst(makeInstance(backend_cfg)),
-      dev(makeDevice(inst, cfg, backend_cfg)),
+                             const InitConfig &init_cfg)
+    : cfg_({
+          cfg.gpuID,
+          cfg.batchSize,
+          cfg.numLoaders,
+          cfg.maxTextureResolution == 0 ? ~0u :
+              cfg.maxTextureResolution,
+          cfg.auxiliaryOutputs,
+      }),
+      inst(makeInstance(init_cfg)),
+      dev(makeDevice(inst, cfg, init_cfg)),
       alloc(dev, inst),
-      fb_cfg_(getFramebufferConfig(cfg, backend_cfg)),
+      fb_cfg_(getFramebufferConfig(cfg)),
       param_cfg_(getParamBufferConfig(cfg.batchSize, alloc)),
-      render_state_(makeRenderState(dev, cfg, backend_cfg)),
+      render_state_(makeRenderState(dev, cfg, init_cfg)),
       pipeline_(makePipeline(dev, render_state_)),
-      fb_(makeFramebuffer(dev,
-                          cfg,
-                          fb_cfg_,
-                          alloc)),
       transfer_queues_(initTransferQueues(cfg, dev)),
       graphics_queues_(initGraphicsQueues(dev)),
       compute_queues_(initComputeQueues(dev)),
-      render_input_buffer_(alloc.makeParamBuffer(param_cfg_.totalParamBytes *
-                                                 backend_cfg.numBatches)),
       bsdf_precomp_(loadPrecomputedTextures(dev, alloc, compute_queues_[0],
                     dev.computeQF)),
       launch_size_(getLaunchSize(cfg)),
       num_loaders_(0),
-      max_loaders_(cfg.numLoaders),
-      max_texture_resolution_(cfg.maxTextureResolution == 0 ? ~0u :
-                              cfg.maxTextureResolution),
-      batch_states_(),
-      cur_batch_(0),
-      batch_mask_(backend_cfg.numBatches == 2 ? 1 : 0),
+      cur_queue_(0),
       frame_counter_(0),
-      present_(backend_cfg.needPresent ?
+      present_(init_cfg.needPresent ?
           make_optional<PresentationState>(inst, dev, dev.computeQF,
-              backend_cfg.numBatches, glm::u32vec2(1, 1), true) :
+                                           1, glm::u32vec2(1, 1), true) :
           optional<PresentationState>())
 {
-    present_->forceTransition(dev, compute_queues_[0], dev.computeQF);
-
-    batch_states_.reserve(backend_cfg.numBatches);
-    for (int i = 0; i < (int)backend_cfg.numBatches; i++) {
-        batch_states_.emplace_back(makePerBatchState(
-            dev, fb_cfg_, fb_, param_cfg_,
-            render_input_buffer_, render_state_.rtPool.makeSet(),
-            bsdf_precomp_, cfg.auxiliaryOutputs, backend_cfg.needPresent, i));
-    }
-
-    // FIXME, this isn't actually valid if both batches could be in flight
-    // at the same time
-    for (int i = 0; i < (int)backend_cfg.numBatches; i++) {
-        PerBatchState &cur = batch_states_[i];
-        int prev_idx = i == 0 ? (backend_cfg.numBatches - 1) : i - 1;
-        PerBatchState &prev = batch_states_[prev_idx];
+    if (init_cfg.needPresent) {
+        present_->forceTransition(dev, compute_queues_[0], dev.computeQF);
     }
 }
 
 LoaderImpl VulkanBackend::makeLoader()
 {
     int loader_idx = num_loaders_.fetch_add(1, memory_order_acq_rel);
-    assert(loader_idx < max_loaders_);
+    assert(loader_idx < (int)cfg_.maxLoaders);
 
     auto loader = new VulkanLoader(
         dev, alloc, transfer_queues_[loader_idx % transfer_queues_.size()],
         compute_queues_.back(), render_state_.rt, {
             0, 1, 2, 3, 4,
-        }, dev.computeQF, max_texture_resolution_);
+        }, dev.computeQF, cfg_.maxTextureResolution);
 
     return makeLoaderImpl<VulkanLoader>(loader);
 }
@@ -922,10 +880,32 @@ EnvironmentImpl VulkanBackend::makeEnvironment(const shared_ptr<Scene> &scene,
 
 RenderBatch::Handle VulkanBackend::makeRenderBatch()
 {
-    auto deleter = [](void *, BatchBackend *) {
+    auto deleter = [](void *, BatchBackend *base_ptr) {
+        auto ptr = static_cast<VulkanBatch *>(base_ptr);
+        delete ptr;
     };
 
-    return RenderBatch::Handle(nullptr, {nullptr, deleter});
+    auto fb = makeFramebuffer(dev, cfg_, fb_cfg_, alloc);
+
+    auto render_input_buffer =
+        alloc.makeParamBuffer(param_cfg_.totalParamBytes);
+
+    PerBatchState batch_state = makePerBatchState(
+            dev, fb_cfg_, fb, param_cfg_,
+            render_input_buffer,
+            FixedDescriptorPool(dev, render_state_.rt, 0, 1),
+            bsdf_precomp_, cfg_.auxiliaryOutputs,
+            present_.has_value());
+
+    auto backend = new VulkanBatch {
+        {},
+        move(fb),
+        move(render_input_buffer),
+        move(batch_state),
+        0,
+    };
+
+    return RenderBatch::Handle(backend, {nullptr, deleter});
 }
 
 static PackedCamera packCamera(const Camera &cam)
@@ -945,10 +925,16 @@ static PackedCamera packCamera(const Camera &cam)
     return packed;
 }
 
-uint32_t VulkanBackend::render(RenderBatch &batch)
+static VulkanBatch *getVkBatch(RenderBatch &batch)
 {
+    return static_cast<VulkanBatch *>(batch.getBackend());
+}
+
+void VulkanBackend::render(RenderBatch &batch)
+{
+    VulkanBatch &batch_backend = *getVkBatch(batch);
     const Environment *envs = batch.getEnvironments();
-    PerBatchState &batch_state = batch_states_[cur_batch_];
+    PerBatchState &batch_state = batch_backend.state;
 
     REQ_VK(dev.dt.resetCommandPool(dev.hdl, batch_state.cmdPool, 0));
 
@@ -984,7 +970,7 @@ uint32_t VulkanBackend::render(RenderBatch &batch)
     }
 
     // TLAS build
-    for (int batch_idx = 0; batch_idx < (int)batch_size_; batch_idx++) {
+    for (int batch_idx = 0; batch_idx < (int)cfg_.batchSize; batch_idx++) {
         const Environment &env = envs[batch_idx];
 
         if (env.isDirty()) {
@@ -1018,7 +1004,7 @@ uint32_t VulkanBackend::render(RenderBatch &batch)
     uint32_t light_offset = 0;
 
     // Write environment data into linear buffers
-    for (int batch_idx = 0; batch_idx < (int)batch_size_; batch_idx++) {
+    for (int batch_idx = 0; batch_idx < (int)cfg_.batchSize; batch_idx++) {
         const Environment &env = envs[batch_idx];
         const VulkanEnvironment &env_backend =
             *static_cast<const VulkanEnvironment *>(env.getBackend());
@@ -1063,9 +1049,7 @@ uint32_t VulkanBackend::render(RenderBatch &batch)
 
     REQ_VK(dev.dt.endCommandBuffer(render_cmd));
 
-    render_input_buffer_.flush(dev);
-
-    uint32_t rendered_batch_idx = cur_batch_;
+    batch_backend.renderInputBuffer.flush(dev);
 
     VkSubmitInfo render_submit {
         VK_STRUCTURE_TYPE_SUBMIT_INFO,
@@ -1087,43 +1071,48 @@ uint32_t VulkanBackend::render(RenderBatch &batch)
         swapchain_idx = present_->acquireNext(dev, batch_state.swapchainReady);
     }
 
-    compute_queues_[cur_batch_].submit(dev, 1, &render_submit, batch_state.fence);
+    compute_queues_[cur_queue_].submit(
+        dev, 1, &render_submit, batch_state.fence);
 
     if (present_.has_value()) {
         array present_wait_semas {
             batch_state.swapchainReady,
             batch_state.renderSignal,
         };
-        present_->present(dev, swapchain_idx, compute_queues_[cur_batch_],
+        present_->present(dev, swapchain_idx, compute_queues_[cur_queue_],
                           present_wait_semas.size(),
                           present_wait_semas.data());
     }
 
-    frame_counter_ += batch_size_;
+    frame_counter_ += cfg_.batchSize;
 
-    cur_batch_ = (cur_batch_ + 1) & batch_mask_;
-
-    return rendered_batch_idx;
+    batch_backend.curBuffer = (batch_backend.curBuffer + 1) & 1;
+    cur_queue_ = (cur_queue_ + 1) & 1;
 }
 
-void VulkanBackend::waitForFrame(uint32_t batch_idx)
+void VulkanBackend::waitForBatch(RenderBatch &batch)
 {
-    VkFence fence = batch_states_[batch_idx].fence;
+    auto &batch_backend = *getVkBatch(batch);
+
+    VkFence fence = batch_backend.state.fence;
     assert(fence != VK_NULL_HANDLE);
     waitForFenceInfinitely(dev, fence);
     resetFence(dev, fence);
 }
 
-half *VulkanBackend::getOutputPointer(uint32_t batch_idx)
+half *VulkanBackend::getOutputPointer(RenderBatch &batch)
 {
-    return batch_states_[batch_idx].outputBuffer;
+    auto &batch_backend = *getVkBatch(batch);
+
+    return batch_backend.state.outputBuffer;
 }
 
-AuxiliaryOutputs VulkanBackend::getAuxiliaryOutputs(uint32_t batch_idx)
+AuxiliaryOutputs VulkanBackend::getAuxiliaryOutputs(RenderBatch &batch)
 {
+    auto &batch_backend = *getVkBatch(batch);
     return {
-        batch_states_[batch_idx].normalBuffer,
-        batch_states_[batch_idx].albedoBuffer,
+        batch_backend.state.normalBuffer,
+        batch_backend.state.albedoBuffer,
     };
 }
 

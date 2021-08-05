@@ -21,6 +21,8 @@ public:
     inline Environment &getEnvironment(uint32_t idx) { return envs_[idx]; }
     inline Environment *getEnvironments() { return envs_.data(); }
 
+    inline BatchBackend *getBackend() { return backend_.get(); }
+
 private:
     Handle backend_;
     std::vector<Environment> envs_;

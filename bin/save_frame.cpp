@@ -104,7 +104,7 @@ int main(int argc, char *argv[]) {
     }
 
     Renderer renderer({0, 1, batch_size, out_dim.x, out_dim.y, spp, depth,
-                       0, false, false, false, 0.f, BackendSelect::Vulkan});
+                       0, false, false, 0.f, BackendSelect::Vulkan});
 
     auto loader = renderer.makeLoader();
     auto scene = loader.loadScene(argv[1]);
@@ -146,9 +146,9 @@ int main(int argc, char *argv[]) {
     //envs.back().addLight(glm::vec3(12.499360, 2.102839, 1.691340), glm::vec3(10.f));
 
     renderer.render(batch);
-    renderer.waitForFrame();
+    renderer.waitForBatch(batch);
 
-    half *base_out_ptr = renderer.getOutputPointer();
+    half *base_out_ptr = renderer.getOutputPointer(batch);
 
     for (uint32_t batch_idx = 0; batch_idx < batch_size; batch_idx++) {
         saveFrame(("/tmp/out_color_" + to_string(batch_idx) + ".bmp").c_str(),

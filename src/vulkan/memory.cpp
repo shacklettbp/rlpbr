@@ -83,11 +83,13 @@ static constexpr VkFormatFeatureFlags depthAttachmentReqs =
     VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT |
     VK_FORMAT_FEATURE_TRANSFER_SRC_BIT;
 
+#if 0
 static constexpr VkImageUsageFlags rtStorageUsage =
     VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
 
 static constexpr VkFormatFeatureFlags rtStorageReqs =
     VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT | VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT;
+#endif
 };
 
 template <bool host_mapped>
@@ -642,14 +644,26 @@ pair<LocalBuffer, VkDeviceMemory> MemoryAllocator::makeDedicatedBuffer(
 
     VkMemoryDedicatedAllocateInfo dedicated;
     dedicated.sType = VK_STRUCTURE_TYPE_MEMORY_DEDICATED_ALLOCATE_INFO;
-    dedicated.pNext = nullptr;
     dedicated.image = VK_NULL_HANDLE;
     dedicated.buffer = buffer;
+
     VkMemoryAllocateInfo alloc;
     alloc.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
     alloc.pNext = &dedicated;
     alloc.allocationSize = reqs.size;
     alloc.memoryTypeIndex = type_indices_.dedicatedBuffer;
+
+    VkMemoryAllocateFlagsInfo flag_info;
+    if (dev_addr) {
+        flag_info.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO;
+        flag_info.pNext = nullptr;
+        flag_info.flags = VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT;
+        flag_info.deviceMask = 0;
+
+        dedicated.pNext = &flag_info;
+    } else {
+        dedicated.pNext = nullptr;
+    }
 
     VkDeviceMemory memory;
     REQ_VK(dev.dt.allocateMemory(dev.hdl, &alloc, nullptr, &memory));

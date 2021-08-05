@@ -58,13 +58,13 @@ public:
 
     RenderBatch makeRenderBatch(BatchInitializer &&init);
 
-    uint32_t render(RenderBatch &batch);
+    void render(RenderBatch &batch);
 
-    void waitForFrame(uint32_t frame_idx = 0);
+    void waitForBatch(RenderBatch &batch);
 
-    half *getOutputPointer(uint32_t frame_idx = 0) const;
+    half *getOutputPointer(RenderBatch &batch) const;
 
-    AuxiliaryOutputs getAuxiliaryOutputs(uint32_t frame_idx = 0) const;
+    AuxiliaryOutputs getAuxiliaryOutputs(RenderBatch &batch) const;
 
 private:
     RendererImpl backend_;

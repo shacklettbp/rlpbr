@@ -80,10 +80,10 @@ public:
         const std::shared_ptr<Scene> &, const Camera &);
     typedef std::unique_ptr<BatchBackend, BatchDeleter>(
         RenderBackend::*MakeBatchType)();
-    typedef uint32_t(RenderBackend::*RenderType)(RenderBatch &batch);
-    typedef void(RenderBackend::*WaitType)(uint32_t frame_idx);
-    typedef half *(RenderBackend::*GetOutputType)(uint32_t frame_idx);
-    typedef AuxiliaryOutputs(RenderBackend::*GetAuxType)(uint32_t frame_idx);
+    typedef void(RenderBackend::*RenderType)(RenderBatch &batch);
+    typedef void(RenderBackend::*WaitType)(RenderBatch &batch);
+    typedef half *(RenderBackend::*GetOutputType)(RenderBatch &batch);
+    typedef AuxiliaryOutputs(RenderBackend::*GetAuxType)(RenderBatch &batch);
 
     RendererImpl(DestroyType destroy_ptr,
         MakeLoaderType make_loader_ptr, MakeEnvironmentType make_env_ptr,
@@ -103,14 +103,14 @@ public:
     inline EnvironmentImpl makeEnvironment(
         const std::shared_ptr<Scene> &scene, const Camera &) const;
 
-    inline uint32_t render(RenderBatch &batch);
+    inline void render(RenderBatch &batch);
     inline std::unique_ptr<BatchBackend, BatchDeleter> makeRenderBatch() const;
 
-    inline void waitForFrame(uint32_t frame_idx);
+    inline void waitForBatch(RenderBatch &batch);
 
-    inline half *getOutputPointer(uint32_t frame_idx) const;
+    inline half *getOutputPointer(RenderBatch &batch) const;
 
-    inline AuxiliaryOutputs getAuxiliaryOutputs(uint32_t frame_idx) const;
+    inline AuxiliaryOutputs getAuxiliaryOutputs(RenderBatch &batch) const;
 
 private:
     DestroyType destroy_ptr_;

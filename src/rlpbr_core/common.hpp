@@ -11,6 +11,8 @@ struct EnvironmentBackend {};
 
 struct LoaderBackend {};
 
+struct BatchBackend {};
+
 struct RenderBackend {};
 
 template <typename LoaderType>
@@ -63,7 +65,7 @@ RendererImpl makeRendererImpl(RenderBackend *ptr)
         static_cast<RendererImpl::RenderType>(
             &RendererType::render),
         static_cast<RendererImpl::WaitType>(
-            &RendererType::waitForFrame),
+            &RendererType::waitForBatch),
         static_cast<RendererImpl::GetOutputType>(
             &RendererType::getOutputPointer),
         static_cast<RendererImpl::GetAuxType>(

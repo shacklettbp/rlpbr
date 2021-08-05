@@ -153,7 +153,7 @@ int main(int argc, char *argv[]) {
     }
 
     Renderer renderer({0, 1, 1, img_dims.x, img_dims.y, spp, depth, 0,
-        true, false, false, 0.f, BackendSelect::Vulkan});
+        false, false, 0.f, BackendSelect::Vulkan});
 
     array<cudaStream_t, 2> copy_streams;
 
@@ -212,9 +212,11 @@ int main(int argc, char *argv[]) {
         glfwSetInputMode(window, GLFW_RAW_MOUSE_MOTION, GLFW_TRUE);
     }
 
-    uint32_t prev_frame = renderer.render(batch);
+    renderer.render(batch);
+    renderer.waitForBatch(batch);
 
     auto time_prev = chrono::steady_clock::now();
+    uint32_t frame_idx = 0;
     while (!glfwWindowShouldClose(window)) {
         auto time_cur = chrono::steady_clock::now();
         chrono::duration<float> elapsed_duration = time_cur - time_prev;
@@ -262,16 +264,16 @@ int main(int argc, char *argv[]) {
                  << "U: " << glm::to_string(cam.up) << "\n";
         }
 
-        uint32_t new_frame = renderer.render(batch);
-        renderer.waitForFrame(prev_frame);
+        renderer.render(batch);
+        renderer.waitForBatch(batch);
 
-        half *output = renderer.getOutputPointer(prev_frame);
+        half *output = renderer.getOutputPointer(batch);
 
-        glNamedFramebufferTexture(read_fbos[prev_frame], GL_COLOR_ATTACHMENT0,
+        glNamedFramebufferTexture(read_fbos[frame_idx], GL_COLOR_ATTACHMENT0,
                                   0, 0);
 
-        res = cudaGraphicsMapResources(1, &dst_imgs[prev_frame],
-                                       copy_streams[prev_frame]);
+        res = cudaGraphicsMapResources(1, &dst_imgs[frame_idx],
+                                       copy_streams[frame_idx]);
         if (res != cudaSuccess) {
             cerr << "Failed to map opengl resource" << endl;
             abort();
@@ -279,52 +281,52 @@ int main(int argc, char *argv[]) {
 
         cudaArray_t dst_arr;
         res = cudaGraphicsSubResourceGetMappedArray(&dst_arr,
-            dst_imgs[prev_frame], 0, 0);
+            dst_imgs[frame_idx], 0, 0);
         if (res != cudaSuccess) {
            cerr << "Failed to get cuda array from opengl" << endl;
             abort();
         }
 
-        res = cudaMemcpy2DAsync(cuda_intermediates[prev_frame],
+        res = cudaMemcpy2DAsync(cuda_intermediates[frame_idx],
             sizeof(half) * 4, output, sizeof(half) * 4, sizeof(half) * 4,
             img_dims.x * img_dims.y, cudaMemcpyDeviceToDevice,
-            copy_streams[prev_frame]);
+            copy_streams[frame_idx]);
 
         if (res != cudaSuccess) {
             cerr << "buffer to intermediate buffer copy failed " << endl;
         }
 
         res = cudaMemcpy2DToArrayAsync(dst_arr, 0, 0,
-            cuda_intermediates[prev_frame],
+            cuda_intermediates[frame_idx],
             img_dims.x * sizeof(half) * 4, img_dims.x * sizeof(half) * 4,
             img_dims.y, cudaMemcpyDeviceToDevice,
-            copy_streams[prev_frame]);
+            copy_streams[frame_idx]);
 
         if (res != cudaSuccess) {
             cerr << "buffer to image copy failed " << endl;
         }
 
         // Seems like it shouldn't be necessary but bad tearing otherwise
-        cudaStreamSynchronize(copy_streams[prev_frame]);
+        cudaStreamSynchronize(copy_streams[frame_idx]);
 
-        res = cudaGraphicsUnmapResources(1, &dst_imgs[prev_frame],
-                                         copy_streams[prev_frame]);
+        res = cudaGraphicsUnmapResources(1, &dst_imgs[frame_idx],
+                                         copy_streams[frame_idx]);
         if (res != cudaSuccess) {
             cerr << "Failed to unmap opengl resource" << endl;
             abort();
         }
 
-        glNamedFramebufferTexture(read_fbos[prev_frame], GL_COLOR_ATTACHMENT0,
-                                  render_textures[prev_frame], 0);
+        glNamedFramebufferTexture(read_fbos[frame_idx], GL_COLOR_ATTACHMENT0,
+                                  render_textures[frame_idx], 0);
 
-        glBlitNamedFramebuffer(read_fbos[prev_frame], 0,
+        glBlitNamedFramebuffer(read_fbos[frame_idx], 0,
                                0, img_dims.y, img_dims.x, 0,
                                0, 0, img_dims.x, img_dims.y,
                                GL_COLOR_BUFFER_BIT, GL_NEAREST);
 
         glfwSwapBuffers(window);
 
-        prev_frame = new_frame;
+        frame_idx = (frame_idx + 1) & 1;
     }
 
     cudaFree(cuda_intermediates[0]);

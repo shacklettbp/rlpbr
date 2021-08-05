@@ -113,7 +113,6 @@ VulkanEnvironment::VulkanEnvironment(const DeviceState &d,
 VulkanEnvironment::~VulkanEnvironment()
 {
     tlas.free(dev);
-    dev.dt.freeMemory(dev.hdl, reservoirGrid.storage, nullptr);
 }
 
 uint32_t VulkanEnvironment::addLight(const glm::vec3 &position,
