@@ -857,10 +857,44 @@ static MaterialMetadata stageMaterials(const vector<Material> &materials,
 static vector<LightProperties> processLights(
     const vector<LightProperties> &initial_lights,
     const ProcessedGeometry<PackedVertex> &geo,
-    const vector<InstanceProperties> &instances)
+    const vector<InstanceProperties> &instances,
+    const AABB &scene_bbox)
 {
     vector<LightProperties> lights = initial_lights;
 
+    {
+        const int num_init_lights = 10;
+        float bbox_width = scene_bbox.pMax.x - scene_bbox.pMin.x;
+        float bbox_height = scene_bbox.pMax.y - scene_bbox.pMin.y;
+        float bbox_depth = scene_bbox.pMax.z - scene_bbox.pMin.z;
+
+        for (int i = 0; i < num_init_lights; i++) {
+            for (int j = 0; j < num_init_lights; j++) {
+                for (int k = 0; k < num_init_lights; k++) {
+                    glm::vec3 light_position(
+                        (bbox_width / num_init_lights) * i +
+                            scene_bbox.pMin.x,
+                        (bbox_height / num_init_lights) * j +
+                            scene_bbox.pMin.y,
+                        (bbox_depth / num_init_lights) * k +
+                            scene_bbox.pMin.z);
+
+                    LightProperties point_light;
+                    point_light.type = LightType::Point;
+                    point_light.position[0] = light_position.x;
+                    point_light.position[1] = light_position.y;
+                    point_light.position[2] = light_position.z;
+                    point_light.color[0] = 0.5f;
+                    point_light.color[1] = 0.5f;
+                    point_light.color[2] = 0.5f;
+
+                    lights.push_back(point_light);
+                }
+            }
+        }
+    }
+
+#if 0
     for (const auto &inst : instances) {
         if (inst.transparent) {
             const auto &object_info = geo.objectInfos[inst.objectIndex];
@@ -953,6 +987,7 @@ static vector<LightProperties> processLights(
             }
         }
     }
+#endif
 
     return lights;
 }
@@ -1010,7 +1045,7 @@ void ScenePreprocessor::dump(string_view out_path_name)
         processScene(scene_data_->desc);
 
     auto processed_lights = processLights(scene_data_->desc.defaultLights,
-        processed_geometry, processed_instances);
+        processed_geometry, processed_instances, default_bbox);
 
     auto processed_physics_state =
         ProcessedPhysicsState::make(processed_geometry, !scene_data_->dumpSDFs);

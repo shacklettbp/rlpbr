@@ -1,7 +1,7 @@
-#ifndef RLPBR_VK_SHADERS_MATERIALS_INCLUDED
-#define RLPBR_VK_SHADERS_MATERIALS_INCLUDED
+#ifndef RLPBR_VK_MATERIALS_GLSL_INCLUDED
+#define RLPBR_VK_MATERIALS_GLSL_INCLUDED
 
-#include "packed.h"
+#include "inputs.glsl"
 
 struct MaterialParams {
     vec3 baseColor;

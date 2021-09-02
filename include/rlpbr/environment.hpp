@@ -104,6 +104,7 @@ public:
 
     inline const std::shared_ptr<Scene> getScene() const;
     inline const EnvironmentBackend *getBackend() const;
+    inline EnvironmentBackend *getBackend();
     inline const Camera &getCamera() const;
 
     inline const std::vector<ObjectInstance> &

@@ -194,7 +194,7 @@ int main(int argc, char *argv[]) {
     glm::vec2 mouse_prev = cursorPosition(window);
 
     Renderer::BatchInitializer init;
-    init.addEnvironment(scene);
+    init.addEnvironment(scene, 60.f);
 
     RenderBatch batch = renderer.makeRenderBatch(move(init));
     batch.getEnvironment(0).setCameraView(cam.eye, cam.look, cam.up);

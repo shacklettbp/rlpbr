@@ -56,8 +56,10 @@ static RendererImpl makeBackend(const RenderConfig &cfg)
     abort();
 }
 
-void Renderer::BatchInitializer::addEnvironment(shared_ptr<Scene> scene)
+void Renderer::BatchInitializer::addEnvironment(shared_ptr<Scene> scene,
+                                                float fov)
 {
+    fovs_.emplace_back(fov);
     scenes_.emplace_back(move(scene));
 }
 
@@ -126,7 +128,9 @@ RenderBatch Renderer::makeRenderBatch(BatchInitializer &&init)
     vector<Environment> envs;
 
     for (int i = 0; i < num_envs; i++) {
-        envs.emplace_back(makeEnvironment(move(init.scenes_[i])));
+        envs.emplace_back(makeEnvironment(move(init.scenes_[i]),
+            glm::vec3(0.f), glm::vec3(0.f, 0.f, 1.f),
+            glm::vec3(0.f, 1.f, 0.f), init.fovs_[i]));
     }
 
     return RenderBatch(backend_.makeRenderBatch(), move(envs));

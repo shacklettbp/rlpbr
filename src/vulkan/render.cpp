@@ -928,15 +928,16 @@ static PackedCamera packCamera(const Camera &cam)
 {
     PackedCamera packed;
 
-    glm::vec3 scaled_up = -cam.tanFOV * cam.up;
-    glm::vec3 scaled_right = cam.aspectRatio * cam.tanFOV * cam.right;
+    // FIXME, consider elevating the quaternion representation to
+    // external camera interface
+    // FIXME: cam.aspectRatio is no longer respected
+    glm::quat rotation =
+        glm::quat_cast(glm::mat3(cam.right, -cam.up, cam.view));
 
-    packed.data[0] = glm::vec4(cam.position.x, cam.position.y,
-        cam.position.z, cam.view.x);
-    packed.data[1] = glm::vec4(cam.view.y, cam.view.z,
-        scaled_up.x, scaled_up.y);
-    packed.data[2] = glm::vec4(scaled_up.z, scaled_right.x,
-        scaled_right.y, scaled_right.z);
+    packed.rotation =
+        glm::vec4(rotation.x, rotation.y, rotation.z, rotation.w);
+
+    packed.posAndTanFOV = glm::vec4(cam.position, cam.tanFOV);
 
     return packed;
 }
@@ -949,7 +950,7 @@ static VulkanBatch *getVkBatch(RenderBatch &batch)
 void VulkanBackend::render(RenderBatch &batch)
 {
     VulkanBatch &batch_backend = *getVkBatch(batch);
-    const Environment *envs = batch.getEnvironments();
+    Environment *envs = batch.getEnvironments();
     PerBatchState &batch_state = batch_backend.state;
 
     REQ_VK(dev.dt.resetCommandPool(dev.hdl, batch_state.cmdPool, 0));
@@ -1022,14 +1023,17 @@ void VulkanBackend::render(RenderBatch &batch)
 
     // Write environment data into linear buffers
     for (int batch_idx = 0; batch_idx < (int)cfg_.batchSize; batch_idx++) {
-        const Environment &env = envs[batch_idx];
-        const VulkanEnvironment &env_backend =
-            *static_cast<const VulkanEnvironment *>(env.getBackend());
+        Environment &env = envs[batch_idx];
+        VulkanEnvironment &env_backend =
+            *static_cast<VulkanEnvironment *>(env.getBackend());
 
         PackedEnv &packed_env = batch_state.envPtr[batch_idx];
 
         packed_env.cam = packCamera(env.getCamera());
         packed_env.prevCam = packCamera(env_backend.prevCam);
+
+        // Set prevCam for next iteration
+        env_backend.prevCam = env.getCamera();
 
         const auto &env_transforms = env.getTransforms();
         uint32_t num_instances = env.getNumInstances();

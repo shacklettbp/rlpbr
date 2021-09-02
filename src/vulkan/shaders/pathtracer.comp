@@ -29,20 +29,11 @@
 #include "rlpbr_core/device.h"
 #undef SHADER_CONST
 
-// Various pi constants
-#define M_PI   (3.14159265358979323846264338327950288)
-#define M_PI_2 (1.57079632679489661923132169163975144)
-#define M_PI_4 (0.785398163397448309615660845819875721)
-#define M_1_PI (0.318309886183790671537767526745028724)
-#define M_2_PI (0.636619772367581343075535053490057448)
-
-#define LARGE_DISTANCE (1e16f)
-#define NEAR_ZERO (1e-6f)
-
 #include "shader_common.h"
-#include "sampler.h"
-#include "utils.h"
-#include "packed.h"
+#include "sampler.glsl"
+#include "utils.glsl"
+#include "inputs.glsl"
+#include "math.glsl"
 
 layout (push_constant, scalar) uniform PushConstant {
     RTPushConstant push_const;
@@ -115,13 +106,18 @@ layout (set = 1, binding = 4) readonly buffer MeshInfos {
     PackedMeshInfo meshInfos[];
 };
 
+// This function needs to be defined before the include of 
+// materials.glsl
 vec4 fetchSceneTexture(uint32_t idx, vec2 uv, float mip_level)
 {
     return textureLod(sampler2D(textures[nonuniformEXT(idx)],
         repeatSampler), uv, mip_level);
 }
 
-#include "materials.h"
+#include "materials.glsl"
+#include "bsdf.glsl"
+#include "lighting.glsl"
+#include "restir.glsl"
 
 // Debug functions
 
@@ -129,68 +125,24 @@ vec4 fetchSceneTexture(uint32_t idx, vec2 uv, float mip_level)
                    gl_GlobalInvocationID.y == 0 && \
                    gl_GlobalInvocationID.z == 0)
 
-// Unpacked struct definitions
-
-struct Camera {
-    vec3 origin;
-    vec3 view;
-    vec3 up;
-    vec3 right;
-};
-
-struct Vertex {
-    vec3 position;
-    vec3 normal;
-    vec4 tangentAndSign;
-    vec2 uv;
-};
-
-struct Triangle {
-    Vertex a;
-    Vertex b;
-    Vertex c;
-};
-
-struct Environment {
-    uint32_t baseTextureOffset;
-    uint32_t baseMaterialOffset;
-    uint32_t baseLightOffset;
-    uint32_t numLights;
-    uint64_t tlasAddr;
-};
-
-struct MeshInfo {
-    uint32_t indexOffset;
-};
-
-// LightType "enum"
-const uint32_t LightTypePoint = 0;
-const uint32_t LightTypePortal = 1;
-const uint32_t LightTypeEnvironment = 2;
-
-struct PointLight {
-    vec3 rgb;
-    vec3 position;
-};
-
-struct PortalLight {
-    vec3 corners[4];
-};
-
 // Unpack functions
-
 Camera unpackCamera(PackedCamera packed)
 {
-    vec4 data0 = packed.data[0];
-    vec4 data1 = packed.data[1];
-    vec4 data2 = packed.data[2];
+    float aspect = float(RES_X) / float(RES_Y);
 
-    vec3 origin = vec3(data0.x, data0.y, data0.z);
-    vec3 view = vec3(data0.w, data1.x, data1.y);
-    vec3 up = vec3(data1.z, data1.w, data2.x);
-    vec3 right = vec3(data2.y, data2.z, data2.w);
+    vec4 rot = packed.rotation;
+    vec3 view = quatRotate(rot, vec3(0.f, 0.f, 1.f));
+    vec3 up = quatRotate(rot, vec3(0.f, 1.f, 0.f));
+    vec3 right = quatRotate(rot, vec3(1.f, 0.f, 0.f));
 
-    return Camera(origin, view, up, right);
+    vec4 pos_fov = packed.posAndTanFOV;
+
+    vec3 origin = pos_fov.xyz;
+
+    float right_scale = aspect * pos_fov.w;
+    float up_scale = pos_fov.w;
+
+    return Camera(origin, view, up, right, right_scale, up_scale);
 }
 
 void unpackEnv(in uint32_t batch_idx,
@@ -263,144 +215,7 @@ uint32_t getMaterialID(uint32_t inst_material_idx)
     return instanceMaterials[nonuniformEXT(inst_material_idx)];
 }
 
-PointLight unpackPointLight(vec4 data0, vec4 data1)
-{
-    return PointLight(
-        vec3(data0.y, data0.z, data0.w),
-        vec3(data1.x, data1.y, data1.z));
-}
-
-PortalLight unpackPortalLight(vec4 data1, vec4 data2, vec4 data3)
-{
-    PortalLight light = {{
-        vec3(data1.x, data1.y, data1.z),
-        vec3(data1.w, data2.x, data2.y),
-        vec3(data2.z, data2.w, data3.x),
-        vec3(data3.y, data3.z, data3.w),
-    }};
-
-    return light;
-}
-
-uint32_t unpackLight(in Environment env,
-                     in uint32_t light_idx,
-                     out PointLight point_light,
-                     out PortalLight portal_light)
-{
-    PackedLight packed =
-        lights[nonuniformEXT(env.baseLightOffset + light_idx)];
-
-    vec4 data0 = packed.data[0];
-    uint32_t light_type = floatBitsToUint(data0.x);
-
-    vec4 data1 = packed.data[1];
-    vec4 data2 = packed.data[2];
-    vec4 data3 = packed.data[3];
-
-    if (light_type == LightTypePoint) {
-        point_light = unpackPointLight(data0, data1);
-    } else if (light_type == LightTypePortal) {
-        portal_light = unpackPortalLight(data1, data2, data3);
-    }
-
-    return light_type;
-}
-
-// Support structs
-
-// BSDFFlags "enum"
-const uint32_t BSDFFlagsInvalid = 1 << 0;
-const uint32_t BSDFFlagsDelta = 1 << 1;
-const uint32_t BSDFFlagsDiffuse = 1 << 2;
-const uint32_t BSDFFlagsMicrofacetReflection = 1 << 3;
-const uint32_t BSDFFlagsMicrofacetTransmission = 1 << 4;
-
-struct TangentFrame {
-    vec3 tangent;
-    vec3 bitangent;
-    vec3 normal;
-};
-
-struct BSDFParams {
-    vec3 rhoDiffuse;
-    float transparencyMask;
-    vec3 rhoTransmissive;
-    float transmission;
-    vec3 sharedF0;
-    float sharedF90;
-    vec3 transmissiveF0;
-    float transmissiveF90;
-    float alpha;
-    float roughness;
-    float diffuseLambertScale;
-    float diffuseLookupF0;
-    float diffuseAverageAlbedo;
-    vec3 microfacetMSWeight;
-    float microfacetMSAvgAlbedoComplement;
-
-    // Sampling probabilities for each sub component of BSDF
-    float diffuseProb;
-    float microfacetProb;
-    float microfacetMSProb;
-    float transmissionProb;
-
-#ifdef ADVANCED_MATERIAL
-    float clearcoatScale;
-    float clearcoatAlpha;
-    float clearcoatProb;
-#endif
-};
-
-struct SampleResult {
-    vec3 dir;
-    vec3 weight;
-    uint32_t flags;
-};
-
-struct ShadeResult {
-    vec3 color;
-    vec3 bounceDir;
-    vec3 bounceProb;
-    uint32_t flags;
-};
-
-struct LightSample {
-    vec3 toLight;
-    vec3 weight; // Irradiance / PDF
-};
-
-struct LightInfo {
-    LightSample lightSample;
-    vec3 shadowRayOrigin;
-    float shadowRayLength;
-};
-
 // Support functions
-
-void computeCameraRay(in Camera camera, in u32vec3 idx, inout Sampler rng,
-                      out vec3 ray_origin, out vec3 ray_dir)
-{
-    vec2 jitter = samplerGet2D(rng);
-
-    vec2 jittered_raster = vec2(idx.x, idx.y) + jitter;
-
-    vec2 screen = vec2((2.f * jittered_raster.x) / RES_X - 1,
-                       (2.f * jittered_raster.y) / RES_Y - 1);
-
-    ray_origin = camera.origin;
-    ray_dir = normalize(
-        camera.right * screen.x + camera.up * screen.y + camera.view);
-}
-
-vec2 getScreenSpacePosition(Camera camera, vec3 world_pos)
-{
-    vec3 to_pos = world_pos - camera.origin;
-
-    float right = dot(to_pos, camera.right);
-    float up = dot(to_pos, camera.up);
-
-    return vec2(right, up);
-}
 
 Vertex interpolateTriangle(Triangle tri, vec2 barys)
 {
@@ -475,18 +290,6 @@ TangentFrame tangentFrameToWorld(mat4x3 o2w, mat4x3 w2o, TangentFrame frame,
     return frame;                                              
 }
 
-vec3 worldToLocal(vec3 v, TangentFrame frame) 
-{
-    return vec3(dot(v, frame.tangent), dot(v, frame.bitangent),
-        dot(v, frame.normal));
-}
-
-vec3 localToWorld(vec3 v, TangentFrame frame)
-{
-    return v.x * frame.tangent + v.y * frame.bitangent +
-        v.z * frame.normal;
-}
-
 bool traceShadeRay(rayQueryEXT ray_query, in uint64_t tlas_addr,
                    in vec3 ray_origin, in vec3 ray_dir,
                    uint32_t visibility_mask)
@@ -532,18 +335,25 @@ bool traceShadowRay(in uint64_t tlas_addr, in vec3 ray_origin,
         gl_RayQueryCommittedIntersectionNoneEXT;
 }
 
-void processHit(in rayQueryEXT ray_query, out vec2 barys,
-                out uint32_t tri_idx, out uint32_t instance_idx,
-                out uint32_t material_offset, out uint32_t geo_idx,
-                out uint32_t mesh_offset, out mat4x3 o2w, out mat4x3 w2o)
+void setOutput(uint32_t base_offset, vec3 rgb, uint32_t instance_id)
+{
+    uint32_t ab = packHalf2x16(rgb.xy);
+    uint32_t cd = packHalf2x16(vec2(rgb.z, 0));
+    cd |= (instance_id << 16);
+
+    outputBuffer[nonuniformEXT(base_offset)] = ab;
+    outputBuffer[nonuniformEXT(base_offset + 1)] = cd;
+}
+
+void getHitParams(in rayQueryEXT ray_query, out vec2 barys,
+                  out uint32_t tri_idx, out uint32_t material_offset,
+                  out uint32_t geo_idx, out uint32_t mesh_offset,
+                  out mat4x3 o2w, out mat4x3 w2o)
 {
     barys = rayQueryGetIntersectionBarycentricsEXT(ray_query, true);
 
     tri_idx =
         uint32_t(rayQueryGetIntersectionPrimitiveIndexEXT(ray_query, true));
-
-    instance_idx =
-        uint32_t(rayQueryGetIntersectionInstanceIdEXT(ray_query, true));
 
     material_offset = uint32_t(
         rayQueryGetIntersectionInstanceCustomIndexEXT(ray_query, true));
@@ -559,662 +369,98 @@ void processHit(in rayQueryEXT ray_query, out vec2 barys,
     w2o = rayQueryGetIntersectionWorldToObjectEXT(ray_query, true);
 }
 
-// Ray Tracing Gems Chapter 6 (avoid self intersections)
-vec3 offsetRayOrigin(vec3 o, vec3 geo_normal)
+uint32_t getHitInstance(in rayQueryEXT ray_query)
 {
-#define GLOBAL_ORIGIN (1.0 / 32.0)
-#define FLOAT_SCALE (1.0 / 65536.0)
-#define INT_SCALE (256.0)
-
-    i32vec3 int_offset = i32vec3(geo_normal.x * INT_SCALE,
-        geo_normal.y * INT_SCALE, geo_normal.z * INT_SCALE);
-
-    vec3 o_integer = vec3(
-        intBitsToFloat(
-            floatBitsToInt(o.x) + ((o.x < 0) ? -int_offset.x : int_offset.x)),
-        intBitsToFloat(
-            floatBitsToInt(o.y) + ((o.y < 0) ? -int_offset.y : int_offset.y)),
-        intBitsToFloat(
-            floatBitsToInt(o.z) + ((o.z < 0) ? -int_offset.z : int_offset.z)));
-
-    return vec3(
-        abs(o.x) < GLOBAL_ORIGIN ?
-            o.x + FLOAT_SCALE * geo_normal.x : o_integer.x,
-        abs(o.y) < GLOBAL_ORIGIN ?
-            o.y + FLOAT_SCALE * geo_normal.y : o_integer.y,
-        abs(o.z) < GLOBAL_ORIGIN ?
-            o.z + FLOAT_SCALE * geo_normal.z : o_integer.z);
-
-#undef GLOBAL_ORIGIN
-#undef FLOAT_SCALE
-#undef INT_SCALE
+    return uint32_t(rayQueryGetIntersectionInstanceIdEXT(ray_query, true));
 }
 
-// Shading functions
+struct HitInfo {
+    vec3 position;
+    vec3 geoNormal;
+    TangentFrame tangentFrame;
+    Material material;
+};
 
-float fetchDiffuseAverageAlbedo(float lookup_f0, float roughness)
+HitInfo processHit(in rayQueryEXT ray_query, in Environment env,
+                   in vec3 ray_dir)
 {
-    return textureLod(sampler2D(msDiffuseAverageTexture, clampSampler),
-        vec2(roughness, lookup_f0), 0.0).x;
+    vec2 barys;
+    uint32_t tri_idx, material_offset, geo_idx, mesh_offset;
+    mat4x3 o2w, w2o;
+    getHitParams(ray_query, barys, tri_idx,
+                 material_offset, geo_idx, mesh_offset, o2w, w2o);
+
+    MeshInfo mesh_info = unpackMeshInfo(mesh_offset + geo_idx);
+
+    uint32_t index_offset = mesh_info.indexOffset + tri_idx * 3;
+    Triangle hit_tri = fetchTriangle(index_offset);
+    Vertex interpolated = interpolateTriangle(hit_tri, barys);
+    vec3 obj_geo_normal = computeGeometricNormal(hit_tri);
+
+    vec3 world_position =
+        transformPosition(o2w, interpolated.position);
+    vec3 world_geo_normal =
+        transformNormal(w2o, obj_geo_normal);
+    world_geo_normal = normalize(world_geo_normal);
+
+    // Unpack materials
+    uint32_t material_id = getMaterialID(
+        env.baseMaterialOffset + material_offset + geo_idx);
+
+    MaterialParams material_params = unpackMaterialParams(material_id);
+
+    uint32_t base_texture_idx =
+        1 + material_id * TextureConstantsTexturesPerMaterial;
+
+    TangentFrame obj_tangent_frame =
+        computeTangentFrame(interpolated, material_params,
+                            base_texture_idx);
+
+    TangentFrame world_tangent_frame =
+        tangentFrameToWorld(o2w, w2o, obj_tangent_frame, ray_dir);
+
+    Material material = processMaterial(material_params,
+        base_texture_idx, interpolated.uv, 0);
+
+    return HitInfo(world_position, world_geo_normal,
+                   world_tangent_frame, material);
 }
 
-float fetchDiffuseDirectionalAlbedo(float lookup_f0, float roughness,
-                                    float cos_theta)
+bool handleBounce(inout Sampler rng, in HitInfo hit,
+                  in vec3 incoming_dir, in vec3 bounce_dir,
+                  out vec3 result_origin, out vec3 result_dir)
 {
-    return textureLod(sampler3D(msDiffuseDirectionalTexture, clampSampler),
-        vec3(cos_theta, roughness, lookup_f0), 0.0).x;
-}
+    float alpha_check = samplerGet1D(rng);
+    bool pass_through = hit.material.transparencyMask == 0.f ||
+        alpha_check > hit.material.transparencyMask;
 
-float fetchMicrofacetMSAverageAlbedo(float roughness)
-{
-    return textureLod(sampler1D(msGGXAverageTexture, clampSampler),
-        roughness, 0.0).x;
-}
-
-float fetchMicrofacetMSDirectionalAlbedo(float roughness, float cos_theta)
-{
-    return textureLod(sampler2D(msGGXDirectionalTexture, clampSampler),
-        vec2(cos_theta, roughness), 0.0).x;
-}
-
-float sampleMSMicrofacetAngle(float roughness, float u)
-{
-    return textureLod(sampler2D(msGGXInverseTexture, clampSampler),
-        vec2(u, roughness), 0.0).x;
-}
-
-float rgbToLuminance(vec3 rgb)
-{
-    return 0.2126f * rgb.x + 0.7152f * rgb.y + 0.0722f * rgb.z;
-}
-
-#define COMPUTE_FRESNEL(T)                                              \
-    T computeFresnel(T f0, T f90, float cos_theta)                      \
-    {                                                                   \
-        float complement = max(1.f - cos_theta, 0.f);                   \
-        return f0 + (f90 - f0) * complement * complement * complement * \
-            complement * complement;                                    \
-    }
-
-COMPUTE_FRESNEL(float)
-COMPUTE_FRESNEL(vec3)
-
-#undef COMPUTE_FRESNEL
-
-const float ShadingMinAlpha = 0.0064f;
-
-BSDFParams buildBSDF(Material material, vec3 wo)
-{
-    const float prior_ior = 1.f;
-    float ior_ratio = (material.ior - prior_ior) / (material.ior + prior_ior);
-    float base_f0 = ior_ratio * ior_ratio;
-
-    vec3 dielectric_f0 = min(vec3(1.f), base_f0 * 
-        material.rhoSpecular) * material.specularScale;
-    float dielectric_f90 = material.specularScale;
-
-    // Core weights
-    float transmission_weight = material.transmission;
-    float opaque_weight = (1.f - material.transmission);
-    float dielectric_weight = (1.f - material.metallic);
-
-    vec3 base_dielectric = material.rho * dielectric_weight;
-
-    // Microfacet params
-    // Scale between specular and metallic fresnel
-    vec3 shared_f0 = mix(material.rho, dielectric_f0, dielectric_weight);
-    float shared_f90 = fma(dielectric_weight, dielectric_f90,
-                           material.metallic);
-
-    vec3 ss_fresnel_estimate =
-        computeFresnel(shared_f0, vec3(shared_f90), wo.z);
-    vec3 ss_transmissive_fresnel_estimate =
-        1.f - computeFresnel(dielectric_f0, vec3(dielectric_f90), wo.z);
-
-    float alpha = material.roughness * material.roughness;
-    if (alpha < ShadingMinAlpha) {
-        alpha = 0;
-    }
+    result_dir = pass_through ? incoming_dir : bounce_dir;
     
-    // Multiscattering / energy conservation params
-    // FIXME, it is pretty ambiguous whether the lookup tables wants
-    // shared_f0 or dielectric_f0 here
-    float diffuse_lookup_f0 = max(shared_f0.x, max(shared_f0.y, shared_f0.z));
+    vec3 bounce_offset_normal =
+        dot(result_dir, hit.geoNormal) > 0 ? hit.geoNormal : -hit.geoNormal;
+    result_origin = offsetRayOrigin(hit.position, bounce_offset_normal);
 
-    float ms_microfacet_avg_albedo =
-        fetchMicrofacetMSAverageAlbedo(material.roughness);
-    vec3 ms_fresnel_avg = 1.f / 21.f * shared_f90 + 20.f / 21.f * shared_f0;
-
-    float ms_avg_albedo_compl = 1.f - ms_microfacet_avg_albedo;
-    float ms_dir_albedo_compl =
-        (1.f - fetchMicrofacetMSDirectionalAlbedo(material.roughness, wo.z));
-
-    vec3 ms_fresnel =
-        (ms_fresnel_avg * ms_fresnel_avg * ms_microfacet_avg_albedo) /
-        (1.f - ms_fresnel_avg * ms_avg_albedo_compl);
-
-    vec3 ms_microfacet_weight = ms_fresnel * ms_dir_albedo_compl;
-
-#ifdef ADVANCED_MATERIAL
-    // Clearcoat params
-    float clearcoat_reflectance_estimate =
-        material.clearcoatScale * computeFresnel(0.04f, 1.f, wo.z);
-    float clearcoat_alpha =
-        material.clearcoatRoughness * material.clearcoatRoughness;
-    if (clearcoat_alpha < ShadingMinAlpha) {
-        clearcoat_alpha = 0;
-    }
-
-    float clearcoat_prob = clearcoat_reflectance_estimate;
-    float not_clearcoat_prob = 1.f - clearcoat_prob;
-#else
-    const float not_clearcoat_prob = 1.f;
-#endif
-
-    // Compute importance sampling weights
-    float dielectric_luminance =
-        not_clearcoat_prob * rgbToLuminance(base_dielectric);
-    float diffuse_prob =
-        not_clearcoat_prob * dielectric_luminance * opaque_weight;
-    float microfacet_prob =
-        not_clearcoat_prob * rgbToLuminance(ss_fresnel_estimate);
-    float microfacet_ms_prob =
-        not_clearcoat_prob * rgbToLuminance(ms_fresnel);
-    float transmission_prob = not_clearcoat_prob * dielectric_luminance *
-        transmission_weight * rgbToLuminance(ss_transmissive_fresnel_estimate);
-
-    float prob_sum = 
-#ifdef ADVANCED_MATERIAL
-        clearcoat_prob + 
-#endif
-        diffuse_prob + microfacet_prob +
-        microfacet_ms_prob + transmission_prob;
-    if (prob_sum > 0.f) {
-        float inv_prob = 1.f / prob_sum;
-        diffuse_prob *= inv_prob;
-        microfacet_prob *= inv_prob;
-        microfacet_ms_prob *= inv_prob;
-        transmission_prob *= inv_prob;
-
-#ifdef ADVANCED_MATERIAL
-        clearcoat_prob *= inv_prob;
-#endif
-    }
-
-    BSDFParams bsdf = {
-        base_dielectric * opaque_weight,
-        material.transparencyMask,
-        base_dielectric * transmission_weight,
-        transmission_weight,
-        shared_f0,
-        shared_f90,
-        dielectric_f0,
-        dielectric_f90,
-        alpha,
-        material.roughness,
-        material.specularScale,
-        diffuse_lookup_f0,
-        fetchDiffuseAverageAlbedo(diffuse_lookup_f0, material.roughness),
-        ms_microfacet_weight,
-        ms_avg_albedo_compl,
-        diffuse_prob,
-        microfacet_prob,
-        microfacet_ms_prob,
-        transmission_prob,
-#ifdef ADVANCED_MATERIAL
-        material.clearcoatScale,
-        clearcoat_alpha,
-        clearcoat_prob,
-#endif
-    };
-
-    return bsdf;
+    return pass_through;
 }
 
-vec3 cosineHemisphere(vec2 uv)
+vec3 worldToLocal(vec3 v, TangentFrame frame) 
 {
-    const float r = sqrt(uv.x);
-    const float phi = 2.0f * M_PI * uv.y;
-    vec2 disk = r * vec2(cos(phi), sin(phi));
-    vec3 hemisphere = vec3(disk.x, disk.y,
-        sqrt(max(0.0f, 1.0f - dot(disk, disk))));
-
-    return hemisphere;
+    return vec3(dot(v, frame.tangent), dot(v, frame.bitangent),
+        dot(v, frame.normal));
 }
 
-vec3 concentricHemisphere(vec2 uv)
+vec3 localToWorld(vec3 v, TangentFrame frame)
 {
-    vec2 c = 2.f * uv - 1.f;
-    vec2 d;
-    if (c.x == 0.f && c.y == 0.f) {
-        d = vec2(0.f);
-    } else {
-        float phi, r;
-        if (abs(c.x) > abs(c.y))
-        {
-            r = c.x;
-            phi = (c.y / c.x) * (M_PI / 4.f);
-        } else {
-            r = c.y;
-            phi = (M_PI / 2.f) - (c.x / c.y) * (M_PI / 4.f);
-        }
-
-        d = r * vec2(cos(phi), sin(phi));
-    }
-
-    float z = sqrt(max(0.f, 1.f - dot(d, d)));
-
-    return vec3(d.x, d.y, z);
+    return v.x * frame.tangent + v.y * frame.bitangent +
+        v.z * frame.normal;
 }
 
-// Enterprise PBR diffuse BRDF
-// diffuseWeight and diffuseBSDF are separated to allow concentricHemisphere
-// sampling which divides out the M_1_PI * wi_dot_n factor when sampling
-vec3 diffuseWeight(BSDFParams params, float wo_dot_n, float wi_dot_n)
-{
-    float E_diffuse_o = fetchDiffuseDirectionalAlbedo(params.diffuseLookupF0,
-                                                      params.roughness,
-                                                      wo_dot_n);
-
-    float E_diffuse_i = fetchDiffuseDirectionalAlbedo(params.diffuseLookupF0,
-                                                      params.roughness,
-                                                      wi_dot_n);
-
-    float Bc = ((1.f - E_diffuse_o) * (1.f - E_diffuse_i)) /
-            (1.f - params.diffuseAverageAlbedo);
-
-    float weight = mix(1.f, Bc, params.diffuseLambertScale);
-
-    if (min(wo_dot_n, wi_dot_n) < 1e-6f) {
-        return vec3(0.f);
-    } else {
-        return weight * params.rhoDiffuse;
-    }
-}
-
-vec3 diffuseBSDF(BSDFParams bsdf_params, float wo_dot_n, float wi_dot_n)
-{
-    return diffuseWeight(bsdf_params, wo_dot_n, wi_dot_n) * M_1_PI * wi_dot_n;
-}
-
-SampleResult sampleDiffuse(BSDFParams bsdf_params, vec3 wo, vec2 sample_uv)
-{
-    vec3 wi = concentricHemisphere(sample_uv);
-    vec3 weight = diffuseWeight(bsdf_params, wo.z, wi.z);
-
-    SampleResult result = {
-        wi,
-        weight,
-        BSDFFlagsDiffuse,
-    };
-
-    return result;
-}
-
-// Single scattering GGX Microfacet BRDF
-float ggxLambda(float cos_theta, float a2)
-{
-    float cos2 = cos_theta * cos_theta;
-    float tan2 = max(1.f - cos2, 0.f) / cos2;
-    float l = 0.5f * (-1.f + sqrt(1.f + a2 * tan2));
-
-    return cos_theta <= 0.f ? 0.f : l;
-}
-
-float ggxNDF(float alpha, float cos_theta)
-{
-    float a2 = alpha * alpha;
-    float d = ((cos_theta * a2 - cos_theta) * cos_theta + 1.f);
-    return a2 / (d * d * M_PI);
-}
-
-float ggxMasking(float a2, float out_cos, float in_cos)
-{
-    float in_lambda = ggxLambda(in_cos, a2);
-    float out_lambda = ggxLambda(out_cos, a2);
-    return 1.f / (1.f + in_lambda + out_lambda);
-}
-
-#define EVAL_GGX(T)                                                       \
-    T evalGGX(float wo_dot_n, float wi_dot_n, float n_dot_h, T F,         \
-              float alpha)                                                \
-    {                                                                     \
-        float a2 = alpha * alpha;                                         \
-        float D = ggxNDF(alpha, n_dot_h);                                 \
-        float G = ggxMasking(a2, wo_dot_n, wi_dot_n);                     \
-                                                                          \
-        T specular = 0.25f * F * D * G / wo_dot_n;                        \
-                                                                          \
-        if (alpha == 0.f || min(wo_dot_n, wi_dot_n) < NEAR_ZERO) {        \
-            specular = T(0.0);                                            \
-        }                                                                 \
-                                                                          \
-        return specular;                                                  \
-    }
-
-EVAL_GGX(float)
-EVAL_GGX(vec3)
-
-#undef EVAL_GGX
-
-vec3 microfacetBSDF(BSDFParams params, float wo_dot_n, float wi_dot_n,
-                    float n_dot_h, float dir_dot_h)
-{
-    vec3 F = computeFresnel(params.sharedF0, vec3(params.sharedF90),
-                            dir_dot_h);
-
-    return evalGGX(wo_dot_n, wi_dot_n, n_dot_h, F, params.alpha);
-}
-
-vec3 microfacetTransmissiveBSDF(BSDFParams params, vec3 wo, vec3 wi)
-{
-    wi.z *= -1.f;
-
-    float wi_dot_wo = dot(wo, wi);
-
-    float len_sq_io = 2.f + 2.f * wi_dot_wo;
-    float rlen_io = inversesqrt(len_sq_io);
-
-    float n_dot_h = (wo.z + wi.z) * rlen_io;
-    float dir_dot_h = rlen_io + rlen_io * wi_dot_wo;
-
-    vec3 F = 1.f - computeFresnel(params.transmissiveF0,
-                                  vec3(params.transmissiveF90),
-                                  dir_dot_h);
-
-    vec3 microfacet_response = evalGGX(wo.z, wi.z,
-        n_dot_h, F, params.alpha);
-
-    return microfacet_response * params.rhoTransmissive;
-}
-
-vec3 sampleGGX(float alpha, vec3 wo, vec2 sample_uv)
-{
-    vec3 Vh = normalize(vec3(alpha * wo.x, alpha * wo.y, wo.z));
-
-    // Construct orthonormal basis (Vh,T1,T2).
-    vec3 T1 = (Vh.z < 0.9999f) ?
-        normalize(cross(vec3(0.f, 0.f, 1.f), Vh)) :
-        vec3(1.f, 0.f, 0.f);
-
-    vec3 T2 = cross(Vh, T1);
-
-    float r = sqrt(sample_uv.x);
-    float phi = (2.f * M_PI) * sample_uv.y;
-    float t1 = r * cos(phi);
-    float t2 = r * sin(phi);
-    float s = 0.5f * (1.f + Vh.z);
-    t2 = (1.f - s) * sqrt(1.f - t1 * t1) + s * t2;
-
-    vec3 Nh = t1 * T1 + t2 * T2 + sqrt(max(0.f, 1.f - t1 * t1 - t2 * t2)) * Vh;
-    vec3 h = normalize(vec3(alpha * Nh.x, alpha * Nh.y, max(0.f, Nh.z)));
-
-    return h;
-}
-
-#define SAMPLE_MICROFACET(T)                                                \
-    void sampleMicrofacet(in vec3 wo, in vec2 sample_uv, in T F0,           \
-                          in T F90, in float alpha, bool transmission,      \
-                          out vec3 wi, out T weight, out uint32_t flags)    \
-    {                                                                       \
-        wi = vec3(0);                                                       \
-        weight = T(0);                                                      \
-        flags = 0;                                                          \
-        if (wo.z < NEAR_ZERO) {                                             \
-            wi = vec3(0);                                                   \
-            weight = T(0);                                                  \
-                                                                            \
-            flags |= BSDFFlagsInvalid;                                      \
-        } else if (alpha == 0.f) {                                          \
-            wi = vec3(-wo.x, -wo.y, wo.z);                                  \
-            T F = computeFresnel(F0, F90, wo.z);                            \
-            if (transmission) {                                             \
-                weight = T(1.f) - F;                                        \
-            } else {                                                        \
-                weight = F;                                                 \
-            }                                                               \
-                                                                            \
-            flags |= BSDFFlagsDelta;                                        \
-        } else {                                                            \
-            vec3 h = sampleGGX(alpha, wo, sample_uv);                       \
-            float cos_half_out = dot(wo, h);                                \
-            wi = 2.f * cos_half_out * h - wo;                               \
-                                                                            \
-            float a2 = alpha * alpha;                                       \
-                                                                            \
-            float G = ggxMasking(a2, wo.z, wi.z);                           \
-            float GG1_out = G * (1.f + ggxLambda(wo.z, a2));                \
-            T F = computeFresnel(F0, F90, cos_half_out);                    \
-                                                                            \
-            if (wi.z < NEAR_ZERO) {                                         \
-                weight = T(0);                                              \
-            } else {                                                        \
-                if (transmission) {                                         \
-                    weight = (T(1) - F) * GG1_out;                          \
-                } else {                                                    \
-                    weight = F * GG1_out;                                   \
-                }                                                           \
-            }                                                               \
-                                                                            \
-            if (transmission) {                                             \
-                flags |= BSDFFlagsMicrofacetTransmission;                   \
-            } else {                                                        \
-                flags |= BSDFFlagsMicrofacetReflection;                     \
-            }                                                               \
-        }                                                                   \
-    }
-
-SAMPLE_MICROFACET(float)
-SAMPLE_MICROFACET(vec3)
-
-#undef SAMPLE_MICROFACET
-
-SampleResult sampleMicrofacetShared(
-    BSDFParams params, vec3 wo, vec2 sample_uv)
-{
-    vec3 wi;
-    vec3 weight;
+struct ShadeResult {
+    vec3 color;
+    vec3 bounceDir;
+    vec3 bounceProb;
     uint32_t flags;
-    sampleMicrofacet(wo, sample_uv, params.sharedF0, vec3(params.sharedF90),
-                     params.alpha, false, wi, weight, flags);
-
-    SampleResult result = {
-        wi,
-        weight,
-        flags,
-    };
-
-    return result;
-}
-
-SampleResult sampleMicrofacetTransmission(
-    BSDFParams params, vec3 wo, vec2 sample_uv)
-{
-    vec3 wi;
-    vec3 weight;
-    uint32_t flags;
-    sampleMicrofacet(wo, sample_uv, params.transmissiveF0,
-                     vec3(params.transmissiveF90),
-                     params.alpha, true, wi, weight, flags);
-    
-
-    // Reflect back for transmission
-    wi.z *= -1.f;
-    weight *= params.rhoTransmissive;
-
-    SampleResult result = {
-        wi,
-        weight,
-        flags,
-    };
-
-    return result;
-}
-
-vec3 microfacetMSBSDF(BSDFParams params, float wo_dot_n, float wi_dot_n)
-{
-    vec3 ms_contrib =
-        (1.f - fetchMicrofacetMSDirectionalAlbedo(params.roughness, wi_dot_n)) *
-        params.microfacetMSWeight * M_1_PI * wi_dot_n /
-        params.microfacetMSAvgAlbedoComplement;
-
-    if (params.alpha == 0.f || min(wo_dot_n, wi_dot_n) < 1e-6f) {
-        ms_contrib = vec3(0.f);
-    }
-
-    return ms_contrib;
-}
-
-SampleResult sampleMSMicrofacet(BSDFParams params, vec3 wo, vec2 sample_uv)
-{
-    float theta = sampleMSMicrofacetAngle(params.roughness, sample_uv.x);
-    float phi = 2.0 * M_PI * sample_uv.y;
-    vec2 circle_dir = vec2(cos(phi), sin(phi));
-    float xy_mag = sqrt(1.0 - theta * theta);
-
-    vec3 wi = vec3(circle_dir.x * xy_mag,
-                   circle_dir.y * xy_mag, theta);
-
-    // 1/(2pi) factor cancels out the 2 from the theta PDF
-    vec3 weight = params.microfacetMSWeight;
-
-    SampleResult result = {
-        wi,
-        weight,
-        BSDFFlagsMicrofacetReflection,
-    };
-
-    if (min(wo.z, wi.z) < 1e-6f) {
-        result.dir = vec3(0.f);
-        result.weight = vec3(0.f);
-        result.flags = BSDFFlagsInvalid;
-    }
-
-    return result;
-}
-
-#ifdef ADVANCED_MATERIAL
-void clearcoatBSDF(in BSDFParams params, in float wo_dot_n, in float wi_dot_n,
-                   in float n_dot_h, in float dir_dot_h,
-                   out float clearcoat_response, out float base_scale)
-{
-    float F = computeFresnel(0.04f, 1.f, dir_dot_h);
-
-    float response = evalGGX(wo_dot_n, wi_dot_n, n_dot_h, F,
-                             params.clearcoatAlpha);
-
-    float max_fresnel_n = max(computeFresnel(0.04f, 1.f, wo_dot_n),
-                              computeFresnel(0.04f, 1.f, wi_dot_n));
-
-    clearcoat_response = response * params.clearcoatScale;
-    base_scale = 1.f - params.clearcoatScale * max_fresnel_n;
-}
-
-SampleResult sampleClearcoat(BSDFParams params, vec3 wo, vec2 sample_uv)
-{
-    vec3 wi;
-    float weight;
-    uint32_t flags;
-    sampleMicrofacet(wo, sample_uv, 0.04f, 1.f, params.clearcoatAlpha, false,
-                     wi, weight, flags);
-    weight *= params.clearcoatScale;
-
-    SampleResult result = {
-        wi,
-        vec3(weight),
-        flags,
-    };
-}
-#endif
-
-vec3 evalBSDF(BSDFParams params, vec3 wo, vec3 wi)
-{
-    // Hammon 2017
-    float wi_dot_wo = dot(wo, wi);
-
-    float len_sq_io = 2.f + 2.f * wi_dot_wo;
-    float rlen_io = inversesqrt(len_sq_io);
-
-    float n_dot_h = (wo.z + wi.z) * rlen_io;
-    float dir_dot_h = rlen_io + rlen_io * wi_dot_wo;
-
-    vec3 diffuse = diffuseBSDF(params, wo.z, wi.z);
-
-    vec3 microfacet =
-        microfacetBSDF(params, wo.z, wi.z, n_dot_h, dir_dot_h);
-
-    vec3 microfacet_ms =
-        microfacetMSBSDF(params, wo.z, wi.z);
-
-    vec3 transmissive =
-        microfacetTransmissiveBSDF(params, wo, wi);
-
-    vec3 base = diffuse + microfacet + microfacet_ms + transmissive;
-
-#ifdef ADVANCED_MATERIAL
-    float clearcoat_response, base_scale;
-    clearcoatBSDF(params, wo.z, wi.z, n_dot_h, dir_dot_h, clearcoat_response,
-                  base_scale);
-
-    return base * base_scale + clearcoat_response;
-#else
-    return base;
-#endif
-}
-
-SampleResult sampleBSDF(inout Sampler rng,
-                        in BSDFParams params,
-                        in vec3 wo)
-{
-    float selector = samplerGet1D(rng);
-    vec2 uv = samplerGet2D(rng);
-
-    float cdf[]  = {
-        params.diffuseProb,
-        params.microfacetProb,
-        params.microfacetMSProb,
-        params.transmissionProb,
-#ifdef ADVANCED_MATERIAL
-        params.clearcoatProb,
-#endif
-    };
-
-    cdf[1] += cdf[0];
-    cdf[2] += cdf[1];
-    cdf[3] += cdf[2];
-
-#ifdef ADVANCED_MATERIAL
-    cdf[4] += cdf[3];
-#endif
-
-    SampleResult result = {
-        vec3(0),
-        vec3(0),
-        BSDFFlagsInvalid,
-    };
-
-    if (selector < cdf[0]) {
-        result = sampleDiffuse(params, wo, uv);
-        result.weight /= params.diffuseProb;
-    } else if (selector < cdf[1]) {
-        result = sampleMicrofacetShared(params, wo, uv);
-        result.weight /= params.microfacetProb;
-    } else if (selector < cdf[2]) {
-        result = sampleMSMicrofacet(params, wo, uv);
-        result.weight /= params.microfacetMSProb;
-    } else if (selector < cdf[3]) {
-        result = sampleMicrofacetTransmission(params, wo, uv);
-        result.weight /= params.transmissionProb;
-    } 
-#ifdef ADVANCED_MATERIAL
-    else if (selector < cdf[4]) {
-        result = sampleClearcoat(params, wo, uv);
-        result.weight /= params.clearcoatProb;
-    }
-#endif
-
-    return result;
-}
+};
 
 ShadeResult shade(inout Sampler rng, in Material material,
                   in LightSample light_sample,
@@ -1247,187 +493,231 @@ ShadeResult shade(inout Sampler rng, in Material material,
     return result;
 }
 
-// Lights
+struct PathVertexState {
+    vec3 radiance;
+    vec3 bounceOrigin;
+    vec3 bounceDir;
+    vec3 bounceProb;
+    uint32_t bounceFlags;
+};
 
-vec2 dirToLatLong(vec3 dir)
+PathVertexState processPathVertex(inout Sampler rng, in Environment env,
+                                  in HitInfo hit, in vec3 ray_dir)
 {
-    vec3 n = normalize(dir);
+    LightInfo light_info = sampleLights(rng, env,
+        hit.position, hit.geoNormal);
     
-    return vec2(atan(n.x, -n.z) * (M_1_PI / 2.f) + 0.5f, acos(n.y) * M_1_PI);
-}
+    ShadeResult shade_result = shade(rng, hit.material,
+        light_info.lightSample, -ray_dir, hit.tangentFrame);
+    
+    PathVertexState result;
+    result.radiance = shade_result.color;
 
-vec3 evalEnvMap(uint32_t map_idx, vec3 dir)
-{
-    vec2 uv = dirToLatLong(dir);
+    bool pass_through = handleBounce(rng, hit, ray_dir,
+                                     shade_result.bounceDir,
+                                     result.bounceOrigin,
+                                     result.bounceDir);
 
-    vec3 v =
-        textureLod(sampler2D(textures[map_idx], repeatSampler), uv, 0.0).xyz;
+    result.bounceProb = 
+        pass_through ? vec3(1.f - hit.material.transparencyMask) :
+            shade_result.bounceProb;
+    result.bounceFlags = shade_result.flags;
 
-    v *= 10.f;
-
-    return v;
-}
-
-// Ray Tracing Gems 16.5.4.2
-vec3 octSphereMap(vec2 u)
-{
-    u = u * 2.f - 1.f;
-
-    // Compute radius r (branchless)
-    float d = 1.f - (abs(u.x) + abs(u.y));
-    float r = 1.f - abs(d);
-
-    // Compute phi in the first quadrant (branchless, except for the
-    // division-by-zero test), using sign(u) to map the result to the
-    // correct quadrant below
-    float phi = (r == 0.f) ? 0.f :
-        M_PI_4 * ((abs(u.y) - abs(u.x)) / r + 1.f);
-
-    float f = r * sqrt(2.f - r * r);
-    float x = f * sign(u.x) * cos(phi);
-    float y = f * sign(u.y) * sin(phi);
-    float z = sign(d) * (1.f - r * r);
-
-    return vec3(x, y, z);
-}
-
-LightSample sampleEnvMap(uint32_t map_idx,
-    vec2 uv, float inv_selection_pdf)
-{
-    vec3 dir = octSphereMap(uv);
-
-    vec3 irradiance = evalEnvMap(map_idx, dir);
-
-    const float inv_pdf = 4.f * M_PI;
-
-    LightSample light_sample;
-    light_sample.toLight = dir;
-    light_sample.weight = irradiance * inv_pdf * inv_selection_pdf;
-
-    return light_sample;
-}
-
-vec3 getPortalLightPoint(PortalLight light, vec2 uv)
-{
-    vec3 upper = mix(light.corners[0], light.corners[3], uv.x);
-    vec3 lower = mix(light.corners[1], light.corners[2], uv.x);
-
-    return mix(lower, upper, uv.y);
-}
-
-LightSample samplePortal(
-    PortalLight light, uint32_t map_idx,
-    vec3 to_light, float inv_selection_pdf)
-{
-    vec3 dir = normalize(to_light);
-
-    vec3 irradiance = evalEnvMap(map_idx, dir);
-
-    const float inv_pdf = abs(
-        length(light.corners[3] - light.corners[0]) *
-        length(light.corners[1] - light.corners[0]));
-
-    LightSample light_sample;
-    light_sample.toLight = dir;
-    light_sample.weight = irradiance * inv_pdf * inv_selection_pdf;
-
-    return light_sample;
-}
-
-void samplePointLight(
-    PointLight light, vec3 origin, float inv_selection_pdf,
-    out LightSample light_sample, out float dist_to_light2)
-{
-    vec3 to_light = light.position - origin;
-
-    dist_to_light2 = dot(to_light, to_light);
-
-    vec3 irradiance = light.rgb / dist_to_light2;
-
-    light_sample.toLight = normalize(to_light);
-    light_sample.weight = irradiance * inv_selection_pdf;
-}
-
-LightInfo sampleLights(inout Sampler rng, in Environment env, 
-    in vec3 origin, in vec3 base_normal)
-{
-    uint32_t total_lights = env.numLights + 1;
-
-    uint32_t light_idx = min(uint32_t(samplerGet1D(rng) * total_lights),
-                             total_lights - 1);
-
-    vec2 light_sample_uv = samplerGet2D(rng);
-
-    float inv_selection_pdf = float(total_lights);
-
-    PointLight point_light = { vec3(0), vec3(0) };
-    PortalLight portal_light = {{ vec3(0), vec3(0), vec3(0), vec3(0) }};
-    uint32_t light_type = 0;
-
-    if (light_idx < env.numLights) {
-        light_type = unpackLight(env, light_idx, point_light, portal_light);
-    } else {
-        light_type = LightTypeEnvironment;
+    bool occluded = traceShadowRay(env.tlasAddr,
+                                   light_info.shadowRayOrigin,
+                                   light_info.lightSample.toLight,
+                                   light_info.shadowRayLength,
+                                   1);
+    
+    // Start setup for next bounce
+    if (occluded || pass_through) {
+        result.radiance = vec3(0);
     }
 
-    vec3 light_position = vec3(0); 
-    vec3 dir_check = vec3(0);
-    LightSample light_sample = LightSample(vec3(0), vec3(0));
-
-    if (light_type == LightTypePoint) {
-        light_position = point_light.position;
-        dir_check = light_position - origin;
-    } else if (light_type == LightTypePortal) {
-        light_position = getPortalLightPoint(portal_light, light_sample_uv);
-        dir_check = light_position - origin;
-    } else {
-        light_sample = sampleEnvMap(env.baseTextureOffset, light_sample_uv,
-                                    inv_selection_pdf);
-        dir_check = light_sample.toLight;
-    }
-
-    vec3 shadow_offset_normal =
-        dot(dir_check, base_normal) > 0 ? base_normal : -base_normal;
-
-    vec3 shadow_origin =
-        offsetRayOrigin(origin, shadow_offset_normal);
-
-    float shadow_len = 0;
-    if (light_type == LightTypePoint) {
-        float shadow_len2;
-        samplePointLight(point_light, shadow_origin, inv_selection_pdf,
-                         light_sample, shadow_len2);
-
-        shadow_len = sqrt(shadow_len2);
-    } else if (light_type == LightTypePortal) {
-        vec3 to_light = light_position - shadow_origin;
-        light_sample = samplePortal(portal_light, env.baseTextureOffset,
-                                    to_light, inv_selection_pdf);
-
-        shadow_len = LARGE_DISTANCE;
-    } else {
-        shadow_len = LARGE_DISTANCE;
-    }
-
-    LightInfo info = {
-        light_sample,
-        shadow_origin,
-        shadow_len,
-    };
-
-    return info;
+    return result;
 }
 
-// Output functions
-
-void setOutput(uint32_t base_offset, vec3 rgb, uint32_t instance_id)
+void computeCameraRay(in Camera camera, in u32vec3 idx, inout Sampler rng,
+                      out vec3 ray_origin, out vec3 ray_dir)
 {
-    uint32_t ab = packHalf2x16(rgb.xy);
-    uint32_t cd = packHalf2x16(vec2(rgb.z, 0));
-    cd |= (instance_id << 16);
+    vec2 jitter = samplerGet2D(rng);
+    jitter = vec2(0.f);
 
-    outputBuffer[nonuniformEXT(base_offset)] = ab;
-    outputBuffer[nonuniformEXT(base_offset + 1)] = cd;
+    vec2 jittered_raster = vec2(idx.x, idx.y) + jitter;
+
+    vec2 screen = vec2((2.f * jittered_raster.x) / RES_X - 1,
+                       (2.f * jittered_raster.y) / RES_Y - 1);
+
+    vec3 right = camera.right * camera.rightScale;
+    vec3 up = camera.up * camera.upScale;
+
+    ray_origin = camera.origin;
+    ray_dir = normalize(
+        right * screen.x + up * screen.y + camera.view);
+}
+
+vec2 getScreenSpacePosition(Camera camera, vec3 world_pos)
+{
+    vec3 to_pos = world_pos - camera.origin;
+
+    vec3 camera_space = vec3(dot(to_pos, camera.right),
+                             dot(to_pos, camera.up),
+                             dot(to_pos, camera.view));
+
+    return vec2(camera_space.x / camera.rightScale / camera_space.z,
+                camera_space.y / camera.upScale / camera_space.z);
+}
+
+i32vec2 getPixelCoords(vec2 screen_space)
+{
+    vec2 offset = (screen_space + 1.f) / 2.f;
+    return i32vec2(offset.x * RES_X, offset.y * RES_Y);
+}
+
+
+struct PrimaryResult {
+    PathVertexState vertState;
+#ifdef AUXILIARY_OUTPUTS
+    vec3 auxNormal;
+    vec3 auxAlbedo;
+#endif
+    uint32_t instanceID;
+};
+
+PrimaryResult directLighting(in u32vec3 idx, in uint32_t linear_idx,
+                             in Camera cam, in Camera prev_cam,
+                             in Environment env, inout Sampler rng)
+{
+    vec3 ray_origin;
+    vec3 ray_dir;
+    computeCameraRay(cam, idx, rng, ray_origin, ray_dir);
+
+    rayQueryEXT primary_query;
+    bool primary_hit = traceShadeRay(primary_query, env.tlasAddr,
+                                     ray_origin, ray_dir, 3);
+
+    PrimaryResult result;
+
+    if (!primary_hit) {
+        result.vertState.radiance = evalEnvMap(env.baseTextureOffset, ray_dir);
+        result.vertState.bounceProb = vec3(0);
+        result.instanceID = 0xFFFF;
+#ifdef AUXILIARY_OUTPUTS
+        result.auxNormal = vec3(0);
+        result.auxAlbedo = vec3(0);
+#endif
+        return result;
+    }
+
+    HitInfo hit = processHit(primary_query, env, ray_dir);
+    result.instanceID = getHitInstance(primary_query);
+
+#ifdef AUXILIARY_OUTPUTS
+    vec3 view_normal = vec3(
+        dot(normalize(cam.right), hit.tangentFrame.normal),
+        dot(normalize(cam.up) * -1.f, hit.tangentFrame.normal),
+        dot(normalize(cam.view) * -1.f, hit.tangentFrame.normal));
+    
+    view_normal = normalize(view_normal);
+    
+    vec3 albedo = hit.material.rho;
+    
+    result.normal = view_normal;
+    result.albedo = albedo;
+#endif
+
+    vec3 wo = normalize(worldToLocal(-ray_dir, hit.tangentFrame));
+    BSDFParams bsdf_params = buildBSDF(hit.material, wo);
+
+    Reservoir cur = initReservoirRIS(bsdf_params, wo, RESERVOIR_M, rng);
+
+    vec2 prev_screen_pos = getScreenSpacePosition(prev_cam, hit.position);
+    i32vec2 prev_pixel_coords = getPixelCoords(prev_screen_pos);
+
+    LightInfo light_info = sampleLights(rng, env,
+        hit.position, hit.geoNormal);
+    
+    vec3 wi = normalize(worldToLocal(light_info.lightSample.toLight,
+                                     hit.tangentFrame));
+    vec3 bsdf_response = evalBSDF(bsdf_params, wo, wi);
+    vec3 nee = bsdf_response * light_info.lightSample.weight;
+
+    // Compute bounce
+    SampleResult bounce = sampleBSDF(rng, bsdf_params, wo);
+
+    vec3 bounce_dir = localToWorld(bounce.dir, hit.tangentFrame);
+
+    result.vertState.radiance = nee;
+
+    bool pass_through = handleBounce(rng, hit, ray_dir,
+                                     bounce_dir,
+                                     result.vertState.bounceOrigin,
+                                     result.vertState.bounceDir);
+
+    result.vertState.bounceProb = 
+        pass_through ? vec3(1.f - hit.material.transparencyMask) :
+            bounce.weight;
+    result.vertState.bounceFlags = bounce.flags;
+
+    bool occluded = traceShadowRay(env.tlasAddr,
+                                   light_info.shadowRayOrigin,
+                                   light_info.lightSample.toLight,
+                                   light_info.shadowRayLength,
+                                   1);
+    
+    // Start setup for next bounce
+    if (occluded || pass_through) {
+        result.vertState.radiance = vec3(0);
+    }
+
+    return result;
+}
+
+vec3 indirectLighting(in Environment env, in vec3 ray_origin, in vec3 ray_dir,
+                      in vec3 path_prob, in uint32_t bounce_flags,
+                      inout Sampler rng)
+{
+    vec3 indirect_contrib = vec3(0.f);
+
+    for (int32_t path_depth = 1; path_depth < MAX_DEPTH;
+         path_depth++) {
+
+        if (path_prob.x == 0.f && path_prob.y == 0.f &&
+            path_prob.z == 0.f) {
+            break;
+        }
+
+        rayQueryEXT bounce_query;
+        bool shade_hit = traceShadeRay(bounce_query, env.tlasAddr,
+                                       ray_origin, ray_dir, 3);
+
+        // Miss, hit env map
+        if (!shade_hit) {
+            if (bool(bounce_flags & BSDFFlagsDelta)) {
+                indirect_contrib +=
+                    evalEnvMap(env.baseTextureOffset, ray_dir) * path_prob;
+            }
+            break;
+        }
+
+        HitInfo hit = processHit(bounce_query, env, ray_dir);
+
+        PathVertexState bounce_state =
+            processPathVertex(rng, env, hit, ray_dir);
+        vec3 vert_contrib = path_prob * bounce_state.radiance;
+        vert_contrib = min(vert_contrib, vec3(10.f));
+#ifdef INDIRECT_CLAMP
+        vert_contrib = min(vert_contrib, vec3(INDIRECT_CLAMP));
+#endif
+        indirect_contrib += vert_contrib;
+
+        ray_origin = bounce_state.bounceOrigin;
+        ray_dir = bounce_state.bounceDir;
+        path_prob *= bounce_state.bounceProb;
+        bounce_flags = bounce_state.bounceFlags;
+    }
+
+    return indirect_contrib;
 }
 
 // Entry point
@@ -1446,13 +736,11 @@ void main()
     // Lookup our location within the launch grid
     uint32_t batch_idx = idx.z;
 
-    uint32_t base_out_offset = 
-        2 * (batch_idx * RES_Y * RES_X + idx.y * RES_X + idx.x);
+    uint32_t linear_idx = batch_idx * RES_Y * RES_X + idx.y * RES_X + idx.x;
+    uint32_t base_out_offset = 2 * linear_idx;
 
 #ifdef AUXILIARY_OUTPUTS
-    // FIXME 
-    uint32_t base_aux_offset = 
-        3 * (batch_idx * RES_Y * RES_X + idx.y * RES_X + idx.x);
+    uint32_t base_aux_offset = 3 * linear_idx;
 #endif
 
     Camera cam, prev_cam;
@@ -1474,138 +762,31 @@ void main()
         Sampler rng = makeSampler(idx.x, idx.y, sample_idx,
             push_const.baseFrameCounter + batch_idx);
 
-        vec3 sample_radiance = vec3(0.f);
-        vec3 path_prob = vec3(1.f);
-
+        vec3 sample_radiance;
         vec3 ray_origin;
         vec3 ray_dir;
-        computeCameraRay(cam, idx, rng, ray_origin, ray_dir);
+        vec3 path_prob;
+        uint32_t bounce_flags;
 
-        uint32_t bounce_flags = 0;
+        {
+            PrimaryResult primary_result =
+                directLighting(idx, linear_idx, cam, prev_cam, env, rng);
 
-#ifdef PRIMARY_ONLY
-        [[dont_unroll]]
-#endif
-        for (int32_t path_depth = 0; path_depth < MAX_DEPTH;
-             path_depth++) {
-
-            if (path_prob.x == 0.f && path_prob.y == 0.f &&
-                path_prob.z == 0.f) {
-                break;
-            }
-
-            rayQueryEXT shade_query;
-            bool shade_hit = traceShadeRay(shade_query, env.tlasAddr,
-                                           ray_origin, ray_dir, 3);
-
-            // Miss, hit env map
-            if (!shade_hit) {
-                if (path_depth == 0 || bool(bounce_flags & BSDFFlagsDelta)) {
-                    sample_radiance +=
-                        evalEnvMap(env.baseTextureOffset, ray_dir) * path_prob;
-                }
-                break;
-            }
-
-            vec2 barys;
-            uint32_t tri_idx, instance_idx, material_offset, geo_idx,
-                mesh_offset;
-            mat4x3 o2w, w2o;
-            processHit(shade_query, barys, tri_idx, instance_idx,
-                       material_offset, geo_idx, mesh_offset, o2w, w2o);
-
-            if (path_depth == 0) {
-                instance_id = instance_idx;
-            }
-
-            MeshInfo mesh_info = unpackMeshInfo(mesh_offset + geo_idx);
-
-            uint32_t index_offset = mesh_info.indexOffset + tri_idx * 3;
-            Triangle hit_tri = fetchTriangle(index_offset);
-            Vertex interpolated = interpolateTriangle(hit_tri, barys);
-            vec3 obj_geo_normal = computeGeometricNormal(hit_tri);
-
-            vec3 world_position =
-                transformPosition(o2w, interpolated.position);
-            vec3 world_geo_normal =
-                transformNormal(w2o, obj_geo_normal);
-            world_geo_normal = normalize(world_geo_normal);
-
-            // Unpack materials
-            uint32_t material_id = getMaterialID(
-                env.baseMaterialOffset + material_offset + geo_idx);
-
-            MaterialParams material_params = unpackMaterialParams(material_id);
-
-            uint32_t base_texture_idx =
-                1 + material_id * TextureConstantsTexturesPerMaterial;
-
-            TangentFrame obj_tangent_frame =
-                computeTangentFrame(interpolated, material_params,
-                                    base_texture_idx);
-
-            TangentFrame world_tangent_frame =
-                tangentFrameToWorld(o2w, w2o, obj_tangent_frame, ray_dir);
-
-            Material material = processMaterial(material_params,
-                base_texture_idx, interpolated.uv, 0);
+            sample_radiance = primary_result.vertState.radiance;
+            ray_origin = primary_result.vertState.bounceOrigin;
+            ray_dir = primary_result.vertState.bounceDir;
+            path_prob = primary_result.vertState.bounceProb;
+            bounce_flags = primary_result.vertState.bounceFlags;
+            instance_id = primary_result.instanceID;
 
 #ifdef AUXILIARY_OUTPUTS
-            if (path_depth == 0) {
-                vec3 view_normal = vec3(
-                    dot(normalize(cam.right), world_tangent_frame.normal),
-                    dot(normalize(cam.up) * -1.f, world_tangent_frame.normal),
-                    dot(normalize(cam.view) * -1.f, world_tangent_frame.normal));
-
-                view_normal = normalize(view_normal);
-
-                vec3 albedo = material.rho;
-
-                aux_normal += view_normal / SPP;
-                aux_albedo += albedo / SPP;
-            }
+            aux_normal += primary_result.auxNormal / SPP;
+            aux_albedo += primary_result.auxAlbedo / SPP;
 #endif
-
-            LightInfo light_info = sampleLights(rng, env,
-                world_position, world_geo_normal);
-
-            ShadeResult shade_result = shade(rng, material,
-                light_info.lightSample, -ray_dir, world_tangent_frame);
-
-            bounce_flags = shade_result.flags;
-
-            vec3 bounce_offset_normal =
-                dot(shade_result.bounceDir, world_geo_normal) > 0 ?
-                    world_geo_normal : -world_geo_normal;
-            ray_origin = offsetRayOrigin(world_position, bounce_offset_normal);
-
-            bool occluded = traceShadowRay(env.tlasAddr,
-                                           light_info.shadowRayOrigin,
-                                           light_info.lightSample.toLight,
-                                           light_info.shadowRayLength,
-                                           1);
-
-            float alpha_check = samplerGet1D(rng);
-            bool pass_through = material.transparencyMask == 0.f ||
-                alpha_check > material.transparencyMask;
-
-            if (!occluded && !pass_through) {
-                vec3 contrib = path_prob * shade_result.color;
-#ifdef INDIRECT_CLAMP
-                if (path_depth > 0) {
-                    contrib = min(contrib, vec3(INDIRECT_CLAMP));
-                }
-#endif
-                sample_radiance += contrib;
-            }
-
-            // Start setup for next bounce
-
-            if (!pass_through) {
-                ray_dir = shade_result.bounceDir;
-                path_prob *= shade_result.bounceProb;
-            }
         }
+
+        sample_radiance += indirectLighting(env, ray_origin, ray_dir,
+                                            path_prob, bounce_flags, rng);
 
         pixel_radiance += sample_radiance / SPP;
     }

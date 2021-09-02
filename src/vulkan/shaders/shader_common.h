@@ -2,7 +2,8 @@
 #define RLPBR_VK_SHADER_COMMON_H_INCLUDED
 
 struct PackedCamera {
-    vec4 data[3];
+    vec4 rotation;
+    vec4 posAndTanFOV;
 };
 
 struct PackedEnv {
@@ -27,7 +28,12 @@ struct PackedInstance {
 };
 
 struct Reservoir {
-    vec4 val;
+    vec3 y;
+    float pHat;
+    float wSum;
+    float W;
+    uint32_t M;
+    uint32_t pad;
 };
 
 struct ReGIRCell {

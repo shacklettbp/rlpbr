@@ -38,16 +38,18 @@ float toSRGB(float v)
 
 glm::vec3 tonemap(glm::vec3 v)
 {
-    v *= 0.6;
+    //v *= 0.6;
 
-    float A = 2.51f;
-    float B = 0.03f;
-    float C = 2.43f;
-    float D = 0.59f;
-    float E = 0.14f;
+    //float A = 2.51f;
+    //float B = 0.03f;
+    //float C = 2.43f;
+    //float D = 0.59f;
+    //float E = 0.14f;
 
-    v = clamp((v*(A*v+B))/(v*(C*v+D)+E), 0.f, 1.f);
-    return v;
+    //v = clamp((v*(A*v+B))/(v*(C*v+D)+E), 0.f, 1.f);
+    //return v;
+    
+    return v * (1.f + (v / 0.15f)) / (1.f + v);
 }
 
 void saveFrame(const char *fname, const half *dev_ptr,
@@ -104,10 +106,22 @@ int main(int argc, char *argv[]) {
     }
 
     Renderer renderer({0, 1, batch_size, out_dim.x, out_dim.y, spp, depth,
-                       0, false, false, 0.f, BackendSelect::Vulkan});
+                       0, true, false, 0.f, BackendSelect::Vulkan});
 
     auto loader = renderer.makeLoader();
     auto scene = loader.loadScene(argv[1]);
+
+    //glm::vec3 eye (-2.206948, 1.599559, -5.020905);
+    //glm::vec3 look(-2.287329, 1.336111, -5.982229);
+    //glm::vec3 up(0.011677, 0.964129, -0.265193);
+
+    //glm::vec3 eye(-5.805865, 1.189658, 0.623973);
+    //glm::vec3 look(-6.281745, 1.006185, 1.484137);
+    //glm::vec3 up(-0.116739, 0.982527, 0.144987);
+
+    glm::vec3 eye(-7.037555, 1.062551, 8.410369);
+    glm::vec3 look(-7.775107, 0.833322, 7.775162);
+    glm::vec3 up(-0.207893, 0.972026, -0.109381);
 
     // Vase
     //glm::vec3 eye(10.573854, 1.332727, -2.085712);
@@ -116,9 +130,9 @@ int main(int argc, char *argv[]) {
 
 
     // Mirror table
-    glm::vec3 eye(-6.207120, 0.825648, 0.911869);
-    glm::vec3 look(-6.698653, 0.796494, 0.041498);
-    glm::vec3 up(-0.030218, 0.999409, -0.016411);
+    //glm::vec3 eye(-6.207120, 0.825648, 0.911869);
+    //glm::vec3 look(-6.698653, 0.796494, 0.041498);
+    //glm::vec3 up(-0.030218, 0.999409, -0.016411);
 
     // workout
     //glm::vec3 eye(-0.933040, 0.442653, -1.826718);
@@ -149,6 +163,7 @@ int main(int argc, char *argv[]) {
     renderer.waitForBatch(batch);
 
     half *base_out_ptr = renderer.getOutputPointer(batch);
+    auto aux_ptrs = renderer.getAuxiliaryOutputs(batch);
 
     for (uint32_t batch_idx = 0; batch_idx < batch_size; batch_idx++) {
         saveFrame(("/tmp/out_color_" + to_string(batch_idx) + ".bmp").c_str(),

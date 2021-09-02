@@ -1,5 +1,5 @@
-#ifndef RLPBR_VK_SAMPLER_H_INCLUDED
-#define RLPBR_VK_SAMPLER_H_INCLUDED
+#ifndef RLPBR_VK_SAMPLER_GLSL_INCLUDED
+#define RLPBR_VK_SAMPLER_GLSL_INCLUDED
 
 uint32_t samplerSeedHash(uint32_t seed)
 {

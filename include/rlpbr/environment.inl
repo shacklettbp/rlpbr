@@ -223,6 +223,11 @@ const EnvironmentBackend *Environment::getBackend() const
     return backend_.getState();
 }
 
+EnvironmentBackend *Environment::getBackend()
+{
+    return backend_.getState();
+}
+
 const Camera &Environment::getCamera() const
 {
     return camera_;

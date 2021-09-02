@@ -27,9 +27,10 @@ class Renderer {
 public:
     class BatchInitializer {
     public:
-        void addEnvironment(std::shared_ptr<Scene> scene);
+        void addEnvironment(std::shared_ptr<Scene> scene, float fov = 90.f);
 
     private:
+        std::vector<float> fovs_;
         std::vector<std::shared_ptr<Scene>> scenes_;
 
     friend class Renderer;
