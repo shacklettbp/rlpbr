@@ -345,6 +345,24 @@ void setOutput(uint32_t base_offset, vec3 rgb, uint32_t instance_id)
     outputBuffer[nonuniformEXT(base_offset + 1)] = cd;
 }
 
+#ifdef AUXILIARY_OUTPUTS
+void setAuxiliaries(uint32_t base_offset, vec3 albedo, vec3 normal)
+{
+    uint32_t albedo_ab = packHalf2x16(albedo.xy);
+    uint32_t albedo_cd = packHalf2x16(vec2(albedo.z, 0));
+    uint32_t normal_ab = packHalf2x16(normal.xy);
+    uint32_t normal_cd = packHalf2x16(vec2(normal.z, 0));
+
+    albedoBuffer[nonuniformEXT(base_offset)] = uint16_t((albedo_ab >> 16) & 0xFFFF);
+    albedoBuffer[nonuniformEXT(base_offset) + 1] = uint16_t(albedo_ab & 0xFFFF);
+    albedoBuffer[nonuniformEXT(base_offset) + 2] = uint16_t((albedo_cd >> 16) & 0xFFFF);
+
+    normalBuffer[nonuniformEXT(base_offset)] = uint16_t((normal_ab >> 16) & 0xFFFF);
+    normalBuffer[nonuniformEXT(base_offset) + 1] = uint16_t(normal_ab & 0xFFFF);
+    normalBuffer[nonuniformEXT(base_offset) + 2] = uint16_t((normal_cd >> 16) & 0xFFFF);
+}
+#endif
+
 void getHitParams(in rayQueryEXT ray_query, out vec2 barys,
                   out uint32_t tri_idx, out uint32_t material_offset,
                   out uint32_t geo_idx, out uint32_t mesh_offset,
@@ -622,8 +640,8 @@ PrimaryResult directLighting(in u32vec3 idx, in uint32_t linear_idx,
     
     vec3 albedo = hit.material.rho;
     
-    result.normal = view_normal;
-    result.albedo = albedo;
+    result.auxNormal = view_normal;
+    result.auxAlbedo = albedo;
 #endif
 
     vec3 wo = normalize(worldToLocal(-ray_dir, hit.tangentFrame));

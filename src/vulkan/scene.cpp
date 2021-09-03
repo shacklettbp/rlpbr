@@ -449,6 +449,7 @@ static optional<StagedTextures> prepareSceneTextures(const DeviceState &dev,
 
     VkDeviceMemory tex_mem = tex_mem_opt.value();
 
+
     // Bind image memory and create views
     for (uint32_t i = 0; i < num_textures; i++) {
         LocalTexture &gpu_texture = gpu_textures[i];
@@ -889,7 +890,9 @@ shared_ptr<Scene> VulkanLoader::loadScene(SceneLoadData &&load_info)
         memcpy(data_staging.ptr, data_src, load_info.hdr.totalBytes);
     }
 
-    // Bind image memory and create views
+    // Reset command buffers
+    REQ_VK(dev.dt.resetCommandPool(dev.hdl, transfer_cmd_pool_, 0));
+    REQ_VK(dev.dt.resetCommandPool(dev.hdl, render_cmd_pool_, 0));
 
     // Start recording for transfer queue
     VkCommandBufferBeginInfo begin_info {};
