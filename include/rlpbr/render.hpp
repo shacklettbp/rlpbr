@@ -2,6 +2,7 @@
 
 #include <rlpbr/fwd.hpp>
 #include <rlpbr/environment.hpp>
+#include <rlpbr/utils.hpp>
 #include <memory>
 
 namespace RLpbr {
@@ -16,11 +17,11 @@ class RenderBatch {
 public:
     using Handle = std::unique_ptr<BatchBackend, BatchDeleter>;
 
-    RenderBatch(Handle &&backend,  std::vector<Environment> &&envs);
+    RenderBatch(Handle &&backend, uint32_t batch_size);
 
-    inline void addEnvironment(Environment &&env)
+    inline void initEnvironment(uint32_t idx, Environment &&env)
     { 
-        envs_.emplace_back(std::move(env));
+        new (&envs_[idx]) Environment(std::move(env));
     }
 
     inline Environment &getEnvironment(uint32_t idx) { return envs_[idx]; }
@@ -30,7 +31,7 @@ public:
 
 private:
     Handle backend_;
-    std::vector<Environment> envs_;
+    DynArray<Environment> envs_;
 };
 
 }

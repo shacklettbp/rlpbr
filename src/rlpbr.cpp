@@ -56,16 +56,10 @@ static RendererImpl makeBackend(const RenderConfig &cfg)
     abort();
 }
 
-void Renderer::BatchInitializer::addEnvironment(shared_ptr<Scene> scene,
-                                                float fov)
-{
-    fovs_.emplace_back(fov);
-    scenes_.emplace_back(move(scene));
-}
-
 Renderer::Renderer(const RenderConfig &cfg)
     : backend_(makeBackend(cfg)),
-      aspect_ratio_(float(cfg.imgWidth) / float(cfg.imgHeight))
+      aspect_ratio_(float(cfg.imgWidth) / float(cfg.imgHeight)),
+      batch_size_(cfg.batchSize)
 {}
 
 AssetLoader Renderer::makeLoader()
@@ -115,25 +109,15 @@ Environment Renderer::makeEnvironment(const std::shared_ptr<Scene> &scene,
     return Environment(backend_.makeEnvironment(scene, cam), scene, cam);
 }
 
-RenderBatch::RenderBatch(Handle &&backend, vector<Environment> &&envs)
+RenderBatch::RenderBatch(Handle &&backend, uint32_t batch_size)
     : backend_(move(backend)),
-      envs_(move(envs))
+      envs_(batch_size)
 {
 }
 
-RenderBatch Renderer::makeRenderBatch(BatchInitializer &&init)
+RenderBatch Renderer::makeRenderBatch()
 {
-    int num_envs = init.scenes_.size();
-
-    vector<Environment> envs;
-
-    for (int i = 0; i < num_envs; i++) {
-        envs.emplace_back(makeEnvironment(move(init.scenes_[i]),
-            glm::vec3(0.f), glm::vec3(0.f, 0.f, 1.f),
-            glm::vec3(0.f, 1.f, 0.f), init.fovs_[i]));
-    }
-
-    return RenderBatch(backend_.makeRenderBatch(), move(envs));
+    return RenderBatch(backend_.makeRenderBatch(), batch_size_);
 }
 
 void Renderer::render(RenderBatch &batch)

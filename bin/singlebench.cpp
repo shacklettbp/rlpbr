@@ -63,13 +63,10 @@ int main(int argc, char *argv[]) {
 
     vector<Environment> envs;
 
-    Renderer::BatchInitializer init;
-
+    RenderBatch batch = renderer.makeRenderBatch();
     for (uint32_t batch_idx = 0; batch_idx < batch_size; batch_idx++) {
-        init.addEnvironment(scene);
+        batch.initEnvironment(batch_idx, renderer.makeEnvironment(scene));
     }
-
-    RenderBatch batch = renderer.makeRenderBatch(move(init));
 
     renderer.render(batch);
     renderer.waitForBatch(batch);

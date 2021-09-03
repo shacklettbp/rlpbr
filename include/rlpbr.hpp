@@ -25,17 +25,6 @@ friend class BatchRenderer;
 
 class Renderer {
 public:
-    class BatchInitializer {
-    public:
-        void addEnvironment(std::shared_ptr<Scene> scene, float fov = 90.f);
-
-    private:
-        std::vector<float> fovs_;
-        std::vector<std::shared_ptr<Scene>> scenes_;
-
-    friend class Renderer;
-    };
-
     Renderer(const RenderConfig &cfg);
 
     AssetLoader makeLoader();
@@ -57,7 +46,7 @@ public:
                                 float vertical_fov = 90.f,
                                 float aspect_ratio = 0.f);
 
-    RenderBatch makeRenderBatch(BatchInitializer &&init);
+    RenderBatch makeRenderBatch();
 
     void render(RenderBatch &batch);
 
@@ -70,6 +59,7 @@ public:
 private:
     RendererImpl backend_;
     float aspect_ratio_;
+    uint32_t batch_size_;
 };
 
 }

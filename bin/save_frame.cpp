@@ -141,18 +141,12 @@ int main(int argc, char *argv[]) {
 
     glm::vec3 to_look = look - eye;
     
-    Renderer::BatchInitializer init;
-    
-    for (uint32_t batch_idx = 0; batch_idx < batch_size; batch_idx++) {
-        init.addEnvironment(scene);
-    }
-
-    RenderBatch batch = renderer.makeRenderBatch(move(init));
+    RenderBatch batch = renderer.makeRenderBatch();
 
     for (uint32_t batch_idx = 0; batch_idx < batch_size; batch_idx++) {
         glm::mat3 r = glm::rotate(glm::radians(10.f * batch_idx), up);
-        batch.getEnvironment(batch_idx) =
-            renderer.makeEnvironment(scene, eye, eye + r * to_look, up, 60.f);
+        batch.initEnvironment(batch_idx,
+            renderer.makeEnvironment(scene, eye, eye + r * to_look, up, 60.f));
     }
     //envs.back().addLight(glm::vec3(-1.950218, 1.623819, 0.863453), glm::vec3(10.f));
     //envs.back().addLight(glm::vec3(1.762336, 1.211801, -4.574429), glm::vec3(10.f));
@@ -163,7 +157,6 @@ int main(int argc, char *argv[]) {
     renderer.waitForBatch(batch);
 
     half *base_out_ptr = renderer.getOutputPointer(batch);
-    auto aux_ptrs = renderer.getAuxiliaryOutputs(batch);
 
     for (uint32_t batch_idx = 0; batch_idx < batch_size; batch_idx++) {
         saveFrame(("/tmp/out_color_" + to_string(batch_idx) + ".bmp").c_str(),
