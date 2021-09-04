@@ -27,7 +27,7 @@
 #undef SHADER_CONST
 
 #include "shader_common.h"
-#include "vulkan/shaders/utils.h"
+#include "vulkan/shaders/utils.glsl"
 
 struct PackedVertex {
     vec4 data[2];

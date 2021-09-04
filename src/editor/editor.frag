@@ -27,8 +27,8 @@
 #undef SHADER_CONST
 
 #include "shader_common.h"
-#include "vulkan/shaders/utils.h"
-#include "vulkan/shaders/packed.h"
+#include "vulkan/shaders/utils.glsl"
+#include "vulkan/shaders/inputs.glsl"
 
 layout (push_constant, scalar) uniform PushConstant {
     DrawPushConst push_const;
@@ -66,7 +66,7 @@ vec4 fetchSceneTexture(uint32_t idx, vec2 uv, float)
     return texture(sampler2D(textures[idx], repeatSampler), uv);
 }
 
-#include "vulkan/shaders/materials.h"
+#include "vulkan/shaders/materials.glsl"
 
 void main()
 {
