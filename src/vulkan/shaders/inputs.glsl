@@ -44,11 +44,12 @@ struct TangentFrame {
 };
 
 struct Environment {
-    uint32_t baseTextureOffset;
+    uint32_t sceneID;
     uint32_t baseMaterialOffset;
     uint32_t baseLightOffset;
     uint32_t numLights;
     uint64_t tlasAddr;
+    uint32_t baseTextureOffset;
 };
 
 struct MeshInfo {

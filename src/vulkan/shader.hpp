@@ -1,5 +1,6 @@
 #pragma once
 
+#include <vulkan/vulkan_core.h>
 #include "core.hpp"
 
 #include <glm/glm.hpp>
@@ -14,6 +15,10 @@ namespace vk {
 namespace Shader {
 using namespace glm;
 using uint = uint32_t;
+using VertRef = VkDeviceAddress;
+using IdxRef = VkDeviceAddress;
+using MatRef = VkDeviceAddress;
+using MeshRef = VkDeviceAddress;
 
 #include "shaders/shader_common.h"
 };
@@ -22,6 +27,7 @@ using Shader::PackedInstance;
 using Shader::PackedCamera;
 using Shader::PackedLight;
 using Shader::PackedEnv;
+using Shader::SceneAddresses;
 using Shader::RTPushConstant;
 using Shader::Reservoir;
 
@@ -29,6 +35,7 @@ namespace VulkanConfig {
 
 constexpr uint32_t max_materials = MAX_MATERIALS;
 constexpr uint32_t textures_per_material = 8;
+constexpr uint32_t max_scenes = MAX_SCENES;
 constexpr uint32_t max_lights = MAX_LIGHTS;
 constexpr uint32_t max_instances = 10000000;
 constexpr uint32_t compute_workgroup_size = WORKGROUP_SIZE;

@@ -1047,9 +1047,12 @@ Renderer::Renderer(uint32_t gpu_id, uint32_t img_width, uint32_t img_height)
                                             InternalConfig::numFrames)),
       cur_frame_(0),
       frames_(InternalConfig::numFrames),
+      scene_desc_pool_(default_pipeline_.shader.makePool(1, 1)),
+      shared_scene_state_(dev, scene_desc_pool_,
+                          default_pipeline_.shader.getLayout(1), alloc),
       loader_(dev, alloc, transfer_wrapper_,
-              render_transfer_wrapper_, default_pipeline_.shader,
-              { 0, ~0u, 1, 2, ~0u},
+              render_transfer_wrapper_,
+              shared_scene_state_,
               //dev.gfxQF, ~0u)
               dev.gfxQF, 128)
 {
@@ -1202,7 +1205,7 @@ void Renderer::render(Scene *raw_scene, const EditorCam &cam,
 
     dev.dt.cmdBindDescriptorSets(draw_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
                                  default_pipeline_.layout, 1, 1,
-                                 &scene->descSet.hdl, 0, nullptr);
+                                 &shared_scene_state_.descSet, 0, nullptr);
     dev.dt.cmdBindIndexBuffer(draw_cmd, scene->data.buffer,
                               scene->indexOffset, VK_INDEX_TYPE_UINT32);
 

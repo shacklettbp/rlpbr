@@ -1,6 +1,13 @@
 #ifndef RLPBR_VK_SHADER_COMMON_H_INCLUDED
 #define RLPBR_VK_SHADER_COMMON_H_INCLUDED
 
+struct SceneAddresses {
+    VertRef vertAddr;
+    IdxRef idxAddr;
+    MatRef matAddr;
+    MeshRef meshAddr;
+};
+
 struct PackedCamera {
     vec4 rotation;
     vec4 posAndTanFOV;
@@ -40,8 +47,9 @@ struct ReGIRCell {
     Reservoir reservoirs[64];
 };
 
-#define MAX_MATERIALS (5000)
-#define MAX_LIGHTS (100000)
+#define MAX_MATERIALS (1000)
+#define MAX_LIGHTS (1000000)
+#define MAX_SCENES (64)
 #define WORKGROUP_SIZE (32)
 #define LOCAL_WORKGROUP_X (8)
 #define LOCAL_WORKGROUP_Y (4)

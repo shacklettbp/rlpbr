@@ -349,6 +349,7 @@ DeviceState InstanceState::makeDevice(
     vk12_features.bufferDeviceAddress = true;
     vk12_features.descriptorIndexing = true;
     vk12_features.descriptorBindingPartiallyBound = true;
+    vk12_features.descriptorBindingUpdateUnusedWhilePending = true;
     vk12_features.runtimeDescriptorArray = true;
     vk12_features.shaderStorageBufferArrayNonUniformIndexing = true;
     vk12_features.shaderSampledImageArrayNonUniformIndexing = true;

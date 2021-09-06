@@ -136,22 +136,20 @@ VulkanLoader::VulkanLoader(const DeviceState &d,
                            MemoryAllocator &alc,
                            const QueueState &transfer_queue,
                            const QueueState &render_queue,
-                           const ShaderPipeline &shader,
-                           const SceneDescriptorBindings &binding_defn,
+                           SharedSceneState &shared_scene_state,
                            uint32_t render_qf,
                            uint32_t max_texture_resolution)
     : dev(d),
       alloc(alc),
       transfer_queue_(transfer_queue),
       render_queue_(render_queue),
+      shared_scene_state_(shared_scene_state),
       transfer_cmd_pool_(makeCmdPool(d, d.transferQF)),
       transfer_cmd_(makeCmdBuffer(dev, transfer_cmd_pool_)),
       render_cmd_pool_(makeCmdPool(d, render_qf)),
       render_cmd_(makeCmdBuffer(dev, render_cmd_pool_)),
       transfer_sema_(makeBinarySemaphore(dev)),
       fence_(makeFence(dev)),
-      desc_mgr_(dev, shader, 1),
-      binding_defn_(binding_defn),
       render_qf_(render_qf),
       max_texture_resolution_(max_texture_resolution)
 {}
@@ -849,6 +847,53 @@ void TLAS::free(const DeviceState &dev)
     dev.dt.destroyAccelerationStructureKHR(dev.hdl, hdl, nullptr);
 }
 
+SharedSceneState::SharedSceneState(const DeviceState &dev,
+                                   VkDescriptorPool scene_pool,
+                                   VkDescriptorSetLayout scene_layout,
+                                   MemoryAllocator &alloc)
+    : lock(),
+      descSet(makeDescriptorSet(dev, scene_pool, scene_layout)),
+      addrData([&]() {
+          size_t num_addr_bytes = sizeof(SceneAddresses) * VulkanConfig::max_scenes;
+          HostBuffer addr_data = alloc.makeParamBuffer(num_addr_bytes);
+
+          VkDescriptorBufferInfo addr_buf_info {
+              addr_data.buffer,
+              0,
+              num_addr_bytes,
+          };
+
+          DescriptorUpdates desc_update(1);
+          desc_update.uniform(descSet, &addr_buf_info, 0);
+          desc_update.update(dev);
+
+          return addr_data;
+      }()),
+      freeSceneIDs(),
+      numSceneIDs(0)
+{}
+
+SceneID::SceneID(SharedSceneState &shared)
+    : shared_(shared),
+      id_([&]() {
+          if (shared_.freeSceneIDs.size() > 0) {
+              uint32_t id = shared_.freeSceneIDs.back();
+              shared_.freeSceneIDs.pop_back();
+
+              return id;
+          } else {
+              return shared_.numSceneIDs++;
+          }
+      }())
+{}
+
+SceneID::~SceneID()
+{
+    lock_guard<mutex> lock(shared_.lock);
+
+    shared_.freeSceneIDs.push_back(id_);
+}
+
 shared_ptr<Scene> VulkanLoader::loadScene(SceneLoadData &&load_info)
 {
     TextureData texture_store(dev, alloc);
@@ -1112,39 +1157,11 @@ shared_ptr<Scene> VulkanLoader::loadScene(SceneLoadData &&load_info)
     waitForFenceInfinitely(dev, fence_);
     resetFence(dev, fence_);
 
-    DescriptorSet scene_set = desc_mgr_.makeSet();
-
-    DescriptorUpdates desc_updates(5);
-
     // Set Layout
-    // 0: Vertex buffer
-    // 1: Index buffer
-    // 2: textures
-    // 3: material params
-    // 4: mesh infos
+    // 0: Scene addresses uniform
+    // 1: textures
 
-    VkDescriptorBufferInfo vertex_buffer_info {
-        data.buffer,
-        0,
-        load_info.hdr.numVertices * sizeof(Vertex),
-    };
-
-    if (binding_defn_.vertexBinding != ~0u) {
-        desc_updates.storage(scene_set.hdl, &vertex_buffer_info,
-                             binding_defn_.vertexBinding);
-    }
-
-    VkDescriptorBufferInfo index_buffer_info {
-        data.buffer,
-        load_info.hdr.indexOffset,
-        load_info.hdr.numIndices * sizeof(uint32_t),
-    };
-
-    if (binding_defn_.indexBinding != ~0u) {
-        desc_updates.storage(scene_set.hdl, &index_buffer_info,
-                             binding_defn_.indexBinding);
-    }
-
+    DescriptorUpdates desc_updates(1);
     vector<VkDescriptorImageInfo> descriptor_views;
     descriptor_views.reserve(load_info.hdr.numMaterials * 8 + 1);
 
@@ -1197,41 +1214,32 @@ shared_ptr<Scene> VulkanLoader::loadScene(SceneLoadData &&load_info)
         appendDescriptor(tex_indices.anisoIdx, staged_textures->anisotropic);
     }
 
-    VkDescriptorBufferInfo material_buffer_info;
+    shared_scene_state_.lock.lock();
+    SceneID scene_id(shared_scene_state_);
 
     if (load_info.hdr.numMaterials > 0) {
         assert(load_info.hdr.numMaterials < VulkanConfig::max_materials);
 
-        if (binding_defn_.textureBinding != ~0u) {
-            desc_updates.textures(scene_set.hdl, descriptor_views.data(),
-                descriptor_views.size(), binding_defn_.textureBinding);
-        }
-
-        material_buffer_info.buffer = data.buffer;
-        material_buffer_info.offset = load_info.hdr.materialOffset;
-        material_buffer_info.range =
-            load_info.hdr.numMaterials * sizeof(MaterialParams);
-
-        if (binding_defn_.materialBinding != ~0u) {
-            desc_updates.storage(scene_set.hdl, &material_buffer_info,
-                                 binding_defn_.materialBinding);
-        }
-    }
-
-    VkDescriptorBufferInfo mesh_buffer_info {
-        data.buffer,
-        load_info.hdr.meshOffset,
-        load_info.hdr.numMeshes * sizeof(MeshInfo),
-    };
-
-    if (binding_defn_.meshInfoBinding != ~0u) {
-        desc_updates.storage(scene_set.hdl, &mesh_buffer_info,
-                             binding_defn_.meshInfoBinding);
+        uint32_t texture_offset = scene_id.getID() *
+            (1 + VulkanConfig::max_materials *
+             VulkanConfig::textures_per_material);
+        desc_updates.textures(shared_scene_state_.descSet,
+                              descriptor_views.data(),
+                              descriptor_views.size(), 1,
+                              texture_offset);
     }
 
     desc_updates.update(dev);
+    shared_scene_state_.lock.unlock();
 
     uint32_t num_meshes = load_info.meshInfo.size();
+
+    SceneAddresses &scene_dev_addrs = 
+        ((SceneAddresses *)shared_scene_state_.addrData.ptr)[scene_id.getID()];
+    scene_dev_addrs.vertAddr = geometry_addr;
+    scene_dev_addrs.idxAddr = geometry_addr + load_info.hdr.indexOffset;
+    scene_dev_addrs.matAddr = geometry_addr + load_info.hdr.materialOffset;
+    scene_dev_addrs.meshAddr = geometry_addr + load_info.hdr.meshOffset;
 
     return make_shared<VulkanScene>(VulkanScene {
         {
@@ -1240,10 +1248,10 @@ shared_ptr<Scene> VulkanLoader::loadScene(SceneLoadData &&load_info)
             move(load_info.envInit),
         },
         move(texture_store),
-        move(scene_set),
         move(data),
         load_info.hdr.indexOffset,
         num_meshes,
+        scene_id,
         move(blases),
     });
 }

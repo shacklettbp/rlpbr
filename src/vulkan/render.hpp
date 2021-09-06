@@ -20,6 +20,7 @@
 #include "memory.hpp"
 #include "shader.hpp"
 #include "present.hpp"
+#include "scene.hpp"
 
 namespace RLpbr {
 namespace vk {
@@ -185,6 +186,8 @@ private:
     glm::u32vec3 launch_size_;
 
     std::atomic_int num_loaders_;
+    VkDescriptorPool scene_pool_;
+    SharedSceneState shared_scene_state_;
 
     uint32_t cur_queue_;
     uint32_t frame_counter_;

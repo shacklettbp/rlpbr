@@ -125,6 +125,9 @@ private:
     uint32_t cur_frame_;
     DynArray<Frame> frames_;
 
+    VkDescriptorPool scene_desc_pool_;
+    vk::SharedSceneState shared_scene_state_;
+
     vk::VulkanLoader loader_;
 };
 

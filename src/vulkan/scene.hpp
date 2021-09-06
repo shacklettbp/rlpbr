@@ -101,21 +101,39 @@ struct TextureData {
     std::vector<VkImageView> views;
 };
 
-struct SceneDescriptorBindings {
-    uint32_t vertexBinding;
-    uint32_t indexBinding;
-    uint32_t textureBinding;
-    uint32_t materialBinding;
-    uint32_t meshInfoBinding;
+struct SharedSceneState {
+    SharedSceneState(const DeviceState &dev,
+                     VkDescriptorPool scene_pool,
+                     VkDescriptorSetLayout scene_layout,
+                     MemoryAllocator &alloc);
+
+    std::mutex lock;
+
+    VkDescriptorSet descSet;
+    HostBuffer addrData;
+
+    std::vector<uint32_t> freeSceneIDs;
+    uint32_t numSceneIDs;
+};
+
+class SceneID {
+public:
+    SceneID(SharedSceneState &shared);
+    ~SceneID();
+
+    uint32_t getID() const { return id_; }
+private:
+    SharedSceneState &shared_;
+    uint32_t id_;
 };
 
 struct VulkanScene : public Scene {
     TextureData textures;
-    DescriptorSet descSet;
 
     LocalBuffer data;
     VkDeviceSize indexOffset;
     uint32_t numMeshes;
+    SceneID sceneID;
 
     BLASData blases;
 };
@@ -126,8 +144,7 @@ public:
                  MemoryAllocator &alloc,
                  const QueueState &transfer_queue,
                  const QueueState &render_queue,
-                 const ShaderPipeline &shader,
-                 const SceneDescriptorBindings &binding_defn,
+                 SharedSceneState &shared_scene_state,
                  uint32_t render_qf,
                  uint32_t max_texture_resolution);
 
@@ -138,6 +155,7 @@ private:
     MemoryAllocator &alloc;
     const QueueState &transfer_queue_;
     const QueueState &render_queue_;
+    SharedSceneState &shared_scene_state_;
 
     VkCommandPool transfer_cmd_pool_;
     VkCommandBuffer transfer_cmd_;
@@ -146,9 +164,6 @@ private:
 
     VkSemaphore transfer_sema_;
     VkFence fence_;
-
-    DescriptorManager desc_mgr_;
-    SceneDescriptorBindings binding_defn_;
 
     uint32_t render_qf_;
     uint32_t max_texture_resolution_;

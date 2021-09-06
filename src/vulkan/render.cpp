@@ -56,8 +56,7 @@ static ParamBufferConfig getParamBufferConfig(uint32_t batch_size,
     cur_offset = cfg.envOffset + cfg.totalEnvParamBytes;
 
     // Ensure that full block is aligned to maximum requirement
-    cfg.totalParamBytes =
-        alloc.alignStorageBufferOffset(cur_offset);
+    cfg.totalParamBytes =  alloc.alignStorageBufferOffset(cur_offset);
 
     return cfg;
 }
@@ -195,10 +194,13 @@ static RenderState makeRenderState(const DeviceState &dev,
         {
             {0, 4, repeat_sampler, 1, 0},
             {0, 5, clamp_sampler, 1, 0},
-            {1, 2, VK_NULL_HANDLE,
-                VulkanConfig::max_materials *
-                    VulkanConfig::textures_per_material,
-             VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT},
+            {
+                1, 1, VK_NULL_HANDLE,
+                VulkanConfig::max_scenes * (1 + VulkanConfig::max_materials *
+                    VulkanConfig::textures_per_material),
+                VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT |
+                VK_DESCRIPTOR_BINDING_UPDATE_UNUSED_WHILE_PENDING_BIT,
+            },
         },
         shader_defines,
         STRINGIFY(SHADER_DIR));
@@ -471,7 +473,7 @@ static PerBatchState makePerBatchState(const DeviceState &dev,
         desc_updates.textures(rt_sets[i], &ggx_avg_info, 1, 8);
         desc_updates.textures(rt_sets[i], &ggx_dir_info, 1, 9);
         desc_updates.textures(rt_sets[i], &ggx_inv_info, 1, 10);
-        desc_updates.buffer(rt_sets[i], &out_info, 11,
+        desc_updates.buffer(rt_sets[i], &out_info, 13,
                             VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
     }
 
@@ -481,9 +483,9 @@ static PerBatchState makePerBatchState(const DeviceState &dev,
         fb_cfg.reservoirBytes,
     };
 
-    desc_updates.buffer(rt_sets[0], &cur_reservoir_info, 12,
+    desc_updates.buffer(rt_sets[0], &cur_reservoir_info, 11,
                         VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
-    desc_updates.buffer(rt_sets[1], &cur_reservoir_info, 13,
+    desc_updates.buffer(rt_sets[1], &cur_reservoir_info, 12,
                         VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
 
     VkDescriptorBufferInfo prev_reservoir_info {
@@ -492,9 +494,9 @@ static PerBatchState makePerBatchState(const DeviceState &dev,
         fb_cfg.reservoirBytes,
     };
 
-    desc_updates.buffer(rt_sets[0], &prev_reservoir_info, 13,
+    desc_updates.buffer(rt_sets[0], &prev_reservoir_info, 12,
                         VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
-    desc_updates.buffer(rt_sets[1], &prev_reservoir_info, 12,
+    desc_updates.buffer(rt_sets[1], &prev_reservoir_info, 11,
                         VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
 
     VkDescriptorBufferInfo normal_info;
@@ -859,6 +861,9 @@ VulkanBackend::VulkanBackend(const RenderConfig &cfg,
                     dev.computeQF)),
       launch_size_(getLaunchSize(cfg)),
       num_loaders_(0),
+      scene_pool_(render_state_.rt.makePool(1, 1)),
+      shared_scene_state_(dev, scene_pool_, render_state_.rt.getLayout(1),
+                          alloc),
       cur_queue_(0),
       frame_counter_(0),
       present_(init_cfg.needPresent ?
@@ -878,9 +883,8 @@ LoaderImpl VulkanBackend::makeLoader()
 
     auto loader = new VulkanLoader(
         dev, alloc, transfer_queues_[loader_idx % transfer_queues_.size()],
-        compute_queues_.back(), render_state_.rt, {
-            0, 1, 2, 3, 4,
-        }, dev.computeQF, cfg_.maxTextureResolution);
+        compute_queues_.back(), shared_scene_state_,
+        dev.computeQF, cfg_.maxTextureResolution);
 
     return makeLoaderImpl<VulkanLoader>(loader);
 }
@@ -978,14 +982,9 @@ void VulkanBackend::render(RenderBatch &batch)
                                  &batch_state.rtSets[batch_backend.curBuffer],
                                  0, nullptr);
 
-    // Hack
-    {
-        const VulkanScene &scene =
-            *static_cast<const VulkanScene *>(envs[0].getScene().get());
-        dev.dt.cmdBindDescriptorSets(render_cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
-                                     pipeline_.rtState.layout, 1, 1,
-                                     &scene.descSet.hdl, 0, nullptr);
-    }
+    dev.dt.cmdBindDescriptorSets(render_cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
+                                 pipeline_.rtState.layout, 1, 1,
+                                 &shared_scene_state_.descSet, 0, nullptr);
 
     // TLAS build
     for (int batch_idx = 0; batch_idx < (int)cfg_.batchSize; batch_idx++) {
@@ -1026,11 +1025,14 @@ void VulkanBackend::render(RenderBatch &batch)
         Environment &env = envs[batch_idx];
         VulkanEnvironment &env_backend =
             *static_cast<VulkanEnvironment *>(env.getBackend());
+        const VulkanScene &scene_backend =
+            *static_cast<const VulkanScene *>(env.getScene().get());
 
         PackedEnv &packed_env = batch_state.envPtr[batch_idx];
 
         packed_env.cam = packCamera(env.getCamera());
         packed_env.prevCam = packCamera(env_backend.prevCam);
+        packed_env.data.x = scene_backend.sceneID.getID();
 
         // Set prevCam for next iteration
         env_backend.prevCam = env.getCamera();
@@ -1039,8 +1041,6 @@ void VulkanBackend::render(RenderBatch &batch)
         uint32_t num_instances = env.getNumInstances();
         memcpy(&batch_state.transformPtr[inst_offset], env_transforms.data(),
                sizeof(InstanceTransform) * num_instances);
-
-        packed_env.data.x = inst_offset;
         inst_offset += num_instances;
 
         const auto &env_mats = env.getInstanceMaterials();

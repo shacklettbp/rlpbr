@@ -17,6 +17,8 @@
 #extension GL_KHR_shader_subgroup_ballot : require
 #extension GL_KHR_shader_subgroup_arithmetic : require
 #extension GL_KHR_shader_subgroup_shuffle : require
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_buffer_reference2 : require
 
 #ifdef VALIDATE 
 #extension GL_EXT_debug_printf : enable
@@ -29,10 +31,27 @@
 #include "rlpbr_core/device.h"
 #undef SHADER_CONST
 
+#include "inputs.glsl"
+
+layout (buffer_reference, scalar, buffer_reference_align = 16) buffer VertRef {
+    PackedVertex vert;
+};
+
+layout (buffer_reference, scalar, buffer_reference_align = 4) buffer IdxRef {
+    uint32_t idx;
+};
+
+layout (buffer_reference, scalar, buffer_reference_align = 16) buffer MatRef {
+    PackedMaterial matParam;
+};
+
+layout (buffer_reference, scalar, buffer_reference_align = 16) buffer MeshRef {
+    PackedMeshInfo meshInfo;
+};
+
 #include "shader_common.h"
 #include "sampler.glsl"
 #include "utils.glsl"
-#include "inputs.glsl"
 #include "math.glsl"
 
 layout (push_constant, scalar) uniform PushConstant {
@@ -64,16 +83,17 @@ layout (set = 0, binding = 8) uniform texture1D msGGXAverageTexture;
 layout (set = 0, binding = 9) uniform texture2D msGGXDirectionalTexture;
 layout (set = 0, binding = 10) uniform texture2D msGGXInverseTexture;
 
-layout (set = 0, binding = 11, scalar) writeonly buffer Out {
-    uint32_t outputBuffer[];
-};
-
-layout (set = 0, binding = 12, scalar) writeonly buffer CurReservoirs {
+layout (set = 0, binding = 11, scalar) writeonly buffer CurReservoirs {
     Reservoir currentReservoirs[];
 };
 
-layout (set = 0, binding = 13, scalar) writeonly buffer PrevReservoirs {
+layout (set = 0, binding = 12, scalar) writeonly buffer PrevReservoirs {
     Reservoir prevReservoirs[];
+};
+
+
+layout (set = 0, binding = 13, scalar) writeonly buffer Out {
+    uint32_t outputBuffer[];
 };
 
 #ifdef AUXILIARY_OUTPUTS
@@ -88,23 +108,12 @@ layout (set = 0, binding = 15, scalar) writeonly buffer Albedo {
 
 #endif
 
-layout (set = 1, binding = 0) readonly buffer Vertices {
-    PackedVertex vertices[];
+layout (set = 1, binding = 0) readonly uniform Addrs {
+    SceneAddresses sceneAddrs[MAX_SCENES];
 };
 
-layout (set = 1, binding = 1, scalar) readonly buffer Indices {
-    uint32_t indices[];
-};
+layout (set = 1, binding = 1) uniform texture2D textures[];
 
-layout (set = 1, binding = 2) uniform texture2D textures[];
-
-layout (set = 1, binding = 3) readonly buffer MatParams {
-    PackedMaterial matParams[];
-};
-
-layout (set = 1, binding = 4) readonly buffer MeshInfos {
-    PackedMeshInfo meshInfos[];
-};
 
 // This function needs to be defined before the include of 
 // materials.glsl
@@ -157,25 +166,30 @@ void unpackEnv(in uint32_t batch_idx,
     u32vec4 data = packed.data;
 
     // FIXME: data.x is currently instance offset, change to texture offset
-    env.baseTextureOffset = 0;
-
+    
+    env.sceneID = data.x;
     env.baseMaterialOffset = data.y;
     env.baseLightOffset = data.z;
     env.numLights = data.w;
     env.tlasAddr = packed.tlasAddr;
+
+    const uint32_t textures_per_scene = 1 + MAX_MATERIALS *
+        TextureConstantsTexturesPerMaterial;
+    env.baseTextureOffset = env.sceneID * textures_per_scene;
+
 }
 
-MeshInfo unpackMeshInfo(uint32_t mesh_idx)
+MeshInfo unpackMeshInfo(MeshRef mesh_ref, uint32_t mesh_idx)
 {
     MeshInfo mesh_info;
-    mesh_info.indexOffset = meshInfos[nonuniformEXT(mesh_idx)].data.x;
+    mesh_info.indexOffset = mesh_ref[nonuniformEXT(mesh_idx)].meshInfo.data.x;
 
     return mesh_info;
 }
 
-Vertex unpackVertex(uint32_t idx)
+Vertex unpackVertex(VertRef vert_ref, uint32_t idx)
 {
-    PackedVertex packed = vertices[nonuniformEXT(idx)];
+    PackedVertex packed = vert_ref[nonuniformEXT(idx)].vert;
 
     vec4 a = packed.data[0];
     vec4 b = packed.data[1];
@@ -196,18 +210,18 @@ Vertex unpackVertex(uint32_t idx)
     return vert;
 }
 
-Triangle fetchTriangle(uint32_t index_offset)
+Triangle fetchTriangle(VertRef vert_ref, IdxRef idx_ref, uint32_t index_offset)
 {
     // FIXME: maybe change all this to triangle offset
     u32vec3 indices = u32vec3(
-        indices[nonuniformEXT(index_offset)],
-        indices[nonuniformEXT(index_offset + 1)],
-        indices[nonuniformEXT(index_offset + 2)]);
+        idx_ref[nonuniformEXT(index_offset)].idx,
+        idx_ref[nonuniformEXT(index_offset + 1)].idx,
+        idx_ref[nonuniformEXT(index_offset + 2)].idx);
 
     return Triangle(
-        unpackVertex(indices.x),
-        unpackVertex(indices.y),
-        unpackVertex(indices.z));
+        unpackVertex(vert_ref, indices.x),
+        unpackVertex(vert_ref, indices.y),
+        unpackVertex(vert_ref, indices.z));
 }
 
 uint32_t getMaterialID(uint32_t inst_material_idx)
@@ -408,10 +422,14 @@ HitInfo processHit(in rayQueryEXT ray_query, in Environment env,
     getHitParams(ray_query, barys, tri_idx,
                  material_offset, geo_idx, mesh_offset, o2w, w2o);
 
-    MeshInfo mesh_info = unpackMeshInfo(mesh_offset + geo_idx);
+    SceneAddresses scene_addrs = sceneAddrs[env.sceneID];
+
+    MeshInfo mesh_info =
+        unpackMeshInfo(scene_addrs.meshAddr, mesh_offset + geo_idx);
 
     uint32_t index_offset = mesh_info.indexOffset + tri_idx * 3;
-    Triangle hit_tri = fetchTriangle(index_offset);
+    Triangle hit_tri =
+        fetchTriangle(scene_addrs.vertAddr, scene_addrs.idxAddr, index_offset);
     Vertex interpolated = interpolateTriangle(hit_tri, barys);
     vec3 obj_geo_normal = computeGeometricNormal(hit_tri);
 
@@ -425,20 +443,21 @@ HitInfo processHit(in rayQueryEXT ray_query, in Environment env,
     uint32_t material_id = getMaterialID(
         env.baseMaterialOffset + material_offset + geo_idx);
 
-    MaterialParams material_params = unpackMaterialParams(material_id);
+    MaterialParams material_params =
+        unpackMaterialParams(scene_addrs.matAddr, material_id);
 
-    uint32_t base_texture_idx =
-        1 + material_id * TextureConstantsTexturesPerMaterial;
+    uint32_t mat_texture_offset = env.baseTextureOffset + 1 +
+        material_id * TextureConstantsTexturesPerMaterial;
 
     TangentFrame obj_tangent_frame =
         computeTangentFrame(interpolated, material_params,
-                            base_texture_idx);
+                            mat_texture_offset);
 
     TangentFrame world_tangent_frame =
         tangentFrameToWorld(o2w, w2o, obj_tangent_frame, ray_dir);
 
     Material material = processMaterial(material_params,
-        base_texture_idx, interpolated.uv, 0);
+        mat_texture_offset, interpolated.uv, 0);
 
     return HitInfo(world_position, world_geo_normal,
                    world_tangent_frame, material);
