@@ -102,7 +102,7 @@ public:
     uint32_t addLight(const glm::vec3 &position, const glm::vec3 &color);
     void removeLight(uint32_t light_id);
 
-    inline const std::shared_ptr<Scene> getScene() const;
+    inline const std::shared_ptr<Scene> &getScene() const;
     inline const EnvironmentBackend *getBackend() const;
     inline EnvironmentBackend *getBackend();
     inline const Camera &getCamera() const;
