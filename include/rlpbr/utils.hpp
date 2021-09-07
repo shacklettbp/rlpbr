@@ -16,7 +16,10 @@ using Handle = std::unique_ptr<T, HandleDeleter<T>>;
 template <typename T>
 class DynArray {
 public:
-    explicit DynArray(size_t n) : ptr_(std::allocator<T>().allocate(n)), n_(n) {} DynArray(const DynArray &) = delete;
+    explicit DynArray(size_t n) : ptr_(std::allocator<T>().allocate(n)), n_(n) {}
+
+    DynArray(const DynArray &) = delete;
+
     DynArray(DynArray &&o)
         : ptr_(o.ptr_),
           n_(o.n_)

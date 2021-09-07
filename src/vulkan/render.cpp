@@ -829,7 +829,7 @@ static DeviceState makeDevice(const InstanceState &inst,
         PresentationState::deviceSupportCallback :
         nullptr;
 
-    return inst.makeDevice(getUUIDFromCudaID(cfg.gpuID), 1, 2, cfg.numLoaders,
+    return inst.makeDevice(getUUIDFromCudaID(cfg.gpuID), 1, 3, cfg.numLoaders,
                            present_callback);
 }
 
@@ -982,10 +982,6 @@ void VulkanBackend::render(RenderBatch &batch)
                                  &batch_state.rtSets[batch_backend.curBuffer],
                                  0, nullptr);
 
-    dev.dt.cmdBindDescriptorSets(render_cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
-                                 pipeline_.rtState.layout, 1, 1,
-                                 &shared_scene_state_.descSet, 0, nullptr);
-
     // TLAS build
     for (int batch_idx = 0; batch_idx < (int)cfg_.batchSize; batch_idx++) {
         const Environment &env = envs[batch_idx];
@@ -1061,6 +1057,12 @@ void VulkanBackend::render(RenderBatch &batch)
         packed_env.tlasAddr = env_backend.tlas.tlasStorageDevAddr;
         packed_env.reservoirGridAddr = env_backend.reservoirGrid.devAddr;
     }
+
+    shared_scene_state_.lock.lock();
+    dev.dt.cmdBindDescriptorSets(render_cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
+                                 pipeline_.rtState.layout, 1, 1,
+                                 &shared_scene_state_.descSet, 0, nullptr);
+    shared_scene_state_.lock.unlock();
 
     dev.dt.cmdDispatch(
         render_cmd,

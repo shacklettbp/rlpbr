@@ -119,11 +119,13 @@ struct SharedSceneState {
 class SceneID {
 public:
     SceneID(SharedSceneState &shared);
+    SceneID(const SceneID &) = delete;
+    SceneID(SceneID &&o);
     ~SceneID();
 
     uint32_t getID() const { return id_; }
 private:
-    SharedSceneState &shared_;
+    SharedSceneState *shared_;
     uint32_t id_;
 };
 

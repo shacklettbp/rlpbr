@@ -47,9 +47,9 @@ struct ReGIRCell {
     Reservoir reservoirs[64];
 };
 
-#define MAX_MATERIALS (1000)
+#define MAX_MATERIALS (2048)
 #define MAX_LIGHTS (1000000)
-#define MAX_SCENES (64)
+#define MAX_SCENES (16)
 #define WORKGROUP_SIZE (32)
 #define LOCAL_WORKGROUP_X (8)
 #define LOCAL_WORKGROUP_Y (4)

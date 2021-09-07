@@ -874,24 +874,33 @@ SharedSceneState::SharedSceneState(const DeviceState &dev,
 {}
 
 SceneID::SceneID(SharedSceneState &shared)
-    : shared_(shared),
+    : shared_(&shared),
       id_([&]() {
-          if (shared_.freeSceneIDs.size() > 0) {
-              uint32_t id = shared_.freeSceneIDs.back();
-              shared_.freeSceneIDs.pop_back();
+          if (shared_->freeSceneIDs.size() > 0) {
+              uint32_t id = shared_->freeSceneIDs.back();
+              shared_->freeSceneIDs.pop_back();
 
               return id;
           } else {
-              return shared_.numSceneIDs++;
+              return shared_->numSceneIDs++;
           }
       }())
 {}
 
+SceneID::SceneID(SceneID &&o)
+    : shared_(o.shared_),
+      id_(o.id_)
+{
+    o.shared_ = nullptr;
+}
+
 SceneID::~SceneID()
 {
-    lock_guard<mutex> lock(shared_.lock);
+    if (shared_ == nullptr) return;
 
-    shared_.freeSceneIDs.push_back(id_);
+    lock_guard<mutex> lock(shared_->lock);
+
+    shared_->freeSceneIDs.push_back(id_);
 }
 
 shared_ptr<Scene> VulkanLoader::loadScene(SceneLoadData &&load_info)
@@ -1230,9 +1239,6 @@ shared_ptr<Scene> VulkanLoader::loadScene(SceneLoadData &&load_info)
     }
 
     desc_updates.update(dev);
-    shared_scene_state_.lock.unlock();
-
-    uint32_t num_meshes = load_info.meshInfo.size();
 
     SceneAddresses &scene_dev_addrs = 
         ((SceneAddresses *)shared_scene_state_.addrData.ptr)[scene_id.getID()];
@@ -1240,6 +1246,12 @@ shared_ptr<Scene> VulkanLoader::loadScene(SceneLoadData &&load_info)
     scene_dev_addrs.idxAddr = geometry_addr + load_info.hdr.indexOffset;
     scene_dev_addrs.matAddr = geometry_addr + load_info.hdr.materialOffset;
     scene_dev_addrs.meshAddr = geometry_addr + load_info.hdr.meshOffset;
+
+    shared_scene_state_.addrData.flush(dev);
+
+    shared_scene_state_.lock.unlock();
+
+    uint32_t num_meshes = load_info.meshInfo.size();
 
     return make_shared<VulkanScene>(VulkanScene {
         {
@@ -1251,7 +1263,7 @@ shared_ptr<Scene> VulkanLoader::loadScene(SceneLoadData &&load_info)
         move(data),
         load_info.hdr.indexOffset,
         num_meshes,
-        scene_id,
+        move(scene_id),
         move(blases),
     });
 }

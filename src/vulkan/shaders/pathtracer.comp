@@ -351,6 +351,8 @@ bool traceShadowRay(in uint64_t tlas_addr, in vec3 ray_origin,
 
 void setOutput(uint32_t base_offset, vec3 rgb, uint32_t instance_id)
 {
+    rgb = min(rgb, vec3(65504.f));
+
     uint32_t ab = packHalf2x16(rgb.xy);
     uint32_t cd = packHalf2x16(vec2(rgb.z, 0));
     cd |= (instance_id << 16);
