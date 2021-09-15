@@ -123,6 +123,11 @@ vec4 fetchSceneTexture(uint32_t idx, vec2 uv, float mip_level)
         repeatSampler), uv, mip_level);
 }
 
+u32vec4 fetchSceneMaterialParams(MatRef ref, uint32_t idx, uint32_t sub_idx)
+{
+    return ref[idx].matParam.data[sub_idx];
+}
+
 #include "materials.glsl"
 #include "bsdf.glsl"
 #include "lighting.glsl"
@@ -744,7 +749,6 @@ vec3 indirectLighting(in Environment env, in vec3 ray_origin, in vec3 ray_dir,
         PathVertexState bounce_state =
             processPathVertex(rng, env, hit, ray_dir);
         vec3 vert_contrib = path_prob * bounce_state.radiance;
-        vert_contrib = min(vert_contrib, vec3(10.f));
 #ifdef INDIRECT_CLAMP
         vert_contrib = min(vert_contrib, vec3(INDIRECT_CLAMP));
 #endif

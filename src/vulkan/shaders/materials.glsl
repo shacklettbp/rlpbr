@@ -47,7 +47,7 @@ struct Material {
 
 MaterialParams unpackMaterialParams(MatRef mat_ref, uint32_t material_id)
 {
-    u32vec4 data0 = mat_ref[nonuniformEXT(material_id)].matParam.data[0];
+    u32vec4 data0 = fetchSceneMaterialParams(mat_ref, material_id, 0);
 
     MaterialParams params;
     {
@@ -75,7 +75,7 @@ MaterialParams unpackMaterialParams(MatRef mat_ref, uint32_t material_id)
 
 #ifdef ADVANCED_MATERIAL
     if (bool(params.flags & MaterialFlags::Complex)) {
-        u32vec4 data1 = mat_ref[nonuniformEXT(material_idx)].matParam.data[1];
+        u32vec4 data1 = fetchSceneMaterialParams(mat_ref, material_id, 1);
 
         {
             vec4 unpack = unpackUnorm4x8(data1.x);

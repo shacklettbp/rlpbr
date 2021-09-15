@@ -76,12 +76,7 @@ uint32_t unpackLight(in Environment env,
 
 vec3 evalEnvMap(uint32_t map_idx, vec3 dir)
 {
-    vec2 uv = dirToLatLong(dir);
-
-    vec3 v =
-        textureLod(sampler2D(textures[map_idx], repeatSampler), uv, 0.0).xyz;
-
-    return v;
+    return vec3(10.f);
 }
 
 LightSample sampleEnvMap(uint32_t map_idx,
@@ -157,8 +152,10 @@ LightInfo sampleLights(inout Sampler rng, in Environment env,
 {
     //uint32_t total_lights = env.numLights + 1;
     uint32_t total_lights = env.numLights;// + 1;
+    total_lights = 1;
 
     uint32_t light_idx = uint32_t(samplerGet1D(rng) * total_lights);
+    light_idx = env.numLights;
 
     vec2 light_sample_uv = samplerGet2D(rng);
 

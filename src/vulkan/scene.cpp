@@ -52,6 +52,7 @@ static ReservoirGrid makeReservoirGrid(
 
     uint32_t total_cells = num_cells.x * num_cells.y * num_cells.z;
 
+    total_cells = 1; // FIXME
     auto [grid_buffer, grid_memory] =
         alloc.makeDedicatedBuffer(total_cells * sizeof(Reservoir), true);
 

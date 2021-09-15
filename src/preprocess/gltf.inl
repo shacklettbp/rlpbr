@@ -838,7 +838,7 @@ static vector<Mesh<VertexType>> gltfParseMesh(
             abort();
         }
 
-        assert(max_idx < position_accessor->size());
+        max_idx = min(uint32_t(position_accessor->size()), max_idx);
 
         vertices.reserve(max_idx + 1);
         for (uint32_t vert_idx = 0; vert_idx <= max_idx; vert_idx++) {
@@ -846,17 +846,48 @@ static vector<Mesh<VertexType>> gltfParseMesh(
 
             if constexpr (has_position) {
                 vert.position = (*position_accessor)[vert_idx];
+                if (isnan(vert.position.x) || isinf(vert.position.x)) {
+                    vert.position.x = 0;
+                }
+
+                if (isnan(vert.position.y) || isinf(vert.position.y)) {
+                    vert.position.y = 0;
+                }
+
+                if (isnan(vert.position.z) || isinf(vert.position.z)) {
+                    vert.position.z = 0;
+                }
             }
 
             if constexpr (has_normal) {
                 if (normal_accessor.has_value()) {
                     vert.normal = (*normal_accessor)[vert_idx];
                 }
+
+                if (isnan(vert.normal.x) || isinf(vert.normal.x)) {
+                    vert.normal.x = 0;
+                }
+
+                if (isnan(vert.normal.y) || isinf(vert.normal.y)) {
+                    vert.normal.y = 0;
+                }
+
+                if (isnan(vert.normal.z) || isinf(vert.normal.z)) {
+                    vert.normal.z = 0;
+                }
             }
 
             if constexpr (has_uv) {
                 if (uv_accessor.has_value()) {
                     vert.uv = (*uv_accessor)[vert_idx];
+                }
+
+                if (isnan(vert.uv.x) || isinf(vert.uv.x)) {
+                    vert.uv.x = 0;
+                }
+
+                if (isnan(vert.uv.y) || isinf(vert.uv.y)) {
+                    vert.uv.y = 0;
                 }
             }
 

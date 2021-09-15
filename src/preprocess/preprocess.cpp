@@ -77,12 +77,17 @@ static vector<uint32_t> filterDegenerateTriangles(
         cerr << "Warning: non multiple of 3 indices in mesh" << endl;
         num_indices -= tri_align;
     }
-    assert(orig_indices.size() % 3 == 0);
+    assert(num_indices % 3 == 0);
 
     for (uint32_t i = 0; i < num_indices;) {
         uint32_t a_idx = orig_indices[i++];
         uint32_t b_idx = orig_indices[i++];
         uint32_t c_idx = orig_indices[i++];
+
+        if (a_idx >= vertices.size() || b_idx >= vertices.size() ||
+            c_idx >= vertices.size()) {
+            continue;
+        }
 
         glm::vec3 a = vertices[a_idx].position;
         glm::vec3 b = vertices[b_idx].position;
@@ -862,6 +867,7 @@ static vector<LightProperties> processLights(
 {
     vector<LightProperties> lights = initial_lights;
 
+#if 0
     {
         const int num_init_lights = 10;
         float bbox_width = scene_bbox.pMax.x - scene_bbox.pMin.x;
@@ -893,8 +899,8 @@ static vector<LightProperties> processLights(
             }
         }
     }
+#endif
 
-#if 0
     for (const auto &inst : instances) {
         if (inst.transparent) {
             const auto &object_info = geo.objectInfos[inst.objectIndex];
@@ -987,7 +993,6 @@ static vector<LightProperties> processLights(
             }
         }
     }
-#endif
 
     return lights;
 }

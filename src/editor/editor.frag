@@ -66,11 +66,18 @@ vec4 fetchSceneTexture(uint32_t idx, vec2 uv, float)
     return texture(sampler2D(textures[idx], repeatSampler), uv);
 }
 
+#define MatRef uint32_t
+
+u32vec4 fetchSceneMaterialParams(MatRef ref, uint32_t idx, uint32_t sub_idx)
+{
+    return matParams[idx].data[sub_idx];
+}
+
 #include "vulkan/shaders/materials.glsl"
 
 void main()
 {
-    MaterialParams mat_params = unpackMaterialParams(iface.materialIndex);
+    MaterialParams mat_params = unpackMaterialParams(0, iface.materialIndex);
     uint32_t base_texture_idx = 
         1 + iface.materialIndex * TextureConstantsTexturesPerMaterial;
     Material mat = processMaterial(mat_params, base_texture_idx,
