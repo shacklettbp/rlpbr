@@ -546,10 +546,10 @@ struct PathVertexState {
 };
 
 PathVertexState processPathVertex(inout Sampler rng, in Environment env,
-                                  in HitInfo hit, in vec3 ray_dir)
+                                  in HitInfo hit, in vec3 ray_dir, in Camera cam)
 {
     LightInfo light_info = sampleLights(rng, env,
-        hit.position, hit.geoNormal);
+        hit.position, hit.geoNormal, cam.origin);
     
     ShadeResult shade_result = shade(rng, hit.material,
         light_info.lightSample, -ray_dir, hit.tangentFrame);
@@ -679,7 +679,7 @@ PrimaryResult directLighting(in u32vec3 idx, in uint32_t linear_idx,
     i32vec2 prev_pixel_coords = getPixelCoords(prev_screen_pos);
 
     LightInfo light_info = sampleLights(rng, env,
-        hit.position, hit.geoNormal);
+        hit.position, hit.geoNormal, cam.origin);
     
     vec3 wi = normalize(worldToLocal(light_info.lightSample.toLight,
                                      hit.tangentFrame));
@@ -719,7 +719,7 @@ PrimaryResult directLighting(in u32vec3 idx, in uint32_t linear_idx,
 
 vec3 indirectLighting(in Environment env, in vec3 ray_origin, in vec3 ray_dir,
                       in vec3 path_prob, in uint32_t bounce_flags,
-                      inout Sampler rng)
+                      inout Sampler rng, in Camera cam)
 {
     vec3 indirect_contrib = vec3(0.f);
 
@@ -747,7 +747,7 @@ vec3 indirectLighting(in Environment env, in vec3 ray_origin, in vec3 ray_dir,
         HitInfo hit = processHit(bounce_query, env, ray_dir);
 
         PathVertexState bounce_state =
-            processPathVertex(rng, env, hit, ray_dir);
+            processPathVertex(rng, env, hit, ray_dir, cam);
         vec3 vert_contrib = path_prob * bounce_state.radiance;
 #ifdef INDIRECT_CLAMP
         vert_contrib = min(vert_contrib, vec3(INDIRECT_CLAMP));
@@ -829,7 +829,7 @@ void main()
         }
 
         sample_radiance += indirectLighting(env, ray_origin, ray_dir,
-                                            path_prob, bounce_flags, rng);
+                                            path_prob, bounce_flags, rng, cam);
 
         pixel_radiance += sample_radiance / SPP;
     }

@@ -146,69 +146,61 @@ void samplePointLight(
 }
 
 // Output functions
+//
+vec3 sampleSphereUniform(vec2 uv)
+{
+    float z = 1.f - 2.f * uv.x;
+    float r = sqrt(max(0.f, 1.f - z * z));
+    float phi = 2.f * M_PI * uv.y;
+    return vec3(r * cos(phi), r * sin(phi), z);
+}
+
+vec3 sampleSphereLight(in float radius, in vec3 center_pos, in vec3 ref_pos,
+                       in vec2 uv, out float pdf)
+{
+    pdf = 1.f / (4.f * M_PI * radius * radius);
+
+    return center_pos + radius * sampleSphereUniform(uv);
+}
 
 LightInfo sampleLights(inout Sampler rng, in Environment env, 
-    in vec3 origin, in vec3 base_normal)
+    in vec3 origin, in vec3 base_normal, in vec3 cam_pos)
 {
-    //uint32_t total_lights = env.numLights + 1;
-    uint32_t total_lights = env.numLights;// + 1;
-    total_lights = 1;
+    uint32_t num_point_lights = 1;
+    uint32_t total_lights = num_point_lights;
 
     uint32_t light_idx = uint32_t(samplerGet1D(rng) * total_lights);
-    light_idx = env.numLights;
 
     vec2 light_sample_uv = samplerGet2D(rng);
 
     float inv_selection_pdf = float(total_lights);
 
-    PointLight point_light = { vec3(0), vec3(0) };
-    PortalLight portal_light = {{ vec3(0), vec3(0), vec3(0), vec3(0) }};
-    uint32_t light_type = 0;
-
-    if (light_idx < env.numLights) {
-        light_type = unpackLight(env, light_idx, point_light, portal_light);
-    } else {
-        light_type = LightTypeEnvironment;
-    }
-
     vec3 light_position = vec3(0); 
     vec3 dir_check = vec3(0);
-    LightSample light_sample = LightSample(vec3(0), vec3(0));
 
-    if (light_type == LightTypePoint) {
-        light_position = point_light.position;
-        dir_check = light_position - origin;
-    } else if (light_type == LightTypePortal) {
-        light_position = getPortalLightPoint(portal_light, light_sample_uv);
-        dir_check = light_position - origin;
-    } else {
-        light_sample = sampleEnvMap(env.baseTextureOffset, light_sample_uv,
-                                    inv_selection_pdf);
-        dir_check = light_sample.toLight;
-    }
+    light_position = cam_pos + vec3(0.1f, 0.7f, 0.f);
 
+    dir_check = light_position - origin;
     vec3 shadow_offset_normal =
         dot(dir_check, base_normal) > 0 ? base_normal : -base_normal;
 
     vec3 shadow_origin =
         offsetRayOrigin(origin, shadow_offset_normal);
 
-    float shadow_len = 0;
-    if (light_type == LightTypePoint) {
-        float shadow_len2;
-        samplePointLight(point_light, shadow_origin, inv_selection_pdf,
-                         light_sample, shadow_len2);
+    float point_light_radius = 0.1f;
+    float light_pdf;
+    light_position = sampleSphereLight(point_light_radius, light_position,
+                                       shadow_origin, light_sample_uv, light_pdf);
 
-        shadow_len = sqrt(shadow_len2);
-    } else if (light_type == LightTypePortal) {
-        vec3 to_light = light_position - shadow_origin;
-        light_sample = samplePortal(portal_light, env.baseTextureOffset,
-                                    to_light, inv_selection_pdf);
+    float shadow_len = length(light_position - shadow_origin);
 
-        shadow_len = LARGE_DISTANCE;
-    } else {
-        shadow_len = LARGE_DISTANCE;
-    }
+    LightSample light_sample;
+    light_sample.toLight = normalize(light_position - shadow_origin);
+    light_sample.weight = (vec3(5.2f)) / (shadow_len * shadow_len) * inv_selection_pdf;
+
+    // Ultra simple:
+    //light_sample.weight = vec3(2.5f);
+    //shadow_len = 0;
 
     LightInfo info = {
         light_sample,
