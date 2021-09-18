@@ -19,49 +19,24 @@ void PresentationState::init()
 
 vector<const char *> PresentationState::getInstanceExtensions()
 {
-    uint32_t count;
-    const char **names = glfwGetRequiredInstanceExtensions(&count);
-
-    vector<const char *> exts(count);
-    memcpy(exts.data(), names, count * sizeof(const char *));
-
-    return exts;
+    return {};
 }
 
 VkBool32 PresentationState::deviceSupportCallback(VkInstance inst,
                                                   VkPhysicalDevice phy,
                                                   uint32_t idx)
 {
-    auto glfw_ret = glfwGetPhysicalDevicePresentationSupport(inst, phy, idx);
-    return glfw_ret == GLFW_TRUE ? VK_TRUE : VK_FALSE;
+    return true;
 }
 
 static GLFWwindow *makeWindow(glm::u32vec2 dims)
 {
-    glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
-    glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-    glfwWindowHint(GLFW_DECORATED, GLFW_FALSE);
-
-#if 0
-    auto monitor = glfwGetPrimaryMonitor();
-    auto mode = glfwGetVideoMode(monitor);
-
-    glfwWindowHint(GLFW_RED_BITS, mode->redBits);
-    glfwWindowHint(GLFW_GREEN_BITS, mode->greenBits);
-    glfwWindowHint(GLFW_BLUE_BITS, mode->blueBits);
-    glfwWindowHint(GLFW_REFRESH_RATE, mode->refreshRate);
-    return glfwCreateWindow(mode->width, mode->height, "RLPBR", monitor, nullptr);
-#endif
-
-    return glfwCreateWindow(dims.x, dims.y, "RLPBR", nullptr, nullptr);
+    return nullptr;
 }
 
 VkSurfaceKHR getWindowSurface(const InstanceState &inst, GLFWwindow *window)
 {
-    VkSurfaceKHR surface;
-    REQ_VK(glfwCreateWindowSurface(inst.hdl, window, nullptr, &surface));
-
-    return surface;
+    return VK_NULL_HANDLE;
 }
 
 static VkSurfaceFormatKHR selectSwapchainFormat(const InstanceState &inst,

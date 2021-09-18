@@ -28,6 +28,3 @@ target_include_directories(rlpbr
     INTERFACE
         ${MAIN_INCLUDE_DIR}
 )
-
-add_subdirectory(editor)
-

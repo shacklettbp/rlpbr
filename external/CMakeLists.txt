@@ -48,7 +48,6 @@ target_include_directories(glslang SYSTEM
 set(OpenGL_GL_PREFERENCE "GLVND" CACHE INTERNAL "")
 
 set(BUILD_SHARED_LIBS ON)
-add_subdirectory(recastnavigation EXCLUDE_FROM_ALL)
 
 add_library(imgui INTERFACE)
 target_include_directories(imgui INTERFACE
