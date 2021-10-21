@@ -24,6 +24,8 @@
 #extension GL_EXT_debug_printf : enable
 #endif
 
+#define USE_MIS 1
+
 // GLSL wants this for uint64_t -> accel struct conversion
 #extension GL_EXT_ray_tracing : require
 
@@ -117,10 +119,10 @@ layout (set = 1, binding = 1) uniform texture2D textures[];
 
 // This function needs to be defined before the include of 
 // materials.glsl
-vec4 fetchSceneTexture(uint32_t idx, vec2 uv, float mip_level)
+vec4 fetchSceneTexture(uint32_t idx, vec2 uv, vec4 uv_derivs)
 {
-    return textureLod(sampler2D(textures[nonuniformEXT(idx)],
-        repeatSampler), uv, mip_level);
+    return textureGrad(sampler2D(textures[nonuniformEXT(idx)],
+        repeatSampler), uv, uv_derivs.xy, uv_derivs.zw);
 }
 
 u32vec4 fetchSceneMaterialParams(MatRef ref, uint32_t idx, uint32_t sub_idx)
@@ -128,186 +130,19 @@ u32vec4 fetchSceneMaterialParams(MatRef ref, uint32_t idx, uint32_t sub_idx)
     return ref[idx].matParam.data[sub_idx];
 }
 
-#include "materials.glsl"
-#include "bsdf.glsl"
-#include "lighting.glsl"
-#include "restir.glsl"
-
-// Debug functions
-
 #define ISTHREAD0 (gl_GlobalInvocationID.x == 0 && \
                    gl_GlobalInvocationID.y == 0 && \
                    gl_GlobalInvocationID.z == 0)
 
-// Unpack functions
-Camera unpackCamera(PackedCamera packed)
-{
-    float aspect = float(RES_X) / float(RES_Y);
-
-    vec4 rot = packed.rotation;
-    vec3 view = quatRotate(rot, vec3(0.f, 0.f, 1.f));
-    vec3 up = quatRotate(rot, vec3(0.f, 1.f, 0.f));
-    vec3 right = quatRotate(rot, vec3(1.f, 0.f, 0.f));
-
-    vec4 pos_fov = packed.posAndTanFOV;
-
-    vec3 origin = pos_fov.xyz;
-
-    float right_scale = aspect * pos_fov.w;
-    float up_scale = pos_fov.w;
-
-    return Camera(origin, view, up, right, right_scale, up_scale);
-}
-
-void unpackEnv(in uint32_t batch_idx,
-               out Camera cam,
-               out Camera prev_cam,
-               out Environment env)
-{
-    PackedEnv packed = envs[nonuniformEXT(batch_idx)];
-    cam = unpackCamera(packed.cam);
-    prev_cam = unpackCamera(packed.prevCam);
-
-    u32vec4 data = packed.data;
-
-    // FIXME: data.x is currently instance offset, change to texture offset
-    
-    env.sceneID = data.x;
-    env.baseMaterialOffset = data.y;
-    env.baseLightOffset = data.z;
-    env.numLights = data.w;
-    env.tlasAddr = packed.tlasAddr;
-
-    const uint32_t textures_per_scene = 1 + MAX_MATERIALS *
-        TextureConstantsTexturesPerMaterial;
-    env.baseTextureOffset = env.sceneID * textures_per_scene;
-
-}
-
-MeshInfo unpackMeshInfo(MeshRef mesh_ref, uint32_t mesh_idx)
-{
-    MeshInfo mesh_info;
-    mesh_info.indexOffset = mesh_ref[nonuniformEXT(mesh_idx)].meshInfo.data.x;
-
-    return mesh_info;
-}
-
-Vertex unpackVertex(VertRef vert_ref, uint32_t idx)
-{
-    PackedVertex packed = vert_ref[nonuniformEXT(idx)].vert;
-
-    vec4 a = packed.data[0];
-    vec4 b = packed.data[1];
-
-    u32vec3 packed_normal_tangent = u32vec3(
-        floatBitsToUint(a.w), floatBitsToUint(b.x), floatBitsToUint(b.y));
-
-    vec3 normal;
-    vec4 tangent_and_sign;
-    decodeNormalTangent(packed_normal_tangent, normal, tangent_and_sign);
-
-    Vertex vert;
-    vert.position = vec3(a.x, a.y, a.z);
-    vert.normal = normal;
-    vert.tangentAndSign = tangent_and_sign;
-    vert.uv = vec2(b.z, b.w);
-
-    return vert;
-}
-
-Triangle fetchTriangle(VertRef vert_ref, IdxRef idx_ref, uint32_t index_offset)
-{
-    // FIXME: maybe change all this to triangle offset
-    u32vec3 indices = u32vec3(
-        idx_ref[nonuniformEXT(index_offset)].idx,
-        idx_ref[nonuniformEXT(index_offset + 1)].idx,
-        idx_ref[nonuniformEXT(index_offset + 2)].idx);
-
-    return Triangle(
-        unpackVertex(vert_ref, indices.x),
-        unpackVertex(vert_ref, indices.y),
-        unpackVertex(vert_ref, indices.z));
-}
-
-uint32_t getMaterialID(uint32_t inst_material_idx)
-{
-    return instanceMaterials[nonuniformEXT(inst_material_idx)];
-}
+#include "materials.glsl"
+#include "bsdf.glsl"
+#include "restir.glsl"
+#include "unpack.glsl"
+#include "geometry.glsl"
+#include "lighting.glsl"
+#include "camera.glsl"
 
 // Support functions
-
-Vertex interpolateTriangle(Triangle tri, vec2 barys)
-{
-#define INTERPOLATE_ATTR(tri, attr, barys) \
-    (tri.a.attr + barys.x * (tri.b.attr - tri.a.attr) + \
-     barys.y * (tri.c.attr - tri.a.attr))
-
-    Vertex interp;
-
-    interp.position = INTERPOLATE_ATTR(tri, position, barys);
-
-    interp.normal = INTERPOLATE_ATTR(tri, normal, barys);
-
-    interp.tangentAndSign = INTERPOLATE_ATTR(tri, tangentAndSign, barys);
-
-    interp.uv = INTERPOLATE_ATTR(tri, uv, barys);
-
-    return interp;
-
-#undef INTERPOLATE_ATTR
-}
-
-
-// Returns *unnormalized vector*
-vec3 computeGeometricNormal(Triangle tri)
-{
-    vec3 v1 = tri.b.position - tri.a.position;
-    vec3 v2 = tri.c.position - tri.a.position;
-
-    return cross(v1, v2);
-}
-
-TangentFrame computeTangentFrame(Vertex v,
-                                 MaterialParams mat_params,
-                                 uint32_t base_tex_idx)
-{
-    vec3 n = v.normal;
-    vec3 t = v.tangentAndSign.xyz;
-
-    float bitangent_sign = v.tangentAndSign.w;
-    vec3 b = cross(n, t) * bitangent_sign;
-
-    vec3 perturb = vec3(0, 0, 1);
-    if (bool(mat_params.flags & MaterialFlagsHasNormalMap)) {
-        vec2 xy = textureLod(sampler2D(
-            textures[base_tex_idx + TextureConstantsNormalOffset],
-            repeatSampler), v.uv, 0.0).xy;
-
-        vec2 centered = xy * 2.0 - 1.0;
-        float length2 = clamp(dot(centered, centered), 0.0, 1.0);
-
-        perturb = vec3(centered.x, centered.y, sqrt(1.0 - length2));
-    } 
-
-    // Perturb normal
-    n = normalize(t * perturb.x + b * perturb.y + n * perturb.z);
-    // Ensure perpendicular (if new normal is parallel to old tangent... boom)
-    t = normalize(t - n * dot(n, t));
-    b = cross(n, t) * bitangent_sign;
-
-    return TangentFrame(t, b, n);
-}
-
-TangentFrame tangentFrameToWorld(mat4x3 o2w, mat4x3 w2o, TangentFrame frame,
-                                 vec3 ray_dir)
-{
-    frame.tangent = normalize(transformVector(o2w, frame.tangent));
-    frame.bitangent = normalize(transformVector(o2w, frame.bitangent));
-    frame.normal = normalize(transformNormal(w2o, frame.normal));
-    frame.normal = faceforward(frame.normal, ray_dir, frame.normal);
-                                                               
-    return frame;                                              
-}
 
 bool traceShadeRay(rayQueryEXT ray_query, in uint64_t tlas_addr,
                    in vec3 ray_origin, in vec3 ray_dir,
@@ -384,92 +219,6 @@ void setAuxiliaries(uint32_t base_offset, vec3 albedo, vec3 normal)
 }
 #endif
 
-void getHitParams(in rayQueryEXT ray_query, out vec2 barys,
-                  out uint32_t tri_idx, out uint32_t material_offset,
-                  out uint32_t geo_idx, out uint32_t mesh_offset,
-                  out mat4x3 o2w, out mat4x3 w2o)
-{
-    barys = rayQueryGetIntersectionBarycentricsEXT(ray_query, true);
-
-    tri_idx =
-        uint32_t(rayQueryGetIntersectionPrimitiveIndexEXT(ray_query, true));
-
-    material_offset = uint32_t(
-        rayQueryGetIntersectionInstanceCustomIndexEXT(ray_query, true));
-
-    geo_idx = 
-        uint32_t(rayQueryGetIntersectionGeometryIndexEXT(ray_query, true));
-
-    mesh_offset = uint32_t(
-        rayQueryGetIntersectionInstanceShaderBindingTableRecordOffsetEXT(
-            ray_query, true));
-
-    o2w = rayQueryGetIntersectionObjectToWorldEXT(ray_query, true);
-    w2o = rayQueryGetIntersectionWorldToObjectEXT(ray_query, true);
-}
-
-uint32_t getHitInstance(in rayQueryEXT ray_query)
-{
-    return uint32_t(rayQueryGetIntersectionInstanceIdEXT(ray_query, true));
-}
-
-struct HitInfo {
-    vec3 position;
-    vec3 geoNormal;
-    TangentFrame tangentFrame;
-    Material material;
-};
-
-HitInfo processHit(in rayQueryEXT ray_query, in Environment env,
-                   in vec3 ray_dir)
-{
-    vec2 barys;
-    uint32_t tri_idx, material_offset, geo_idx, mesh_offset;
-    mat4x3 o2w, w2o;
-    getHitParams(ray_query, barys, tri_idx,
-                 material_offset, geo_idx, mesh_offset, o2w, w2o);
-
-    SceneAddresses scene_addrs = sceneAddrs[env.sceneID];
-
-    MeshInfo mesh_info =
-        unpackMeshInfo(scene_addrs.meshAddr, mesh_offset + geo_idx);
-
-    uint32_t index_offset = mesh_info.indexOffset + tri_idx * 3;
-    Triangle hit_tri =
-        fetchTriangle(scene_addrs.vertAddr, scene_addrs.idxAddr, index_offset);
-    Vertex interpolated = interpolateTriangle(hit_tri, barys);
-    vec3 obj_geo_normal = computeGeometricNormal(hit_tri);
-
-    vec3 world_position =
-        transformPosition(o2w, interpolated.position);
-    vec3 world_geo_normal =
-        transformNormal(w2o, obj_geo_normal);
-    world_geo_normal = normalize(world_geo_normal);
-
-    // Unpack materials
-    uint32_t material_id = getMaterialID(
-        env.baseMaterialOffset + material_offset + geo_idx);
-
-    MaterialParams material_params =
-        unpackMaterialParams(scene_addrs.matAddr, material_id);
-
-    uint32_t mat_texture_offset = env.baseTextureOffset + 1 +
-        material_id * TextureConstantsTexturesPerMaterial;
-
-    TangentFrame obj_tangent_frame =
-        computeTangentFrame(interpolated, material_params,
-                            mat_texture_offset);
-
-    TangentFrame world_tangent_frame =
-        tangentFrameToWorld(o2w, w2o, obj_tangent_frame, ray_dir);
-
-    Material material = processMaterial(material_params,
-        mat_texture_offset, interpolated.uv, 0);
-
-    return HitInfo(world_position, world_geo_normal,
-                   world_tangent_frame, material);
-}
-
 bool handleBounce(inout Sampler rng, in HitInfo hit,
                   in vec3 incoming_dir, in vec3 bounce_dir,
                   out vec3 result_origin, out vec3 result_dir)
@@ -487,22 +236,19 @@ bool handleBounce(inout Sampler rng, in HitInfo hit,
     return pass_through;
 }
 
-vec3 worldToLocal(vec3 v, TangentFrame frame) 
+float misPowerHeuristic(int n_a, float pdf_a, int n_b, float pdf_b)
 {
-    return vec3(dot(v, frame.tangent), dot(v, frame.bitangent),
-        dot(v, frame.normal));
-}
+    float a = pdf_a * n_a;
+    float b = pdf_b * n_b;
 
-vec3 localToWorld(vec3 v, TangentFrame frame)
-{
-    return v.x * frame.tangent + v.y * frame.bitangent +
-        v.z * frame.normal;
+    return (a * a) / (a * a + b * b);
 }
 
 struct ShadeResult {
     vec3 color;
     vec3 bounceDir;
-    vec3 bounceProb;
+    vec3 bounceWeight;
+    float bouncePDF;
     uint32_t flags;
 };
 
@@ -513,17 +259,27 @@ ShadeResult shade(inout Sampler rng, in Material material,
 {
     // These normalizations shouldn't be necessary, but z component
     // needs to be accurate for cos angle
-    vec3 wo = normalize(worldToLocal(outgoing, frame));
-    vec3 wi = normalize(worldToLocal(light_sample.toLight, frame));
+    vec3 wo = normalize(worldToLocalOutgoing(outgoing, frame));
+    vec3 wi = normalize(worldToLocalIncoming(light_sample.toLight, frame));
 
     BSDFParams bsdf = buildBSDF(material, wo);
 
-    vec3 bsdf_response = evalBSDF(bsdf, wo, wi);
+    float bsdf_pdf;
+    vec3 bsdf_response = evalBSDF(bsdf, wo, wi, bsdf_pdf);
 
-    vec3 nee = bsdf_response * light_sample.weight;
+#ifdef USE_MIS
+    float mis_weight = misPowerHeuristic(1, light_sample.pdf, 1,
+                                         bsdf_pdf);
+#else
+    float mis_weight = 1.f;
+#endif
+
+    vec3 nee = light_sample.pdf == 0.f ? vec3(0.f) :
+        bsdf_response * light_sample.irradiance * mis_weight / light_sample.pdf;
 
     // Compute bounce
     SampleResult bounce = sampleBSDF(rng, bsdf, wo);
+    float bounce_pdf = pdfBSDF(bsdf, wo, bounce.dir);
 
     vec3 bounce_dir = localToWorld(bounce.dir, frame);
 
@@ -531,41 +287,81 @@ ShadeResult shade(inout Sampler rng, in Material material,
         nee,
         bounce_dir,
         bounce.weight,
+        bounce_pdf,
         bounce.flags,
     };
 
     return result;
 }
 
+
+vec3 handleEmittance(Environment env, HitInfo hit, float bounce_pdf,
+                     vec3 bounce_origin, uint32_t bounce_flags)
+{
+    if (hit.material.emittance.x == 0.f &&
+        hit.material.emittance.y == 0.f &&
+        hit.material.emittance.z == 0.f) {
+        return vec3(0.f);
+    }
+
+    if (bool(bounce_flags & BSDFFlagsDelta)) {
+        return hit.material.emittance;
+    }
+
+#ifdef USE_MIS
+    float light_pdf = pdfTriangleLight(float(env.numLights),
+                                       hit.position - bounce_origin,
+                                       hit.triArea, hit.geoNormal);
+
+    float mis_weight = misPowerHeuristic(1, bounce_pdf, 1, light_pdf);
+
+    return hit.material.emittance * mis_weight;
+#else
+    return vec3(0.f);
+#endif
+}
+
 struct PathVertexState {
     vec3 radiance;
     vec3 bounceOrigin;
     vec3 bounceDir;
-    vec3 bounceProb;
+    vec3 bounceWeight;
+    float bouncePDF;
     uint32_t bounceFlags;
 };
 
 PathVertexState processPathVertex(inout Sampler rng, in Environment env,
-                                  in HitInfo hit, in vec3 ray_dir)
+                                  in HitInfo hit, in vec3 ray_dir,
+                                  in vec3 ray_origin, in float bounce_pdf,
+                                  in uint32_t bounce_flags,
+                                  in bool use_nee)
 {
+    PathVertexState result;
+    result.radiance = handleEmittance(env, hit, bounce_pdf, ray_origin,
+                                      bounce_flags);
+
+    // FIXME: this final vertex isn't respecting alpha
+    if (!use_nee) {
+        result.bounceOrigin = vec3(0.f);
+        result.bounceDir = vec3(0.f);
+        result.bounceWeight = vec3(0.f);
+        result.bouncePDF = 0.f;
+        result.bounceFlags = 0;
+        return result;
+    }
+
     LightInfo light_info = sampleLights(rng, env,
         hit.position, hit.geoNormal);
     
     ShadeResult shade_result = shade(rng, hit.material,
         light_info.lightSample, -ray_dir, hit.tangentFrame);
     
-    PathVertexState result;
-    result.radiance = shade_result.color;
+    vec3 nee_radiance = shade_result.color;
 
     bool pass_through = handleBounce(rng, hit, ray_dir,
                                      shade_result.bounceDir,
                                      result.bounceOrigin,
                                      result.bounceDir);
-
-    result.bounceProb = 
-        pass_through ? vec3(1.f - hit.material.transparencyMask) :
-            shade_result.bounceProb;
-    result.bounceFlags = shade_result.flags;
 
     bool occluded = traceShadowRay(env.tlasAddr,
                                    light_info.shadowRayOrigin,
@@ -573,54 +369,32 @@ PathVertexState processPathVertex(inout Sampler rng, in Environment env,
                                    light_info.shadowRayLength,
                                    1);
     
-    // Start setup for next bounce
-    if (occluded || pass_through) {
-        result.radiance = vec3(0);
+    if (occluded) {
+        nee_radiance = vec3(0);
     }
+
+    result.radiance += nee_radiance;
+
+    if (pass_through) {
+        result.radiance = vec3(0.f);
+        result.bouncePDF = 1.f - hit.material.transparencyMask;
+        result.bounceWeight = vec3(result.bouncePDF);
+        result.bounceFlags = BSDFFlagsDelta;
+    } else {
+        result.bounceWeight =
+            hit.material.transparencyMask * shade_result.bounceWeight;
+        result.bouncePDF =
+            hit.material.transparencyMask * shade_result.bouncePDF;
+        result.bounceFlags = shade_result.flags;
+    }
+
 
     return result;
 }
 
-void computeCameraRay(in Camera camera, in u32vec3 idx, inout Sampler rng,
-                      out vec3 ray_origin, out vec3 ray_dir)
-{
-    vec2 jitter = samplerGet2D(rng);
-    jitter = vec2(0.f);
-
-    vec2 jittered_raster = vec2(idx.x, idx.y) + jitter;
-
-    vec2 screen = vec2((2.f * jittered_raster.x) / RES_X - 1,
-                       (2.f * jittered_raster.y) / RES_Y - 1);
-
-    vec3 right = camera.right * camera.rightScale;
-    vec3 up = camera.up * camera.upScale;
-
-    ray_origin = camera.origin;
-    ray_dir = normalize(
-        right * screen.x + up * screen.y + camera.view);
-}
-
-vec2 getScreenSpacePosition(Camera camera, vec3 world_pos)
-{
-    vec3 to_pos = world_pos - camera.origin;
-
-    vec3 camera_space = vec3(dot(to_pos, camera.right),
-                             dot(to_pos, camera.up),
-                             dot(to_pos, camera.view));
-
-    return vec2(camera_space.x / camera.rightScale / camera_space.z,
-                camera_space.y / camera.upScale / camera_space.z);
-}
-
-i32vec2 getPixelCoords(vec2 screen_space)
-{
-    vec2 offset = (screen_space + 1.f) / 2.f;
-    return i32vec2(offset.x * RES_X, offset.y * RES_Y);
-}
-
-
 struct PrimaryResult {
     PathVertexState vertState;
+    RayCone rayCone;
 #ifdef AUXILIARY_OUTPUTS
     vec3 auxNormal;
     vec3 auxAlbedo;
@@ -634,7 +408,7 @@ PrimaryResult directLighting(in u32vec3 idx, in uint32_t linear_idx,
 {
     vec3 ray_origin;
     vec3 ray_dir;
-    computeCameraRay(cam, idx, rng, ray_origin, ray_dir);
+    computeCameraRay(cam, idx, samplerGet2D(rng), ray_origin, ray_dir);
 
     rayQueryEXT primary_query;
     bool primary_hit = traceShadeRay(primary_query, env.tlasAddr,
@@ -644,7 +418,7 @@ PrimaryResult directLighting(in u32vec3 idx, in uint32_t linear_idx,
 
     if (!primary_hit) {
         result.vertState.radiance = evalEnvMap(env.baseTextureOffset, ray_dir);
-        result.vertState.bounceProb = vec3(0);
+        result.vertState.bounceWeight = vec3(0);
         result.instanceID = 0xFFFF;
 #ifdef AUXILIARY_OUTPUTS
         result.auxNormal = vec3(0);
@@ -653,7 +427,11 @@ PrimaryResult directLighting(in u32vec3 idx, in uint32_t linear_idx,
         return result;
     }
 
-    HitInfo hit = processHit(primary_query, env, ray_dir);
+    RayCone ray_cone = initRayCone(cam);
+
+    HitInfo hit = processHit(primary_query, env, ray_dir, ray_cone);
+    result.rayCone = ray_cone;
+
     result.instanceID = getHitInstance(primary_query);
 
 #ifdef AUXILIARY_OUTPUTS
@@ -670,7 +448,7 @@ PrimaryResult directLighting(in u32vec3 idx, in uint32_t linear_idx,
     result.auxAlbedo = albedo;
 #endif
 
-    vec3 wo = normalize(worldToLocal(-ray_dir, hit.tangentFrame));
+    vec3 wo = normalize(worldToLocalOutgoing(-ray_dir, hit.tangentFrame));
     BSDFParams bsdf_params = buildBSDF(hit.material, wo);
 
     Reservoir cur = initReservoirRIS(bsdf_params, wo, RESERVOIR_M, rng);
@@ -678,30 +456,38 @@ PrimaryResult directLighting(in u32vec3 idx, in uint32_t linear_idx,
     vec2 prev_screen_pos = getScreenSpacePosition(prev_cam, hit.position);
     i32vec2 prev_pixel_coords = getPixelCoords(prev_screen_pos);
 
+    result.vertState.radiance = hit.material.emittance;
+
     LightInfo light_info = sampleLights(rng, env,
         hit.position, hit.geoNormal);
     
-    vec3 wi = normalize(worldToLocal(light_info.lightSample.toLight,
-                                     hit.tangentFrame));
-    vec3 bsdf_response = evalBSDF(bsdf_params, wo, wi);
-    vec3 nee = bsdf_response * light_info.lightSample.weight;
+    vec3 wi = normalize(worldToLocalIncoming(light_info.lightSample.toLight,
+                                             hit.tangentFrame));
+
+    float bsdf_pdf;
+    vec3 bsdf_response = evalBSDF(bsdf_params, wo, wi, bsdf_pdf);
+
+#ifdef USE_MIS
+    float mis_weight = misPowerHeuristic(1, light_info.lightSample.pdf, 1,
+                                         bsdf_pdf);
+#else
+    float mis_weight = 1.f;
+#endif
+
+    vec3 nee = light_info.lightSample.pdf == 0.f ? vec3(0.f) :
+        bsdf_response * light_info.lightSample.irradiance *
+            mis_weight / light_info.lightSample.pdf;
 
     // Compute bounce
     SampleResult bounce = sampleBSDF(rng, bsdf_params, wo);
+    float bounce_pdf = pdfBSDF(bsdf_params, wo, bounce.dir);
 
     vec3 bounce_dir = localToWorld(bounce.dir, hit.tangentFrame);
-
-    result.vertState.radiance = nee;
 
     bool pass_through = handleBounce(rng, hit, ray_dir,
                                      bounce_dir,
                                      result.vertState.bounceOrigin,
                                      result.vertState.bounceDir);
-
-    result.vertState.bounceProb = 
-        pass_through ? vec3(1.f - hit.material.transparencyMask) :
-            bounce.weight;
-    result.vertState.bounceFlags = bounce.flags;
 
     bool occluded = traceShadowRay(env.tlasAddr,
                                    light_info.shadowRayOrigin,
@@ -710,24 +496,45 @@ PrimaryResult directLighting(in u32vec3 idx, in uint32_t linear_idx,
                                    1);
     
     // Start setup for next bounce
-    if (occluded || pass_through) {
+    if (occluded) {
+        nee = vec3(0);
+    }
+
+    result.vertState.radiance += nee;
+
+    if (pass_through) {
         result.vertState.radiance = vec3(0);
+        result.vertState.bouncePDF = 1.f - hit.material.transparencyMask;
+        result.vertState.bounceWeight = vec3(result.vertState.bouncePDF);
+        result.vertState.bounceFlags = BSDFFlagsDelta;
+    } else {
+        result.vertState.bounceWeight =
+            hit.material.transparencyMask * bounce.weight;
+        result.vertState.bouncePDF =
+            hit.material.transparencyMask * bounce_pdf;
+        result.vertState.bounceFlags = bounce.flags;
     }
 
     return result;
 }
 
 vec3 indirectLighting(in Environment env, in vec3 ray_origin, in vec3 ray_dir,
-                      in vec3 path_prob, in uint32_t bounce_flags,
+                      in vec3 path_weight, in float bounce_pdf,
+                      in uint32_t bounce_flags, inout RayCone ray_cone,
                       inout Sampler rng)
 {
     vec3 indirect_contrib = vec3(0.f);
 
-    for (int32_t path_depth = 1; path_depth < MAX_DEPTH;
+    for (int32_t path_depth = 1;
+#ifdef USE_MIS
+         path_depth < MAX_DEPTH + 1;
+#else
+         path_depth < MAX_DEPTH;
+#endif
          path_depth++) {
 
-        if (path_prob.x == 0.f && path_prob.y == 0.f &&
-            path_prob.z == 0.f) {
+        if (path_weight.x == 0.f && path_weight.y == 0.f &&
+            path_weight.z == 0.f) {
             break;
         }
 
@@ -739,16 +546,17 @@ vec3 indirectLighting(in Environment env, in vec3 ray_origin, in vec3 ray_dir,
         if (!shade_hit) {
             if (bool(bounce_flags & BSDFFlagsDelta)) {
                 indirect_contrib +=
-                    evalEnvMap(env.baseTextureOffset, ray_dir) * path_prob;
+                    evalEnvMap(env.baseTextureOffset, ray_dir) * path_weight;
             }
             break;
         }
 
-        HitInfo hit = processHit(bounce_query, env, ray_dir);
+        HitInfo hit = processHit(bounce_query, env, ray_dir, ray_cone);
 
         PathVertexState bounce_state =
-            processPathVertex(rng, env, hit, ray_dir);
-        vec3 vert_contrib = path_prob * bounce_state.radiance;
+            processPathVertex(rng, env, hit, ray_dir, ray_origin, bounce_pdf,
+                              bounce_flags, path_depth < MAX_DEPTH);
+        vec3 vert_contrib = path_weight * bounce_state.radiance;
 #ifdef INDIRECT_CLAMP
         vert_contrib = min(vert_contrib, vec3(INDIRECT_CLAMP));
 #endif
@@ -756,7 +564,8 @@ vec3 indirectLighting(in Environment env, in vec3 ray_origin, in vec3 ray_dir,
 
         ray_origin = bounce_state.bounceOrigin;
         ray_dir = bounce_state.bounceDir;
-        path_prob *= bounce_state.bounceProb;
+        path_weight *= bounce_state.bounceWeight;
+        bounce_pdf = bounce_state.bouncePDF;
         bounce_flags = bounce_state.bounceFlags;
     }
 
@@ -808,17 +617,20 @@ void main()
         vec3 sample_radiance;
         vec3 ray_origin;
         vec3 ray_dir;
-        vec3 path_prob;
+        vec3 path_weight;
+        float bounce_pdf;
         uint32_t bounce_flags;
-
+        RayCone ray_cone;
         {
             PrimaryResult primary_result =
                 directLighting(idx, linear_idx, cam, prev_cam, env, rng);
 
             sample_radiance = primary_result.vertState.radiance;
+            ray_cone = primary_result.rayCone;
             ray_origin = primary_result.vertState.bounceOrigin;
             ray_dir = primary_result.vertState.bounceDir;
-            path_prob = primary_result.vertState.bounceProb;
+            path_weight = primary_result.vertState.bounceWeight;
+            bounce_pdf = primary_result.vertState.bouncePDF;
             bounce_flags = primary_result.vertState.bounceFlags;
             instance_id = primary_result.instanceID;
 
@@ -829,7 +641,8 @@ void main()
         }
 
         sample_radiance += indirectLighting(env, ray_origin, ray_dir,
-                                            path_prob, bounce_flags, rng);
+                                            path_weight, bounce_pdf,
+                                            bounce_flags, ray_cone, rng);
 
         pixel_radiance += sample_radiance / SPP;
     }

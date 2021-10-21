@@ -13,7 +13,6 @@ struct MaterialParams {
     float baseRoughness;
     uint32_t flags;
 
-#ifdef ADVANCED_MATERIAL
     float clearcoat;
     float clearcoatRoughness;
     vec3 attenuationColor;
@@ -21,7 +20,6 @@ struct MaterialParams {
     float anisoScale;
     float anisoRotation;
     vec3 baseEmittance;
-#endif
 };
 
 struct Material {
@@ -34,7 +32,6 @@ struct Material {
     float roughness;
     float transparencyMask;
 
-#ifdef ADVANCED_MATERIAL
     float clearcoatScale;
     float clearcoatRoughness;
     vec3 attenuationColor;
@@ -42,7 +39,6 @@ struct Material {
     float anisoScale;
     float anisoRotation;
     vec3 emittance;
-#endif
 };
 
 MaterialParams unpackMaterialParams(MatRef mat_ref, uint32_t material_id)
@@ -73,8 +69,7 @@ MaterialParams unpackMaterialParams(MatRef mat_ref, uint32_t material_id)
         params.flags = uint16_t(data0.w >> 16);
     }
 
-#ifdef ADVANCED_MATERIAL
-    if (bool(params.flags & MaterialFlags::Complex)) {
+    if (bool(params.flags & MaterialFlagsComplex)) {
         u32vec4 data1 = fetchSceneMaterialParams(mat_ref, material_id, 1);
 
         {
@@ -105,17 +100,25 @@ MaterialParams unpackMaterialParams(MatRef mat_ref, uint32_t material_id)
         params.attenuationColor = vec3(1.0);
         params.anisoScale = 0.0;
         params.anisoRotation = 0.0;
-        params.attenuationDistance = INFINITY;
+        params.attenuationDistance = uintBitsToFloat(0x7f800000);
         params.baseEmittance = vec3(0.0);
     }
-#endif
 
     return params;
 }
 
+vec3 getMaterialEmittance(MatRef mat_addr, uint32_t mat_idx)
+{
+    u32vec4 data1 = fetchSceneMaterialParams(mat_addr, mat_idx, 1);
+
+    vec2 xy = unpackHalf2x16(data1.z);
+    vec2 zw = unpackHalf2x16(data1.w);
+    return vec3(xy.y, zw.x, zw.y);
+}
+
 Material processMaterial(MaterialParams params,
                          uint32_t base_tex_idx,
-                         vec2 uv, float mip_level)
+                         vec2 uv, vec4 uv_derivs)
 {
     Material mat;
 
@@ -123,7 +126,7 @@ Material processMaterial(MaterialParams params,
     mat.transparencyMask = 1.f;
     if (bool(params.flags & MaterialFlagsHasBaseTexture)) {
         vec4 tex_value = fetchSceneTexture(
-            base_tex_idx + TextureConstantsBaseOffset, uv, mip_level);
+            base_tex_idx + TextureConstantsBaseOffset, uv, uv_derivs);
 
         mat.rho.x *= tex_value.x;
         mat.rho.y *= tex_value.y;
@@ -135,7 +138,7 @@ Material processMaterial(MaterialParams params,
     mat.roughness = params.baseRoughness;
     if (bool(params.flags & MaterialFlagsHasMRTexture)) {
         vec2 tex_value = fetchSceneTexture(
-            base_tex_idx + TextureConstantsMROffset, uv, mip_level).xy;
+            base_tex_idx + TextureConstantsMROffset, uv, uv_derivs).xy;
 
         mat.roughness *= tex_value.x;
         mat.metallic *= tex_value.y;
@@ -145,7 +148,7 @@ Material processMaterial(MaterialParams params,
     mat.specularScale = params.specularScale;
     if (bool(params.flags & MaterialFlagsHasSpecularTexture)) {
         vec4 tex_value = fetchSceneTexture(
-            base_tex_idx + TextureConstantsSpecularOffset, uv, mip_level);
+            base_tex_idx + TextureConstantsSpecularOffset, uv, uv_derivs);
 
         mat.rhoSpecular.x *= tex_value.x;
         mat.rhoSpecular.y *= tex_value.y;
@@ -156,17 +159,16 @@ Material processMaterial(MaterialParams params,
     mat.transmission = params.baseTransmission;
     if (bool(params.flags & MaterialFlagsHasTransmissionTexture)) {
         float tex_value = fetchSceneTexture(
-            base_tex_idx + TextureConstantsTransmissionOffset, uv, mip_level).x;
+            base_tex_idx + TextureConstantsTransmissionOffset, uv, uv_derivs).x;
 
         mat.transmission *= tex_value;
     }
     mat.ior = params.ior;
 
-#ifdef ADVANCED_MATERIAL
     mat.emittance = params.baseEmittance;
     if (bool(params.flags & MaterialFlagsHasEmittanceTexture)) {
         vec3 tex_value = fetchSceneTexture(
-            base_tex_idx + TextureConstantsEmittanceOffset, uv, mip_level).xyz;
+            base_tex_idx + TextureConstantsEmittanceOffset, uv, uv_derivs).xyz;
 
         mat.emittance.x *= tex_value.x;
         mat.emittance.y *= tex_value.y;
@@ -177,7 +179,7 @@ Material processMaterial(MaterialParams params,
     mat.clearcoatRoughness = params.clearcoatRoughness;
     if (bool(params.flags & MaterialFlagsHasClearcoatTexture)) {
         vec2 tex_value = fetchSceneTexture(
-            base_tex_idx + TextureConstantsClearcoatOffset, uv, mip_level).xy;
+            base_tex_idx + TextureConstantsClearcoatOffset, uv, uv_derivs).xy;
 
         mat.clearcoatScale *= tex_value.x;
         mat.clearcoatRoughness *= tex_value.y;
@@ -187,17 +189,16 @@ Material processMaterial(MaterialParams params,
     mat.anisoRotation = params.anisoRotation;
     if (bool(params.flags & MaterialFlagsHasAnisotropicTexture)) {
         vec2 tex_value = fetchSceneTexture(
-            base_tex_idx + TextureConstantsAnisoOffset, uv, mip_level).xy;
+            base_tex_idx + TextureConstantsAnisoOffset, uv, uv_derivs).xy;
 
         vec2 aniso_v = tex_value * 2.f - 1.f;
 
         mat.anisoScale = length(aniso_v);
-        mat.anisoRotation = atan2f(aniso_v.y, aniso_v.x);
+        mat.anisoRotation = atan(aniso_v.y, aniso_v.x);
     }
 
     mat.attenuationColor = params.attenuationColor;
     mat.attenuationDistance = params.attenuationDistance;
-#endif
 
     return mat;
 }

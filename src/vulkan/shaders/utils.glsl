@@ -150,4 +150,12 @@ vec3 transformNormal(mat4x3 w2o, vec3 n)
     return vec3(dot(w2o[0], n), dot(w2o[1], n), dot(w2o[2], n));
 }
 
+vec3 sampleSphereUniform(vec2 uv)
+{
+    float z = 1.f - 2.f * uv.x;
+    float r = sqrt(max(0.f, 1.f - z * z));
+    float phi = 2.f * M_PI * uv.y;
+    return vec3(r * cos(phi), r * sin(phi), z);
+}
+
 #endif

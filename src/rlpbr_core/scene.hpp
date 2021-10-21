@@ -51,7 +51,8 @@ struct alignas(16) MaterialParams {
 };
 
 enum class LightType : uint32_t {
-    Point,
+    Sphere,
+    Triangle,
     Portal,
 };
 
@@ -59,11 +60,16 @@ struct LightProperties {
     LightType type;
     union {
         struct {
-            float position[3];
-            float color[3];
+            uint32_t sphereVertIdx;
+            uint32_t sphereMatIdx;
+            float radius;
         };
         struct {
-            float corners[4][3];
+            uint32_t triIdxOffset;
+            uint32_t triMatIdx;
+        };
+        struct {
+            uint32_t portalIdxOffset;
         };
     };
 };

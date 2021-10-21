@@ -199,28 +199,9 @@ OptixEnvironment OptixEnvironment::make(OptixDeviceContext ctx,
     for (const auto &light : scene.envInit.lights) {
         PackedLight packed;
         memcpy(&packed.data[0].x, &light.type, sizeof(uint32_t));
-        if (light.type == LightType::Point) {
-            packed.data[0].y = light.color[0];
-            packed.data[0].z = light.color[1];
-            packed.data[0].w = light.color[2];
-            packed.data[1].x = light.position[0];
-            packed.data[1].y = light.position[1];
-            packed.data[1].z = light.position[2];
-        } else if (light.type == LightType::Portal) {
-            packed.data[1].x = light.corners[0][0];
-            packed.data[1].y = light.corners[0][1];
-            packed.data[1].z = light.corners[0][2];
-            packed.data[1].w = light.corners[1][0];
-            packed.data[2].x = light.corners[1][1];
-            packed.data[2].y = light.corners[1][2];
-            packed.data[2].z = light.corners[2][0];
-            packed.data[2].w = light.corners[2][1];
-            packed.data[3].x = light.corners[2][2];
-            packed.data[3].y = light.corners[3][0];
-            packed.data[3].z = light.corners[3][1];
-            packed.data[3].w = light.corners[3][2];
-        }
-
+        if (light.type == LightType::Sphere) {
+            // FIXME
+        } 
         lights.push_back(packed);
     }
 

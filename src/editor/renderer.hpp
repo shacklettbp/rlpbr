@@ -126,7 +126,7 @@ private:
     DynArray<Frame> frames_;
 
     VkDescriptorPool scene_desc_pool_;
-    vk::SharedSceneState shared_scene_state_;
+    VkDescriptorSet scene_set_;
 
     vk::VulkanLoader loader_;
 };

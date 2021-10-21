@@ -61,9 +61,10 @@ layout (location = 0) in InInterface {
 
 layout (location = 0) out vec4 out_color;
 
-vec4 fetchSceneTexture(uint32_t idx, vec2 uv, float)
+vec4 fetchSceneTexture(uint32_t idx, vec2 uv, vec4 uv_derivs)
 {
-    return texture(sampler2D(textures[idx], repeatSampler), uv);
+    return texture(sampler2D(textures[idx], repeatSampler), uv,
+                   0.f);
 }
 
 #define MatRef uint32_t
@@ -81,7 +82,7 @@ void main()
     uint32_t base_texture_idx = 
         1 + iface.materialIndex * TextureConstantsTexturesPerMaterial;
     Material mat = processMaterial(mat_params, base_texture_idx,
-        iface.uv, 0.f);
+        iface.uv, vec4(0.f));
 
     out_color = vec4(mat.rho, 1.f);
 }

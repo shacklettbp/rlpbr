@@ -84,27 +84,16 @@ VulkanEnvironment::VulkanEnvironment(const DeviceState &d,
 {
     for (const LightProperties &light : scene.envInit.lights) {
         PackedLight packed;
-        memcpy(&packed.data[0].x, &light.type, sizeof(uint32_t));
-        if (light.type == LightType::Point) {
-            packed.data[0].y = light.color[0];
-            packed.data[0].z = light.color[1];
-            packed.data[0].w = light.color[2];
-            packed.data[1].x = light.position[0];
-            packed.data[1].y = light.position[1];
-            packed.data[1].z = light.position[2];
+        memcpy(&packed.data.x, &light.type, sizeof(uint32_t));
+        if (light.type == LightType::Sphere) {
+            packed.data.y = glm::uintBitsToFloat(light.sphereVertIdx);
+            packed.data.z = glm::uintBitsToFloat(light.sphereMatIdx);
+            packed.data.w = light.radius;
+        } else if (light.type == LightType::Triangle) {
+            packed.data.y = glm::uintBitsToFloat(light.triIdxOffset);
+            packed.data.z = glm::uintBitsToFloat(light.triMatIdx);
         } else if (light.type == LightType::Portal) {
-            packed.data[1].x = light.corners[0][0];
-            packed.data[1].y = light.corners[0][1];
-            packed.data[1].z = light.corners[0][2];
-            packed.data[1].w = light.corners[1][0];
-            packed.data[2].x = light.corners[1][1];
-            packed.data[2].y = light.corners[1][2];
-            packed.data[2].z = light.corners[2][0];
-            packed.data[2].w = light.corners[2][1];
-            packed.data[3].x = light.corners[2][2];
-            packed.data[3].y = light.corners[3][0];
-            packed.data[3].z = light.corners[3][1];
-            packed.data[3].w = light.corners[3][2];
+            packed.data.y = glm::uintBitsToFloat(light.portalIdxOffset);
         }
 
         lights.push_back(packed);
@@ -119,9 +108,10 @@ VulkanEnvironment::~VulkanEnvironment()
 uint32_t VulkanEnvironment::addLight(const glm::vec3 &position,
                                      const glm::vec3 &color)
 {
+    // FIXME
+    (void)position;
+    (void)color;
     lights.push_back(PackedLight {
-        glm::vec4(position, 1.f),
-        glm::vec4(color, 1.f),
     });
 
     return lights.size() - 1;
@@ -137,7 +127,31 @@ VulkanLoader::VulkanLoader(const DeviceState &d,
                            MemoryAllocator &alc,
                            const QueueState &transfer_queue,
                            const QueueState &render_queue,
+                           VkDescriptorSet scene_set,
+                           uint32_t render_qf,
+                           uint32_t max_texture_resolution)
+    : VulkanLoader(d, alc, transfer_queue, render_queue, nullptr,
+                   scene_set, render_qf, max_texture_resolution)
+{}
+
+VulkanLoader::VulkanLoader(const DeviceState &d,
+                           MemoryAllocator &alc,
+                           const QueueState &transfer_queue,
+                           const QueueState &render_queue,
                            SharedSceneState &shared_scene_state,
+                           uint32_t render_qf,
+                           uint32_t max_texture_resolution)
+    : VulkanLoader(d, alc, transfer_queue, render_queue, &shared_scene_state,
+                   shared_scene_state.descSet, render_qf,
+                   max_texture_resolution)
+{}
+
+VulkanLoader::VulkanLoader(const DeviceState &d,
+                           MemoryAllocator &alc,
+                           const QueueState &transfer_queue,
+                           const QueueState &render_queue,
+                           SharedSceneState *shared_scene_state,
+                           VkDescriptorSet scene_set,
                            uint32_t render_qf,
                            uint32_t max_texture_resolution)
     : dev(d),
@@ -145,6 +159,7 @@ VulkanLoader::VulkanLoader(const DeviceState &d,
       transfer_queue_(transfer_queue),
       render_queue_(render_queue),
       shared_scene_state_(shared_scene_state),
+      scene_set_(scene_set),
       transfer_cmd_pool_(makeCmdPool(d, d.transferQF)),
       transfer_cmd_(makeCmdBuffer(dev, transfer_cmd_pool_)),
       render_cmd_pool_(makeCmdPool(d, render_qf)),
@@ -1224,16 +1239,40 @@ shared_ptr<Scene> VulkanLoader::loadScene(SceneLoadData &&load_info)
         appendDescriptor(tex_indices.anisoIdx, staged_textures->anisotropic);
     }
 
-    shared_scene_state_.lock.lock();
-    SceneID scene_id(shared_scene_state_);
+    optional<SceneID> scene_id_tracker;
+    uint32_t scene_id;
+    VkDescriptorBufferInfo vert_info;
+    VkDescriptorBufferInfo mat_info;
+    if (shared_scene_state_) {
+        shared_scene_state_->lock.lock();
+        scene_id_tracker.emplace(*shared_scene_state_);
+        scene_id = scene_id_tracker->getID();
+    } else {
+        // FIXME, this entire special codepath for the editor needs to be
+        // removed
+        scene_id = 0;
+
+        vert_info.buffer = data.buffer;
+        vert_info.offset = 0;
+        vert_info.range =
+            load_info.hdr.numVertices * sizeof(PackedVertex);
+
+        desc_updates.storage(scene_set_, &vert_info, 0);
+
+        mat_info.buffer = data.buffer;
+        mat_info.offset = load_info.hdr.materialOffset;
+        mat_info.range = load_info.hdr.numMaterials * sizeof(MaterialParams);
+
+        desc_updates.storage(scene_set_, &mat_info, 2);
+    }
 
     if (load_info.hdr.numMaterials > 0) {
         assert(load_info.hdr.numMaterials < VulkanConfig::max_materials);
 
-        uint32_t texture_offset = scene_id.getID() *
+        uint32_t texture_offset = scene_id *
             (1 + VulkanConfig::max_materials *
              VulkanConfig::textures_per_material);
-        desc_updates.textures(shared_scene_state_.descSet,
+        desc_updates.textures(scene_set_,
                               descriptor_views.data(),
                               descriptor_views.size(), 1,
                               texture_offset);
@@ -1241,16 +1280,16 @@ shared_ptr<Scene> VulkanLoader::loadScene(SceneLoadData &&load_info)
 
     desc_updates.update(dev);
 
-    SceneAddresses &scene_dev_addrs = 
-        ((SceneAddresses *)shared_scene_state_.addrData.ptr)[scene_id.getID()];
-    scene_dev_addrs.vertAddr = geometry_addr;
-    scene_dev_addrs.idxAddr = geometry_addr + load_info.hdr.indexOffset;
-    scene_dev_addrs.matAddr = geometry_addr + load_info.hdr.materialOffset;
-    scene_dev_addrs.meshAddr = geometry_addr + load_info.hdr.meshOffset;
-
-    shared_scene_state_.addrData.flush(dev);
-
-    shared_scene_state_.lock.unlock();
+    if (shared_scene_state_) {
+        SceneAddresses &scene_dev_addrs = 
+            ((SceneAddresses *)shared_scene_state_->addrData.ptr)[scene_id];
+        scene_dev_addrs.vertAddr = geometry_addr;
+        scene_dev_addrs.idxAddr = geometry_addr + load_info.hdr.indexOffset;
+        scene_dev_addrs.matAddr = geometry_addr + load_info.hdr.materialOffset;
+        scene_dev_addrs.meshAddr = geometry_addr + load_info.hdr.meshOffset;
+        shared_scene_state_->addrData.flush(dev);
+        shared_scene_state_->lock.unlock();
+    }
 
     uint32_t num_meshes = load_info.meshInfo.size();
 
@@ -1264,7 +1303,7 @@ shared_ptr<Scene> VulkanLoader::loadScene(SceneLoadData &&load_info)
         move(data),
         load_info.hdr.indexOffset,
         num_meshes,
-        move(scene_id),
+        move(scene_id_tracker),
         move(blases),
     });
 }

@@ -238,9 +238,11 @@ SceneDescription<VertexType, MaterialType> parseHabitatJSON(
         desc.objects.emplace_back(move(merged_obj));
     }
 
+// FIXME
+#if 0
     for (const Light &light : raw_scene.lights) {
         LightProperties light_props;
-        light_props.type = RLpbr::LightType::Point;
+        light_props.type = RLpbr::LightType::Sphere;
         light_props.position[0] = light.position.x;
         light_props.position[1] = light.position.y;
         light_props.position[2] = light.position.z;
@@ -248,8 +250,10 @@ SceneDescription<VertexType, MaterialType> parseHabitatJSON(
         light_props.color[0] = scaled_color.x;
         light_props.color[1] = scaled_color.y;
         light_props.color[2] = scaled_color.z;
+        light_props.radius = 0.05f;
         desc.defaultLights.push_back(light_props);
     }
+#endif
 
     return desc;
 }

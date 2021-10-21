@@ -1,0 +1,401 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+#extension GL_EXT_ray_query : require
+#extension GL_EXT_scalar_block_layout : require
+#extension GL_EXT_nonuniform_qualifier : require
+#extension GL_EXT_shader_explicit_arithmetic_types : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int16 : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int32 : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require
+#extension GL_EXT_shader_16bit_storage : require
+#extension GL_EXT_shader_8bit_storage : require
+#extension GL_EXT_control_flow_attributes : require
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_KHR_shader_subgroup_vote : require
+#extension GL_KHR_shader_subgroup_ballot : require
+#extension GL_KHR_shader_subgroup_arithmetic : require
+#extension GL_KHR_shader_subgroup_shuffle : require
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_buffer_reference2 : require
+
+#ifdef VALIDATE 
+#extension GL_EXT_debug_printf : enable
+#endif
+
+// GLSL wants this for uint64_t -> accel struct conversion
+#extension GL_EXT_ray_tracing : require
+
+#define SHADER_CONST const
+#include "rlpbr_core/device.h"
+#undef SHADER_CONST
+
+#include "inputs.glsl"
+
+layout (buffer_reference, scalar, buffer_reference_align = 16) buffer VertRef {
+    PackedVertex vert;
+};
+
+layout (buffer_reference, scalar, buffer_reference_align = 4) buffer IdxRef {
+    uint32_t idx;
+};
+
+layout (buffer_reference, scalar, buffer_reference_align = 16) buffer MatRef {
+    PackedMaterial matParam;
+};
+
+layout (buffer_reference, scalar, buffer_reference_align = 16) buffer MeshRef {
+    PackedMeshInfo meshInfo;
+};
+
+#include "shader_common.h"
+#include "sampler.glsl"
+#include "utils.glsl"
+#include "math.glsl"
+
+layout (push_constant, scalar) uniform PushConstant {
+    RTPushConstant push_const;
+};
+
+layout (set = 0, binding = 0, scalar) readonly buffer Instances {
+    PackedInstance instances[];
+};
+
+layout (set = 0, binding = 1, scalar) readonly buffer MaterialIndices {
+    uint32_t instanceMaterials[];
+};
+
+layout (set = 0, binding = 2) readonly buffer Lights {
+    PackedLight lights[];
+};
+
+layout (set = 0, binding = 3) readonly buffer Envs {
+    PackedEnv envs[];
+};
+
+layout (set = 0, binding = 4) uniform sampler repeatSampler;
+layout (set = 0, binding = 5) uniform sampler clampSampler;
+
+layout (set = 0, binding = 6) uniform texture2D msDiffuseAverageTexture; 
+layout (set = 0, binding = 7) uniform texture3D msDiffuseDirectionalTexture;
+layout (set = 0, binding = 8) uniform texture1D msGGXAverageTexture;
+layout (set = 0, binding = 9) uniform texture2D msGGXDirectionalTexture;
+layout (set = 0, binding = 10) uniform texture2D msGGXInverseTexture;
+
+layout (set = 0, binding = 11, scalar) writeonly buffer CurReservoirs {
+    Reservoir currentReservoirs[];
+};
+
+layout (set = 0, binding = 12, scalar) writeonly buffer PrevReservoirs {
+    Reservoir prevReservoirs[];
+};
+
+
+layout (set = 0, binding = 13, scalar) writeonly buffer Out {
+    uint32_t outputBuffer[];
+};
+
+#ifdef AUXILIARY_OUTPUTS
+
+layout (set = 0, binding = 14, scalar) writeonly buffer Normals {
+    uint16_t normalBuffer[];
+};
+
+layout (set = 0, binding = 15, scalar) writeonly buffer Albedo {
+    uint16_t albedoBuffer[];
+};
+
+#endif
+
+layout (set = 1, binding = 0) readonly uniform Addrs {
+    SceneAddresses sceneAddrs[MAX_SCENES];
+};
+
+layout (set = 1, binding = 1) uniform texture2D textures[];
+
+
+// This function needs to be defined before the include of 
+// materials.glsl
+vec4 fetchSceneTexture(uint32_t idx, vec2 uv, vec4 uv_derivs)
+{
+    return textureGrad(sampler2D(textures[nonuniformEXT(idx)],
+        repeatSampler), uv, uv_derivs.xy, uv_derivs.zw);
+}
+
+u32vec4 fetchSceneMaterialParams(MatRef ref, uint32_t idx, uint32_t sub_idx)
+{
+    return ref[idx].matParam.data[sub_idx];
+}
+
+#define ISTHREAD0 (gl_GlobalInvocationID.x == 0 && \
+                   gl_GlobalInvocationID.y == 0 && \
+                   gl_GlobalInvocationID.z == 0)
+
+#include "materials.glsl"
+#include "bsdf.glsl"
+#include "lighting.glsl"
+#include "restir.glsl"
+#include "unpack.glsl"
+#include "geometry.glsl"
+#include "camera.glsl"
+
+// Support functions
+
+bool traceShadeRay(rayQueryEXT ray_query, in uint64_t tlas_addr,
+                   in vec3 ray_origin, in vec3 ray_dir,
+                   uint32_t visibility_mask)
+{
+    rayQueryInitializeEXT(ray_query, accelerationStructureEXT(tlas_addr),
+                          gl_RayFlagsNoneEXT, visibility_mask,
+                          ray_origin, 0.f, ray_dir, LARGE_DISTANCE);
+
+    while (rayQueryProceedEXT(ray_query)) {
+        if (rayQueryGetIntersectionTypeEXT(ray_query, false) ==
+            gl_RayQueryCandidateIntersectionTriangleEXT) {
+
+            rayQueryConfirmIntersectionEXT(ray_query);
+        }
+    }
+
+    subgroupBarrier();
+
+    return rayQueryGetIntersectionTypeEXT(ray_query, true) !=
+        gl_RayQueryCommittedIntersectionNoneEXT;
+}
+
+bool traceShadowRay(in uint64_t tlas_addr, in vec3 ray_origin,
+                    in vec3 ray_dir, in float ray_len,
+                    in uint32_t visibility_mask)
+{
+    rayQueryEXT ray_query;
+    rayQueryInitializeEXT(ray_query, accelerationStructureEXT(tlas_addr),
+                          gl_RayFlagsTerminateOnFirstHitEXT, visibility_mask,
+                          ray_origin, 0.f, ray_dir, ray_len);
+
+    while (rayQueryProceedEXT(ray_query)) {
+        if (rayQueryGetIntersectionTypeEXT(ray_query, false) ==
+            gl_RayQueryCandidateIntersectionTriangleEXT) {
+
+            rayQueryConfirmIntersectionEXT(ray_query);
+        }
+    }
+
+    subgroupBarrier();
+
+    return rayQueryGetIntersectionTypeEXT(ray_query, true) !=
+        gl_RayQueryCommittedIntersectionNoneEXT;
+}
+
+void setOutput(uint32_t base_offset, vec3 rgb, uint32_t instance_id)
+{
+    rgb = min(rgb, vec3(65504.f));
+
+    uint32_t ab = packHalf2x16(rgb.xy);
+    uint32_t cd = packHalf2x16(vec2(rgb.z, 0));
+    cd |= (instance_id << 16);
+
+    outputBuffer[nonuniformEXT(base_offset)] = ab;
+    outputBuffer[nonuniformEXT(base_offset + 1)] = cd;
+}
+
+#ifdef AUXILIARY_OUTPUTS
+void setAuxiliaries(uint32_t base_offset, vec3 albedo, vec3 normal)
+{
+    uint32_t albedo_ab = packHalf2x16(albedo.xy);
+    uint32_t albedo_cd = packHalf2x16(vec2(albedo.z, 0));
+    uint32_t normal_ab = packHalf2x16(normal.xy);
+    uint32_t normal_cd = packHalf2x16(vec2(normal.z, 0));
+
+    albedoBuffer[nonuniformEXT(base_offset)] = uint16_t((albedo_ab >> 16) & 0xFFFF);
+    albedoBuffer[nonuniformEXT(base_offset) + 1] = uint16_t(albedo_ab & 0xFFFF);
+    albedoBuffer[nonuniformEXT(base_offset) + 2] = uint16_t((albedo_cd >> 16) & 0xFFFF);
+
+    normalBuffer[nonuniformEXT(base_offset)] = uint16_t((normal_ab >> 16) & 0xFFFF);
+    normalBuffer[nonuniformEXT(base_offset) + 1] = uint16_t(normal_ab & 0xFFFF);
+    normalBuffer[nonuniformEXT(base_offset) + 2] = uint16_t((normal_cd >> 16) & 0xFFFF);
+}
+#endif
+
+
+
+struct DirectResult {
+    vec3 radiance;
+#ifdef AUXILIARY_OUTPUTS
+    vec3 auxNormal;
+    vec3 auxAlbedo;
+#endif
+    uint32_t instanceID;
+};
+
+DirectResult directLighting(in u32vec3 idx, in uint32_t linear_idx,
+                            in Camera cam, in Camera prev_cam,
+                            in Environment env, inout Sampler rng)
+{
+    vec3 ray_origin;
+    vec3 ray_dir;
+    computeCameraRay(cam, idx, vec2(0), ray_origin, ray_dir);
+
+    rayQueryEXT primary_query;
+    bool primary_hit = traceShadeRay(primary_query, env.tlasAddr,
+                                     ray_origin, ray_dir, 3);
+
+    DirectResult result;
+    result.radiance = vec3(0.f);
+    if (!primary_hit) {
+        result.radiance = evalEnvMap(env.baseTextureOffset, ray_dir);
+#ifdef AUXILIARY_OUTPUTS
+        result.auxNormal = vec3(0);
+        result.auxAlbedo = vec3(0);
+#endif
+        result.instanceID = 0xFFFF;
+        return result;
+    }
+
+    result.instanceID = getHitInstance(primary_query);
+
+    RayCone ray_cone = initRayCone(cam);
+
+    HitInfo hit = processHit(primary_query, env, ray_dir, ray_cone);
+
+    bool need_second = false;
+    if (hit.material.roughness == 0.f ||
+        hit.material.transparencyMask == 0.f) {
+        need_second = true;
+    }
+    vec3 secondary_ray_dir;
+    if (hit.material.transmission != 1.f) {
+        secondary_ray_dir = reflect(ray_dir, hit.tangentFrame.normal);
+    } else {
+        secondary_ray_dir = ray_dir;
+    }
+
+    vec3 secondary_ray_offset = dot(secondary_ray_dir, hit.geoNormal) > 0 ?
+        hit.geoNormal : - hit.geoNormal;
+
+    vec3 second_ray_origin =
+        offsetRayOrigin(hit.position, secondary_ray_offset);
+
+    rayQueryEXT secondary_query;
+    bool secondary_hit = traceShadeRay(secondary_query, env.tlasAddr,
+        second_ray_origin, secondary_ray_dir, 3);
+
+    if (need_second) {
+        if (!secondary_hit) {
+            result.radiance = evalEnvMap(env.baseTextureOffset, ray_dir);
+#ifdef AUXILIARY_OUTPUTS
+            result.auxNormal = vec3(0);
+            result.auxAlbedo = vec3(0);
+#endif
+            result.instanceID = 0xFFFF;
+            return result;
+        }
+
+        result.instanceID = getHitInstance(secondary_query);
+        hit = processHit(secondary_query, env, secondary_ray_dir, ray_cone);
+        ray_dir = secondary_ray_dir;
+    }
+
+#ifdef AUXILIARY_OUTPUTS
+    vec3 view_normal = vec3(
+        dot(normalize(cam.right), hit.tangentFrame.normal),
+        dot(normalize(cam.up) * -1.f, hit.tangentFrame.normal),
+        dot(normalize(cam.view) * -1.f, hit.tangentFrame.normal));
+    
+    view_normal = normalize(view_normal);
+    
+    vec3 albedo = hit.material.rho;
+    
+    result.auxNormal = view_normal;
+    result.auxAlbedo = albedo;
+#endif
+
+    vec3 wo = normalize(worldToLocalOutgoing(-ray_dir, hit.tangentFrame));
+    BSDFParams bsdf_params = buildBSDF(hit.material, wo);
+
+    vec2 prev_screen_pos = getScreenSpacePosition(prev_cam, hit.position);
+    i32vec2 prev_pixel_coords = getPixelCoords(prev_screen_pos);
+
+    env.numLights = 5;
+    for (int i = 0; i < env.numLights; i++) {
+        DeltaLightInfo light_info = getLight(env, i, cam.origin);
+
+        float mask = 1.f;
+        for (int j = 0; j < 4; j++) {
+            vec3 jittered_pos = light_info.position +
+                sampleSphereUniform(samplerGet2D(rng)) * 0.02f;
+
+            vec3 to_light = jittered_pos - hit.position;
+            vec3 shadow_offset_normal =
+                dot(to_light, hit.geoNormal) > 0 ? hit.geoNormal : -hit.geoNormal;
+
+            vec3 shadow_origin =
+                offsetRayOrigin(hit.position, shadow_offset_normal);
+
+            to_light = jittered_pos - shadow_origin;
+
+            bool occluded = traceShadowRay(env.tlasAddr,
+                                           shadow_origin,
+                                           to_light,
+                                           1.f,
+                                           1);
+            //if (occluded) {
+            //    mask -= 1.f / 4.f;
+            //}
+        }
+
+        vec3 to_light = light_info.position - hit.position;
+        float light_distance = length(to_light);
+        to_light /= light_distance;
+
+        vec3 wi = normalize(worldToLocalIncoming(to_light, hit.tangentFrame));
+
+        vec3 bsdf_response = evalBSDF(bsdf_params, wo, wi);
+        vec3 nee = bsdf_response * light_info.irradiance /
+            (light_distance * light_distance);
+
+        result.radiance += mask * nee + 0.003 * hit.material.rho;
+    }
+
+    return result;
+}
+
+// Entry point
+
+layout (local_size_x = LOCAL_WORKGROUP_X,
+        local_size_y = LOCAL_WORKGROUP_Y,
+        local_size_z = LOCAL_WORKGROUP_Z) in;
+void main()
+{
+    u32vec3 idx = gl_GlobalInvocationID.xyz;
+
+    if (idx.x >= RES_X || idx.y >= RES_Y || idx.z >= BATCH_SIZE) {
+        return;
+    }
+
+    // Lookup our location within the launch grid
+    uint32_t batch_idx = idx.z;
+
+    uint32_t linear_idx = batch_idx * RES_Y * RES_X + idx.y * RES_X + idx.x;
+    uint32_t base_out_offset = 2 * linear_idx;
+
+#ifdef AUXILIARY_OUTPUTS
+    uint32_t base_aux_offset = 3 * linear_idx;
+#endif
+
+    Camera cam, prev_cam;
+    Environment env;
+    unpackEnv(batch_idx, cam, prev_cam, env);
+
+    Sampler rng = makeSampler(idx.x, idx.y, 0,
+        push_const.baseFrameCounter + batch_idx);
+
+    DirectResult result =
+        directLighting(idx, linear_idx, cam, prev_cam, env, rng);
+
+    setOutput(base_out_offset, result.radiance, result.instanceID);
+
+#ifdef AUXILIARY_OUTPUTS
+    setAuxiliaries(base_aux_offset, result.auxNormal, result.auxAlbedo);
+#endif
+}

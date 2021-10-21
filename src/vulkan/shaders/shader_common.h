@@ -26,7 +26,7 @@ struct RTPushConstant {
 };
 
 struct PackedLight {
-    vec4 data[4];
+    vec4 data;
 };
 
 struct PackedInstance {

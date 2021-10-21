@@ -75,14 +75,10 @@ float sampleMSMicrofacetAngle(float roughness, float u)
         vec2(u, roughness), 0.0).x;
 }
 
-float pdfMSMicrofacetAngle(float roughness, float wi_dot_n)
+float pdfMSMicrofacetAngle(float dir_albedo_compl, float avg_albedo_compl,
+                           float wi_dot_n)
 {
-    float dir_albedo = fetchMicrofacetMSDirectionalAlbedo(roughness, wi_dot_n);
-    float avg_albedo = fetchMicrofacetMSAverageAlbedo(roughness);
-
-    float sum = 0.5f * (1.f - avg_albedo);
-
-    return wi_dot_n * (1.f - dir_albedo) / sum;
+    return wi_dot_n * dir_albedo_compl / avg_albedo_compl;
 }
 
 float rgbToLuminance(vec3 rgb)
@@ -236,7 +232,8 @@ BSDFParams buildBSDF(Material material, vec3 wo)
 // Enterprise PBR diffuse BRDF
 // diffuseWeight and diffuseBSDF are separated to allow concentricHemisphere
 // sampling which divides out the M_1_PI * wi_dot_n factor when sampling
-vec3 diffuseWeight(BSDFParams params, float wo_dot_n, float wi_dot_n)
+vec3 diffuseWeight(BSDFParams params, float wo_dot_n, float wi_dot_n,
+                   out bool invalid)
 {
     float E_diffuse_o = fetchDiffuseDirectionalAlbedo(params.diffuseLookupF0,
                                                       params.roughness,
@@ -251,22 +248,34 @@ vec3 diffuseWeight(BSDFParams params, float wo_dot_n, float wi_dot_n)
 
     float weight = mix(1.f, Bc, params.diffuseLambertScale);
 
-    if (min(wo_dot_n, wi_dot_n) < 1e-6f) {
+    if (min(wo_dot_n, wi_dot_n) < NEAR_ZERO) {
+        invalid = true;
         return vec3(0.f);
     } else {
+        invalid = false;
         return weight * params.rhoDiffuse;
     }
 }
 
-vec3 diffuseBSDF(BSDFParams bsdf_params, float wo_dot_n, float wi_dot_n)
+vec3 diffuseBSDF(BSDFParams bsdf_params, float wo_dot_n, float wi_dot_n,
+                 out float pdf)
 {
-    return diffuseWeight(bsdf_params, wo_dot_n, wi_dot_n) * M_1_PI * wi_dot_n;
+    bool invalid;
+    vec3 weight = diffuseWeight(bsdf_params, wo_dot_n, wi_dot_n, invalid);
+    pdf = M_1_PI * wi_dot_n;
+
+    if (invalid) {
+        pdf = 0.f;
+    }
+
+    return weight * pdf;
 }
 
 SampleResult sampleDiffuse(BSDFParams bsdf_params, vec3 wo, vec2 sample_uv)
 {
     vec3 wi = concentricHemisphere(sample_uv);
-    vec3 weight = diffuseWeight(bsdf_params, wo.z, wi.z);
+    bool invalid;
+    vec3 weight = diffuseWeight(bsdf_params, wo.z, wi.z, invalid);
 
     SampleResult result = {
         wi,
@@ -287,6 +296,14 @@ float ggxLambda(float cos_theta, float a2)
     return cos_theta <= 0.f ? 0.f : l;
 }
 
+float ggxG1(float cos_theta, float a2)
+{
+    float cos2 = cos_theta * cos_theta;
+    float tan2 = max(1.f - cos2, 0.f) / cos2;
+    float g1 = 2.f / (1.f + sqrt(1.f + a2 * tan2));
+    return cos_theta <= 0.f ? 0.f : g1;
+}
+
 float ggxNDF(float alpha, float cos_theta)
 {
     float a2 = alpha * alpha;
@@ -303,16 +320,19 @@ float ggxMasking(float a2, float out_cos, float in_cos)
 
 #define EVAL_GGX(T)                                                       \
     T evalGGX(float wo_dot_n, float wi_dot_n, float n_dot_h, T F,         \
-              float alpha)                                                \
+              float alpha, out float pdf)                                 \
     {                                                                     \
         float a2 = alpha * alpha;                                         \
         float D = ggxNDF(alpha, n_dot_h);                                 \
         float G = ggxMasking(a2, wo_dot_n, wi_dot_n);                     \
                                                                           \
-        T specular = 0.25f * F * D * G / wo_dot_n;                        \
+        float common_weight = 0.25f * D / wo_dot_n;                       \
+        T specular = common_weight * F * G;                               \
+        pdf = common_weight * ggxG1(wo_dot_n, a2);                        \
                                                                           \
         if (alpha == 0.f || min(wo_dot_n, wi_dot_n) < NEAR_ZERO) {        \
             specular = T(0.0);                                            \
+            pdf = 0.f;                                                    \
         }                                                                 \
                                                                           \
         return specular;                                                  \
@@ -324,15 +344,16 @@ EVAL_GGX(vec3)
 #undef EVAL_GGX
 
 vec3 microfacetBSDF(BSDFParams params, float wo_dot_n, float wi_dot_n,
-                    float n_dot_h, float dir_dot_h)
+                    float n_dot_h, float dir_dot_h, out float pdf)
 {
     vec3 F = computeFresnel(params.sharedF0, vec3(params.sharedF90),
                             dir_dot_h);
 
-    return evalGGX(wo_dot_n, wi_dot_n, n_dot_h, F, params.alpha);
+    return evalGGX(wo_dot_n, wi_dot_n, n_dot_h, F, params.alpha, pdf);
 }
 
-vec3 microfacetTransmissiveBSDF(BSDFParams params, vec3 wo, vec3 wi)
+vec3 microfacetTransmissiveBSDF(BSDFParams params, vec3 wo, vec3 wi,
+                                out float pdf)
 {
     wi.z *= -1.f;
 
@@ -349,7 +370,7 @@ vec3 microfacetTransmissiveBSDF(BSDFParams params, vec3 wo, vec3 wi)
                                   dir_dot_h);
 
     vec3 microfacet_response = evalGGX(wo.z, wi.z,
-        n_dot_h, F, params.alpha);
+        n_dot_h, F, params.alpha, pdf);
 
     return microfacet_response * params.rhoTransmissive;
 }
@@ -477,15 +498,25 @@ SampleResult sampleMicrofacetTransmission(
     return result;
 }
 
-vec3 microfacetMSBSDF(BSDFParams params, float wo_dot_n, float wi_dot_n)
+vec3 microfacetMSBSDF(BSDFParams params, float wo_dot_n, float wi_dot_n,
+                      out float pdf)
 {
-    vec3 ms_contrib =
-        (1.f - fetchMicrofacetMSDirectionalAlbedo(params.roughness, wi_dot_n)) *
-        params.microfacetMSWeight * M_1_PI * wi_dot_n /
+    float common_weight = wi_dot_n;
+
+    float dir_albedo_compl =
+        1.f - fetchMicrofacetMSDirectionalAlbedo(params.roughness, wi_dot_n);
+
+    pdf = M_1_PI * pdfMSMicrofacetAngle(dir_albedo_compl,
+                               params.microfacetMSAvgAlbedoComplement,
+                               wi_dot_n);
+
+    vec3 ms_contrib = wi_dot_n * M_1_PI * dir_albedo_compl *
+        params.microfacetMSWeight /
         params.microfacetMSAvgAlbedoComplement;
 
-    if (params.alpha == 0.f || min(wo_dot_n, wi_dot_n) < 1e-6f) {
+    if (params.alpha == 0.f || min(wo_dot_n, wi_dot_n) < NEAR_ZERO) {
         ms_contrib = vec3(0.f);
+        pdf = 0.f;
     }
 
     return ms_contrib;
@@ -501,7 +532,7 @@ SampleResult sampleMSMicrofacet(BSDFParams params, vec3 wo, vec2 sample_uv)
     vec3 wi = vec3(circle_dir.x * xy_mag,
                    circle_dir.y * xy_mag, theta);
 
-    // 1/(2pi) factor cancels out the 2 from the theta PDF
+    // 2pi in pdf cancels out
     vec3 weight = params.microfacetMSWeight;
 
     SampleResult result = {
@@ -510,7 +541,7 @@ SampleResult sampleMSMicrofacet(BSDFParams params, vec3 wo, vec2 sample_uv)
         BSDFFlagsMicrofacetReflection,
     };
 
-    if (min(wo.z, wi.z) < 1e-6f) {
+    if (min(wo.z, wi.z) < NEAR_ZERO) {
         result.dir = vec3(0.f);
         result.weight = vec3(0.f);
         result.flags = BSDFFlagsInvalid;
@@ -522,12 +553,13 @@ SampleResult sampleMSMicrofacet(BSDFParams params, vec3 wo, vec2 sample_uv)
 #ifdef ADVANCED_MATERIAL
 void clearcoatBSDF(in BSDFParams params, in float wo_dot_n, in float wi_dot_n,
                    in float n_dot_h, in float dir_dot_h,
-                   out float clearcoat_response, out float base_scale)
+                   out float clearcoat_response, out float base_scale,
+                   out float pdf)
 {
     float F = computeFresnel(0.04f, 1.f, dir_dot_h);
 
     float response = evalGGX(wo_dot_n, wi_dot_n, n_dot_h, F,
-                             params.clearcoatAlpha);
+                             params.clearcoatAlpha, pdf);
 
     float max_fresnel_n = max(computeFresnel(0.04f, 1.f, wo_dot_n),
                               computeFresnel(0.04f, 1.f, wi_dot_n));
@@ -555,7 +587,11 @@ SampleResult sampleClearcoat(BSDFParams params, vec3 wo, vec2 sample_uv)
 
 float diffusePDF(BSDFParams params, float wi_dot_n)
 {
-    return M_1_PI * wi_dot_n;
+    if (wi_dot_n < NEAR_ZERO) {
+        return 0.f;
+    } else {
+        return M_1_PI * wi_dot_n;
+    }
 }
 
 float microfacetPDF(BSDFParams params, float wo_dot_n, float wi_dot_n,
@@ -563,9 +599,9 @@ float microfacetPDF(BSDFParams params, float wo_dot_n, float wi_dot_n,
 {
     float a2 = params.alpha * params.alpha;
     float D = ggxNDF(a2, n_dot_h);
-    float G = ggxMasking(a2, wo_dot_n, wi_dot_n);
+    float G1 = ggxG1(wo_dot_n, a2);
 
-    float pdf = 0.25f * D * G / wo_dot_n;
+    float pdf = 0.25f * D * G1 / wo_dot_n;
 
     if (params.alpha == 0.f || min(wo_dot_n, wi_dot_n) < NEAR_ZERO) {
         pdf = 0.f;
@@ -576,9 +612,14 @@ float microfacetPDF(BSDFParams params, float wo_dot_n, float wi_dot_n,
 
 float microfacetMSPDF(BSDFParams params, float wi_dot_n)
 {
-    float thetaPDF = pdfMSMicrofacetAngle(params.roughness, wi_dot_n);
+    float dir_albedo = fetchMicrofacetMSDirectionalAlbedo(params.roughness,
+                                                          wi_dot_n);
 
-    float pdf = wi_dot_n / M_PI * thetaPDF;
+    float theta_pdf = pdfMSMicrofacetAngle(1.f - dir_albedo,
+        params.microfacetMSAvgAlbedoComplement,
+        wi_dot_n);
+
+    float pdf = theta_pdf * M_1_PI;
 
     if (wi_dot_n < NEAR_ZERO) {
         pdf = 0.f;
@@ -602,7 +643,7 @@ float microfacetTransmissivePDF(BSDFParams params, vec3 wo, vec3 wi)
     return microfacetPDF(params, wo.z, wi.z, n_dot_h, dir_dot_h);
 }
 
-vec3 evalBSDF(BSDFParams params, vec3 wo, vec3 wi)
+vec3 evalBSDF(BSDFParams params, vec3 wo, vec3 wi, out float pdf)
 {
     // Hammon 2017
     float wi_dot_wo = dot(wo, wi);
@@ -613,26 +654,35 @@ vec3 evalBSDF(BSDFParams params, vec3 wo, vec3 wi)
     float n_dot_h = (wo.z + wi.z) * rlen_io;
     float dir_dot_h = rlen_io + rlen_io * wi_dot_wo;
 
-    vec3 diffuse = diffuseBSDF(params, wo.z, wi.z);
+    float diffuse_pdf;
+    vec3 diffuse = diffuseBSDF(params, wo.z, wi.z, diffuse_pdf);
 
+    float microfacet_pdf;
     vec3 microfacet =
-        microfacetBSDF(params, wo.z, wi.z, n_dot_h, dir_dot_h);
+        microfacetBSDF(params, wo.z, wi.z, n_dot_h, dir_dot_h, microfacet_pdf);
 
+    float microfacet_ms_pdf;
     vec3 microfacet_ms =
-        microfacetMSBSDF(params, wo.z, wi.z);
+        microfacetMSBSDF(params, wo.z, wi.z, microfacet_ms_pdf);
 
+    float transmissive_pdf;
     vec3 transmissive =
-        microfacetTransmissiveBSDF(params, wo, wi);
+        microfacetTransmissiveBSDF(params, wo, wi, transmissive_pdf);
 
     vec3 base = diffuse + microfacet + microfacet_ms + transmissive;
-
+    float base_pdf = params.diffuseProb * diffuse_pdf +
+                     params.microfacetProb * microfacet_pdf +
+                     params.microfacetMSProb * microfacet_ms_pdf +
+                     params.transmissionProb * transmissive_pdf;
 #ifdef ADVANCED_MATERIAL
-    float clearcoat_response, base_scale;
+    float clearcoat_response, base_scale, clearcoat_pdf;
     clearcoatBSDF(params, wo.z, wi.z, n_dot_h, dir_dot_h, clearcoat_response,
-                  base_scale);
+                  base_scale, clearcoat_pdf);
 
+    pdf = base_pdf + params.clearcoatProb * clearcoat_pdf;
     return base * base_scale + clearcoat_response;
 #else
+    pdf = base_pdf;
     return base;
 #endif
 }
@@ -673,61 +723,6 @@ float pdfBSDF(BSDFParams params, vec3 wo, vec3 wi)
 SampleResult sampleBSDF(inout Sampler rng,
                         in BSDFParams params,
                         in vec3 wo)
-{
-    float selector = samplerGet1D(rng);
-    vec2 uv = samplerGet2D(rng);
-
-    float cdf[]  = {
-        params.diffuseProb,
-        params.microfacetProb,
-        params.microfacetMSProb,
-        params.transmissionProb,
-#ifdef ADVANCED_MATERIAL
-        params.clearcoatProb,
-#endif
-    };
-
-    cdf[1] += cdf[0];
-    cdf[2] += cdf[1];
-    cdf[3] += cdf[2];
-
-#ifdef ADVANCED_MATERIAL
-    cdf[4] += cdf[3];
-#endif
-
-    SampleResult result = {
-        vec3(0),
-        vec3(0),
-        BSDFFlagsInvalid,
-    };
-
-    if (selector < cdf[0]) {
-        result = sampleDiffuse(params, wo, uv);
-        result.weight /= params.diffuseProb;
-    } else if (selector < cdf[1]) {
-        result = sampleMicrofacetShared(params, wo, uv);
-        result.weight /= params.microfacetProb;
-    } else if (selector < cdf[2]) {
-        result = sampleMSMicrofacet(params, wo, uv);
-        result.weight /= params.microfacetMSProb;
-    } else if (selector < cdf[3]) {
-        result = sampleMicrofacetTransmission(params, wo, uv);
-        result.weight /= params.transmissionProb;
-    } 
-#ifdef ADVANCED_MATERIAL
-    else if (selector < cdf[4]) {
-        result = sampleClearcoat(params, wo, uv);
-        result.weight /= params.clearcoatProb;
-    }
-#endif
-
-    return result;
-}
-
-SampleResult sampleAndPDFBSDF(inout Sampler rng,
-                              in BSDFParams params,
-                              in vec3 wo,
-                              out float pdf)
 {
     float selector = samplerGet1D(rng);
     vec2 uv = samplerGet2D(rng);

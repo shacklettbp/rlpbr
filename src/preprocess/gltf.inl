@@ -283,7 +283,7 @@ GLTFScene gltfLoad(filesystem::path gltf_path) noexcept
             float roughness = jsonGetOr(pbr["roughnessFactor"], 1.f);
 
             auto transmission_ext =
-                exts["KHR_material_transmission"];
+                exts["KHR_materials_transmission"];
 
             uint32_t transmission_idx = jsonGetOr(
                 transmission_ext["transmissionTexture"]["index"], tex_missing);
@@ -693,14 +693,6 @@ vector<MaterialType> gltfParseMaterials(const GLTFScene &scene,
                              gltf_mat.baseColor.g,
                              gltf_mat.baseColor.b);
 
-        // FIXME: hack for floorplanner, should be removed
-        float metallic = gltf_mat.metallic;
-        if (transmission > 0.f) {
-            metallic = 0.f;
-            transmission = 1.f;
-            base_color = glm::vec3(1.f);
-        }
-
         // FIXME
         float aniso_rotation = atan2(gltf_mat.anisoDir.y, gltf_mat.anisoDir.x);
 
@@ -718,7 +710,7 @@ vector<MaterialType> gltfParseMaterials(const GLTFScene &scene,
             transmission,
             gltf_mat.baseSpecular,
             gltf_mat.specularFactor,
-            metallic,
+            gltf_mat.metallic,
             gltf_mat.roughness,
             gltf_mat.ior,
             gltf_mat.clearcoat,

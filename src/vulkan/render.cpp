@@ -190,7 +190,8 @@ static RenderState makeRenderState(const DeviceState &dev,
 
     ShaderPipeline::initCompiler();
 
-    ShaderPipeline shader(dev, {"pathtracer.comp"},
+    ShaderPipeline shader(dev,
+        {cfg.pathTracer ? "pathtracer.comp" : "biased.comp"},
         {
             {0, 4, repeat_sampler, 1, 0},
             {0, 5, clamp_sampler, 1, 0},
@@ -1028,7 +1029,7 @@ void VulkanBackend::render(RenderBatch &batch)
 
         packed_env.cam = packCamera(env.getCamera());
         packed_env.prevCam = packCamera(env_backend.prevCam);
-        packed_env.data.x = scene_backend.sceneID.getID();
+        packed_env.data.x = scene_backend.sceneID->getID();
 
         // Set prevCam for next iteration
         env_backend.prevCam = env.getCamera();

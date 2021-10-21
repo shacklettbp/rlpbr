@@ -1,3 +1,4 @@
+#include <glm/gtx/quaternion.hpp>
 #include <rlpbr/preprocess.hpp>
 #include <rlpbr_core/utils.hpp>
 
@@ -566,6 +567,297 @@ SceneDescription<VertexType, MaterialType> mergeStaticInstances(
     return new_desc;
 }
 
+static vector<LightProperties> processLights(
+    const vector<LightProperties> &initial_lights,
+    ProcessedGeometry<PackedVertex> &geo,
+    vector<InstanceProperties> &instances,
+    vector<Material> &materials,
+    const AABB &scene_bbox)
+{
+    vector<LightProperties> lights = initial_lights;
+
+    {
+        glm::vec3 ceiling_min(INFINITY, INFINITY, INFINITY);
+        glm::vec3 ceiling_max(-INFINITY, -INFINITY, -INFINITY);
+
+        bool ceiling_found = false;
+        for (const auto &inst : instances) {
+            vector<int> ceiling_meshes;
+            for (int mesh_idx = 0; mesh_idx < (int)inst.materials.size();
+                 mesh_idx++) {
+                int mat_idx = inst.materials[mesh_idx];
+                if (materials[mat_idx].name == "ceiling") {
+                    ceiling_meshes.push_back(mesh_idx);
+                }
+            }
+
+            if (ceiling_meshes.empty()) continue;
+
+            ceiling_found = true;
+
+            const auto &object_info = geo.objectInfos[inst.objectIndex];
+            for (int mesh_offset : ceiling_meshes) {
+                int mesh_idx = object_info.meshIndex + mesh_offset;
+                const auto &mesh = geo.meshInfos[mesh_idx];
+
+                for (int i = 0; i < (int)(mesh.numTriangles * 3); i++) {
+                    const PackedVertex vert =
+                        geo.vertices[geo.indices[mesh.indexOffset + i]];
+
+                    if (vert.position.x < ceiling_min.x) {
+                        ceiling_min.x = vert.position.x;
+                    }
+                    if (vert.position.y < ceiling_min.y) {
+                        ceiling_min.y = vert.position.y;
+                    }
+                    if (vert.position.z < ceiling_min.z) {
+                        ceiling_min.z = vert.position.z;
+                    }
+
+                    if (vert.position.x > ceiling_min.x) {
+                        ceiling_max.x = vert.position.x;
+                    }
+                    if (vert.position.y > ceiling_min.y) {
+                        ceiling_max.y = vert.position.y;
+                    }
+                    if (vert.position.z > ceiling_min.z) {
+                        ceiling_max.z = vert.position.z;
+                    }
+                }
+            }
+        }
+
+        float light_height;
+        if (ceiling_found) {
+            light_height = ceiling_min.y - 0.05f;
+        } else {
+            light_height = scene_bbox.pMax.y - 1.5f;
+        }
+
+        const int num_init_lights = 10;
+        float bbox_width = scene_bbox.pMax.x - scene_bbox.pMin.x;
+        float bbox_depth = scene_bbox.pMax.z - scene_bbox.pMin.z;
+
+        for (int i = 0; i < num_init_lights; i++) {
+            for (int j = 0; j < num_init_lights; j++) {
+                glm::vec3 light_position(
+                    (bbox_width / num_init_lights) * i +
+                        scene_bbox.pMin.x,
+                    light_height,
+                    (bbox_depth / num_init_lights) * j +
+                        scene_bbox.pMin.z);
+
+                float offset = 0.05f;
+
+                glm::vec3 a(light_position.x - offset,
+                            light_position.y,
+                            light_position.z - offset);
+                glm::vec3 b(light_position.x - offset,
+                            light_position.y,
+                            light_position.z + offset);
+                glm::vec3 c(light_position.x + offset,
+                            light_position.y,
+                            light_position.z - offset);
+                glm::vec3 d(light_position.x + offset,
+                            light_position.y,
+                            light_position.z + offset);
+
+                geo.vertices.push_back(PackedVertex {
+                    a,
+                    encodeNormalTangent(glm::vec3(0.f, -1.f, 0.f),
+                                        glm::vec4(1.f, 0.f, 0.f, 1.f)),
+                    glm::vec2(0.f),
+                });
+                geo.vertices.push_back(PackedVertex {
+                    b,
+                    encodeNormalTangent(glm::vec3(0.f, -1.f, 0.f),
+                                        glm::vec4(1.f, 0.f, 0.f, 1.f)),
+                    glm::vec2(0.f),
+                });
+                geo.vertices.push_back(PackedVertex {
+                    c,
+                    encodeNormalTangent(glm::vec3(0.f, -1.f, 0.f),
+                                        glm::vec4(1.f, 0.f, 0.f, 1.f)),
+                    glm::vec2(0.f),
+                });
+                geo.vertices.push_back(PackedVertex {
+                    d,
+                    encodeNormalTangent(glm::vec3(0.f, -1.f, 0.f),
+                                        glm::vec4(1.f, 0.f, 0.f, 1.f)),
+                    glm::vec2(0.f),
+                });
+
+                uint32_t idx_offset = geo.indices.size();
+                geo.indices.push_back(geo.vertices.size() - 3);
+                geo.indices.push_back(geo.vertices.size() - 1);
+                geo.indices.push_back(geo.vertices.size() - 2);
+
+                geo.indices.push_back(geo.vertices.size() - 3);
+                geo.indices.push_back(geo.vertices.size() - 2);
+                geo.indices.push_back(geo.vertices.size() - 4);
+
+                geo.meshInfos.push_back(MeshInfo {
+                    idx_offset,
+                    2,
+                    4,
+                });
+
+                string name = 
+                    string("light_") + to_string(lights.size());
+
+                geo.objectInfos.push_back({
+                    uint32_t(geo.meshInfos.size() - 1),
+                    1,
+                });
+                geo.objectNames.push_back(name);
+
+                materials.push_back(Material {
+                    name,
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    glm::vec3(0.f),
+                    0.f,
+                    glm::vec3(0.f),
+                    0.f,
+                    0.f,
+                    0.f,
+                    1.4f,
+                    0.f,
+                    0.f,
+                    glm::vec3(0.f),
+                    0.f,
+                    0.f,
+                    0.f,
+                    glm::vec3(100.f),
+                    false,
+                });
+
+                instances.push_back(InstanceProperties {
+                    name,
+                    uint32_t(geo.objectInfos.size() - 1),
+                    { uint32_t(materials.size() - 1) },
+                    glm::vec3(0.f),
+                    glm::identity<glm::quat>(),
+                    glm::vec3(1.f),
+                    true,
+                    false,
+                });
+
+                LightProperties tri_light;
+                tri_light.type = LightType::Triangle;
+                tri_light.triIdxOffset = idx_offset;
+                tri_light.triMatIdx = materials.size() - 1;
+
+                lights.push_back(tri_light);
+                
+            }
+        }
+    }
+
+#if 0
+    for (const auto &inst : instances) {
+        if (inst.transparent) {
+            const auto &object_info = geo.objectInfos[inst.objectIndex];
+            for (int mesh_offset = 0; mesh_offset < (int)object_info.numMeshes;
+                 mesh_offset++) {
+                int mesh_idx = object_info.meshIndex + mesh_offset;
+                const auto &mesh = geo.meshInfos[mesh_idx];
+                glm::vec3 bbox_min(INFINITY, INFINITY, INFINITY);
+                glm::vec3 bbox_max(-INFINITY, -INFINITY, -INFINITY);
+                for (int i = 0; i < (int)(mesh.numTriangles * 3); i++) {
+                    const PackedVertex vert =
+                        geo.vertices[geo.indices[mesh.indexOffset + i]];
+
+                    const glm::vec3 &p = vert.position;
+                    if (p.x < bbox_min.x) {
+                        bbox_min.x = p.x;
+                    }
+                    if (p.y < bbox_min.y) {
+                        bbox_min.y = p.y;
+                    }
+
+                    if (p.z < bbox_min.z) {
+                        bbox_min.z = p.z;
+                    }
+
+                    if (p.x > bbox_max.x) {
+                        bbox_max.x = p.x;
+                    }
+
+                    if (p.y > bbox_max.y) {
+                        bbox_max.y = p.y;
+                    }
+
+                    if (p.z > bbox_max.z) {
+                        bbox_max.z = p.z;
+                    }
+                }
+
+                glm::vec3 delta = bbox_max - bbox_min;
+                float min_comp = delta.x;
+                int min_idx = 0;
+                if (delta.y < min_comp) {
+                    min_comp = delta.y;
+                    min_idx = 1;
+                }
+                if (delta.z < min_comp) {
+                    min_comp = delta.z;
+                    min_idx = 2;
+                }
+
+                int left_idx;
+                int up_idx;
+                if (min_idx == 0) {
+                    left_idx = 1;
+                    up_idx = 2;
+                } else if (min_idx == 1) {
+                    left_idx = 0;
+                    up_idx = 2;
+                } else {
+                    left_idx = 0;
+                    up_idx = 1;
+                }
+
+                LightProperties portal;
+                portal.type = LightType::Portal;
+                portal.corners[0][0] = bbox_min.x;
+                portal.corners[0][1] = bbox_min.y;
+                portal.corners[0][2] = bbox_min.z;
+
+                portal.corners[1][0] = bbox_min.x;
+                portal.corners[1][1] = bbox_min.y;
+                portal.corners[1][2] = bbox_min.z;
+
+                portal.corners[1][up_idx] += delta[up_idx];
+
+                portal.corners[2][0] = bbox_min.x;
+                portal.corners[2][1] = bbox_min.y;
+                portal.corners[2][2] = bbox_min.z;
+
+                portal.corners[2][left_idx] += delta[left_idx];
+                portal.corners[2][up_idx] += delta[up_idx];
+
+                portal.corners[3][0] = bbox_min.x;
+                portal.corners[3][1] = bbox_min.y;
+                portal.corners[3][2] = bbox_min.z;
+
+                portal.corners[3][left_idx] += delta[left_idx];
+
+                lights.push_back(portal);
+            }
+        }
+    }
+#endif
+
+    return lights;
+}
+
 struct ProcessedScene {
     ProcessedGeometry<PackedVertex> geometry;
     vector<InstanceProperties> instances;
@@ -859,144 +1151,6 @@ static MaterialMetadata stageMaterials(const vector<Material> &materials,
     };
 }
 
-static vector<LightProperties> processLights(
-    const vector<LightProperties> &initial_lights,
-    const ProcessedGeometry<PackedVertex> &geo,
-    const vector<InstanceProperties> &instances,
-    const AABB &scene_bbox)
-{
-    vector<LightProperties> lights = initial_lights;
-
-#if 0
-    {
-        const int num_init_lights = 10;
-        float bbox_width = scene_bbox.pMax.x - scene_bbox.pMin.x;
-        float bbox_height = scene_bbox.pMax.y - scene_bbox.pMin.y;
-        float bbox_depth = scene_bbox.pMax.z - scene_bbox.pMin.z;
-
-        for (int i = 0; i < num_init_lights; i++) {
-            for (int j = 0; j < num_init_lights; j++) {
-                for (int k = 0; k < num_init_lights; k++) {
-                    glm::vec3 light_position(
-                        (bbox_width / num_init_lights) * i +
-                            scene_bbox.pMin.x,
-                        (bbox_height / num_init_lights) * j +
-                            scene_bbox.pMin.y,
-                        (bbox_depth / num_init_lights) * k +
-                            scene_bbox.pMin.z);
-
-                    LightProperties point_light;
-                    point_light.type = LightType::Point;
-                    point_light.position[0] = light_position.x;
-                    point_light.position[1] = light_position.y;
-                    point_light.position[2] = light_position.z;
-                    point_light.color[0] = 0.5f;
-                    point_light.color[1] = 0.5f;
-                    point_light.color[2] = 0.5f;
-
-                    lights.push_back(point_light);
-                }
-            }
-        }
-    }
-#endif
-
-    for (const auto &inst : instances) {
-        if (inst.transparent) {
-            const auto &object_info = geo.objectInfos[inst.objectIndex];
-            for (int mesh_offset = 0; mesh_offset < (int)object_info.numMeshes;
-                 mesh_offset++) {
-                int mesh_idx = object_info.meshIndex + mesh_offset;
-                const auto &mesh = geo.meshInfos[mesh_idx];
-                glm::vec3 bbox_min(INFINITY, INFINITY, INFINITY);
-                glm::vec3 bbox_max(-INFINITY, -INFINITY, -INFINITY);
-                for (int i = 0; i < (int)(mesh.numTriangles * 3); i++) {
-                    const PackedVertex vert =
-                        geo.vertices[geo.indices[mesh.indexOffset + i]];
-
-                    const glm::vec3 &p = vert.position;
-                    if (p.x < bbox_min.x) {
-                        bbox_min.x = p.x;
-                    }
-                    if (p.y < bbox_min.y) {
-                        bbox_min.y = p.y;
-                    }
-
-                    if (p.z < bbox_min.z) {
-                        bbox_min.z = p.z;
-                    }
-
-                    if (p.x > bbox_max.x) {
-                        bbox_max.x = p.x;
-                    }
-
-                    if (p.y > bbox_max.y) {
-                        bbox_max.y = p.y;
-                    }
-
-                    if (p.z > bbox_max.z) {
-                        bbox_max.z = p.z;
-                    }
-                }
-
-                glm::vec3 delta = bbox_max - bbox_min;
-                float min_comp = delta.x;
-                int min_idx = 0;
-                if (delta.y < min_comp) {
-                    min_comp = delta.y;
-                    min_idx = 1;
-                }
-                if (delta.z < min_comp) {
-                    min_comp = delta.z;
-                    min_idx = 2;
-                }
-
-                int left_idx;
-                int up_idx;
-                if (min_idx == 0) {
-                    left_idx = 1;
-                    up_idx = 2;
-                } else if (min_idx == 1) {
-                    left_idx = 0;
-                    up_idx = 2;
-                } else {
-                    left_idx = 0;
-                    up_idx = 1;
-                }
-
-                LightProperties portal;
-                portal.type = LightType::Portal;
-                portal.corners[0][0] = bbox_min.x;
-                portal.corners[0][1] = bbox_min.y;
-                portal.corners[0][2] = bbox_min.z;
-
-                portal.corners[1][0] = bbox_min.x;
-                portal.corners[1][1] = bbox_min.y;
-                portal.corners[1][2] = bbox_min.z;
-
-                portal.corners[1][up_idx] += delta[up_idx];
-
-                portal.corners[2][0] = bbox_min.x;
-                portal.corners[2][1] = bbox_min.y;
-                portal.corners[2][2] = bbox_min.z;
-
-                portal.corners[2][left_idx] += delta[left_idx];
-                portal.corners[2][up_idx] += delta[up_idx];
-
-                portal.corners[3][0] = bbox_min.x;
-                portal.corners[3][1] = bbox_min.y;
-                portal.corners[3][2] = bbox_min.z;
-
-                portal.corners[3][left_idx] += delta[left_idx];
-
-                lights.push_back(portal);
-            }
-        }
-    }
-
-    return lights;
-}
-
 static void dumpIDMap(string_view scene_path_base,
                       const ProcessedGeometry<PackedVertex> &geo,
                       const vector<InstanceProperties> &insts,
@@ -1049,8 +1203,10 @@ void ScenePreprocessor::dump(string_view out_path_name)
     auto [processed_geometry, processed_instances, default_bbox] =
         processScene(scene_data_->desc);
 
+    vector<Material> materials = scene_data_->desc.materials;
+
     auto processed_lights = processLights(scene_data_->desc.defaultLights,
-        processed_geometry, processed_instances, default_bbox);
+        processed_geometry, processed_instances, materials, default_bbox);
 
     auto processed_physics_state =
         ProcessedPhysicsState::make(processed_geometry, !scene_data_->dumpSDFs);
@@ -1059,8 +1215,7 @@ void ScenePreprocessor::dump(string_view out_path_name)
     string basename = out_path;
     basename.resize(basename.rfind('.'));
 
-    dumpIDMap(basename, processed_geometry, processed_instances,
-              scene_data_->desc.materials);
+    dumpIDMap(basename, processed_geometry, processed_instances, materials);
 
     ofstream out(out_path, ios::binary);
     auto write = [&](auto val) {
@@ -1325,11 +1480,11 @@ void ScenePreprocessor::dump(string_view out_path_name)
                            const auto &instances,
                            const AABB &bbox,
                            const auto &lights,
-                           const auto &desc,
+                           const auto &materials,
+                           const auto &env_map,
                            const auto &data_dir) {
-        const auto &materials = desc.materials;
         auto material_metadata =
-            stageMaterials(materials, data_dir, desc.envMap);
+            stageMaterials(materials, data_dir, env_map);
 
         StagingHeader hdr = make_staging_header(geometry, material_metadata);
         write(hdr);
@@ -1352,7 +1507,8 @@ void ScenePreprocessor::dump(string_view out_path_name)
     // Header: magic
     write(uint32_t(0x55555555));
     write_scene(processed_geometry, processed_instances, default_bbox,
-                processed_lights, scene_data_->desc, scene_data_->dataDir);
+                processed_lights, materials, scene_data_->desc.envMap,
+                scene_data_->dataDir);
     out.close();
 }
 

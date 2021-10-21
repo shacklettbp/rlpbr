@@ -135,7 +135,7 @@ struct VulkanScene : public Scene {
     LocalBuffer data;
     VkDeviceSize indexOffset;
     uint32_t numMeshes;
-    SceneID sceneID;
+    std::optional<SceneID> sceneID;
 
     BLASData blases;
 };
@@ -150,14 +150,32 @@ public:
                  uint32_t render_qf,
                  uint32_t max_texture_resolution);
 
+    VulkanLoader(const DeviceState &dev,
+                 MemoryAllocator &alloc,
+                 const QueueState &transfer_queue,
+                 const QueueState &render_queue,
+                 VkDescriptorSet scene_set,
+                 uint32_t render_qf,
+                 uint32_t max_texture_resolution);
+
     std::shared_ptr<Scene> loadScene(SceneLoadData &&load_info);
 
 private:
+    VulkanLoader(const DeviceState &dev,
+                 MemoryAllocator &alloc,
+                 const QueueState &transfer_queue,
+                 const QueueState &render_queue,
+                 SharedSceneState *shared_scene_state,
+                 VkDescriptorSet scene_set,
+                 uint32_t render_qf,
+                 uint32_t max_texture_resolution);
+
     const DeviceState &dev;
     MemoryAllocator &alloc;
     const QueueState &transfer_queue_;
     const QueueState &render_queue_;
-    SharedSceneState &shared_scene_state_;
+    SharedSceneState *shared_scene_state_;
+    VkDescriptorSet scene_set_;
 
     VkCommandPool transfer_cmd_pool_;
     VkCommandBuffer transfer_cmd_;

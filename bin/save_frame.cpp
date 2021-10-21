@@ -93,6 +93,7 @@ int main(int argc, char *argv[]) {
     uint32_t batch_size = atoi(argv[2]);
 
     glm::u32vec2 out_dim(1920, 1080);
+    //glm::u32vec2 out_dim(1920, 1080);
 
     uint32_t spp = 1;
 
@@ -106,7 +107,7 @@ int main(int argc, char *argv[]) {
     }
 
     Renderer renderer({0, 1, batch_size, out_dim.x, out_dim.y, spp, depth,
-                       0, true, false, 0.f, BackendSelect::Vulkan});
+                       0, false, true, false, 0.f, BackendSelect::Vulkan});
 
     auto loader = renderer.makeLoader();
     auto scene = loader.loadScene(argv[1]);
@@ -124,13 +125,13 @@ int main(int argc, char *argv[]) {
     //glm::vec3 up(-0.207893, 0.972026, -0.109381);
 
     // Vase
-    //glm::vec3 eye(10.573854, 1.332727, -2.085712);
-    //glm::vec3 look(11.193787, 1.303279, -1.301609);
-    //glm::vec3 up(-0.018044, 0.998499, 0.051766);
+    glm::vec3 eye(10.573854, 1.332727, -2.085712);
+    glm::vec3 look(11.193787, 1.303279, -1.301609);
+    glm::vec3 up(-0.018044, 0.998499, 0.051766);
 
-    glm::vec3 eye(6.756720, 1.371557, -2.891368);
-    glm::vec3 look(7.585610, 1.306696, -2.335720);
-    glm::vec3 up(0.064486, 0.997720, 0.020260);
+    //glm::vec3 eye(7.1, 1.673785, -0.217743);
+    //glm::vec3 look(7.655676, 1.512004, -0.946787);
+    //glm::vec3 up(0.174367, 0.982914, -0.059044);
 
     // Mirror table
     //glm::vec3 eye(-6.207120, 0.825648, 0.911869);

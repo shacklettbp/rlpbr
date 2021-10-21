@@ -19,6 +19,7 @@ struct RenderConfig {
     uint32_t maxDepth;
     uint32_t maxTextureResolution;
     bool enablePhysics;
+    bool pathTracer;
     bool auxiliaryOutputs;
     float clampThreshold;
     BackendSelect backend;
