@@ -208,6 +208,9 @@ GLTFScene gltfLoad(filesystem::path gltf_path) noexcept
                         img.type = GLTFImageType::PNG;
                     } else if (mime == "image/x-basis") {
                         img.type = GLTFImageType::BASIS;
+                    } else {
+                        cerr << "Unsupported mime type: " << mime << endl;
+                        abort();
                     }
 
                     img.viewIdx = view_idx;
