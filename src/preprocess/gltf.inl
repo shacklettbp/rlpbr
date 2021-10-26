@@ -210,7 +210,8 @@ GLTFScene gltfLoad(filesystem::path gltf_path) noexcept
                         img.type = GLTFImageType::BASIS;
                     } else {
                         cerr << "Unsupported mime type: " << mime << endl;
-                        abort();
+                        img.type = GLTFImageType::JPEG;
+                        //abort();
                     }
 
                     img.viewIdx = view_idx;

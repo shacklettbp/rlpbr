@@ -13,6 +13,11 @@ add_executable(save_frame
 )
 target_link_libraries(save_frame rlpbr stb)
 
+add_executable(make_sequence
+    make_sequence.cpp
+)
+target_link_libraries(make_sequence rlpbr stb)
+
 #add_executable(load_test
 #    load_test.cpp
 #)

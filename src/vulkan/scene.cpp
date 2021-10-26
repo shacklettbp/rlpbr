@@ -766,7 +766,7 @@ void TLAS::build(const DeviceState &dev,
         VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
     tlas_geometry.pNext = nullptr;
     tlas_geometry.geometryType = VK_GEOMETRY_TYPE_INSTANCES_KHR;
-    tlas_geometry.flags = VK_GEOMETRY_OPAQUE_BIT_KHR;
+    tlas_geometry.flags = 0;
     auto &tlas_instances = tlas_geometry.geometry.instances;
     tlas_instances.sType =
         VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_INSTANCES_DATA_KHR;
