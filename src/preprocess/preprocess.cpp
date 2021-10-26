@@ -576,6 +576,129 @@ static vector<LightProperties> processLights(
 {
     vector<LightProperties> lights = initial_lights;
 
+    auto addLight = [&](glm::vec3 light_position) {
+         float offset = 0.25f;
+
+         glm::vec3 a(light_position.x - offset,
+                     light_position.y,
+                     light_position.z - offset);
+         glm::vec3 b(light_position.x - offset,
+                     light_position.y,
+                     light_position.z + offset);
+         glm::vec3 c(light_position.x + offset,
+                     light_position.y,
+                     light_position.z - offset);
+         glm::vec3 d(light_position.x + offset,
+                     light_position.y,
+                     light_position.z + offset);
+
+         geo.vertices.push_back(PackedVertex {
+             a,
+             encodeNormalTangent(glm::vec3(0.f, -1.f, 0.f),
+                                 glm::vec4(1.f, 0.f, 0.f, 1.f)),
+             glm::vec2(0.f),
+         });
+         geo.vertices.push_back(PackedVertex {
+             b,
+             encodeNormalTangent(glm::vec3(0.f, -1.f, 0.f),
+                                 glm::vec4(1.f, 0.f, 0.f, 1.f)),
+             glm::vec2(0.f),
+         });
+         geo.vertices.push_back(PackedVertex {
+             c,
+             encodeNormalTangent(glm::vec3(0.f, -1.f, 0.f),
+                                 glm::vec4(1.f, 0.f, 0.f, 1.f)),
+             glm::vec2(0.f),
+         });
+         geo.vertices.push_back(PackedVertex {
+             d,
+             encodeNormalTangent(glm::vec3(0.f, -1.f, 0.f),
+                                 glm::vec4(1.f, 0.f, 0.f, 1.f)),
+             glm::vec2(0.f),
+         });
+
+         uint32_t idx_offset = geo.indices.size();
+         geo.indices.push_back(geo.vertices.size() - 3);
+         geo.indices.push_back(geo.vertices.size() - 1);
+         geo.indices.push_back(geo.vertices.size() - 2);
+
+         geo.indices.push_back(geo.vertices.size() - 3);
+         geo.indices.push_back(geo.vertices.size() - 2);
+         geo.indices.push_back(geo.vertices.size() - 4);
+
+         geo.meshInfos.push_back(MeshInfo {
+             idx_offset,
+             2,
+             4,
+         });
+
+         string name = 
+             string("light_") + to_string(lights.size());
+
+         geo.objectInfos.push_back({
+             uint32_t(geo.meshInfos.size() - 1),
+             1,
+         });
+         geo.objectNames.push_back(name);
+
+         materials.push_back(Material {
+             name,
+             "",
+             "",
+             "",
+             "",
+             "",
+             "",
+             "",
+             "",
+             glm::vec3(0.f),
+             0.f,
+             glm::vec3(0.f),
+             0.f,
+             0.f,
+             0.f,
+             1.4f,
+             0.f,
+             0.f,
+             glm::vec3(0.f),
+             0.f,
+             0.f,
+             0.f,
+             glm::vec3(100.f, 90.f, 90.f),
+             false,
+         });
+
+         instances.push_back(InstanceProperties {
+             name,
+             uint32_t(geo.objectInfos.size() - 1),
+             { uint32_t(materials.size() - 1) },
+             glm::vec3(0.f),
+             glm::identity<glm::quat>(),
+             glm::vec3(1.f),
+             true,
+             false,
+         });
+
+         LightProperties tri_light;
+         tri_light.type = LightType::Triangle;
+         tri_light.triIdxOffset = idx_offset;
+         tri_light.triMatIdx = materials.size() - 1;
+
+         lights.push_back(tri_light);
+
+         tri_light.triIdxOffset = idx_offset + 3;
+         lights.push_back(tri_light);
+    };
+
+    //addLight(glm::vec3(12.223042, 2.553395, 0.287561));
+    addLight(glm::vec3(12.257022, 2.599679, -0.536874));
+    addLight(glm::vec3(6.974469, 2.599679, -1.988935));
+    addLight(glm::vec3(0.999015, 2.599679, -4.346648));
+    addLight(glm::vec3(-1.375, 2.599679, 0.588));
+    addLight(glm::vec3(-3.019, 2.599679, -4.04));
+    addLight(glm::vec3(-7.689, 2.599679, -1.475));
+
+#if 0
     {
         glm::vec3 ceiling_min(INFINITY, INFINITY, INFINITY);
         glm::vec3 ceiling_max(-INFINITY, -INFINITY, -INFINITY);
@@ -759,6 +882,7 @@ static vector<LightProperties> processLights(
             }
         }
     }
+#endif
 
 #if 0
     for (const auto &inst : instances) {
@@ -1507,7 +1631,7 @@ void ScenePreprocessor::dump(string_view out_path_name)
     // Header: magic
     write(uint32_t(0x55555555));
     write_scene(processed_geometry, processed_instances, default_bbox,
-                processed_lights, materials, scene_data_->desc.envMap,
+                processed_lights, materials, "versveldpas_4k.hdr",
                 scene_data_->dataDir);
     out.close();
 }

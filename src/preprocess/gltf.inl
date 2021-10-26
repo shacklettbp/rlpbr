@@ -210,7 +210,8 @@ GLTFScene gltfLoad(filesystem::path gltf_path) noexcept
                         img.type = GLTFImageType::BASIS;
                     } else {
                         cerr << "Unsupported mime type: " << mime << endl;
-                        abort();
+                        img.type = GLTFImageType::JPEG;
+                        //abort();
                     }
 
                     img.viewIdx = view_idx;
@@ -293,6 +294,12 @@ GLTFScene gltfLoad(filesystem::path gltf_path) noexcept
 
             float transmission_factor =
                 jsonGetOr(transmission_ext["transmissionFactor"], 0.f);
+
+            if (transmission_factor > 0.f || base_color.w < 1.f) {
+                transmission_factor = 1.f;
+                metallic = 0.f;
+                base_color = glm::vec4(1.f, 1.f, 1.f, 1.f);
+            }
 
             auto specular_ext = exts["KHR_materials_specular"];
 

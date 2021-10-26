@@ -125,6 +125,15 @@ uint32_t unpackLight(in Environment env,
 vec3 evalEnvMap(uint32_t map_idx, vec3 dir)
 {
     return vec3(0.f);
+
+    vec2 uv = dirToLatLong(dir);
+
+    vec3 v =
+        textureLod(sampler2D(textures[map_idx], repeatSampler), uv, 0.0).xyz;
+
+    v *= 100.f;
+
+    return v;
 }
 
 LightSample sampleEnvMap(uint32_t map_idx,
@@ -147,10 +156,14 @@ LightSample sampleEnvMap(uint32_t map_idx,
 vec3 getTriangleLightPoint(TriangleLight light, vec2 uv)
 {
     float su0 = sqrt(uv.x);
-    vec2 barys = vec2(1.f - su0, uv.y * su0);
+    vec2 b = vec2(1.f - su0, uv.y * su0);
+    vec3 barys = vec3(1.f - b.x - b.y, b.x, b.y);
 
-    return interpolatePosition(light.verts[0], light.verts[1], light.verts[2],
-                               barys);
+    vec3 position = barys.x * light.verts[0] +
+        barys.y * light.verts[1] +
+        barys.z * light.verts[2];
+
+    return position;
 }
 
 vec3 getPortalLightPoint(PortalLight light, vec2 uv)
@@ -320,6 +333,7 @@ LightInfo sampleLights(inout Sampler rng, in Environment env,
 {
     //uint32_t total_lights = env.numLights + 1;
     uint32_t total_lights = env.numLights;
+    //uint32_t total_lights = 1;
 
     uint32_t light_idx = uint32_t(samplerGet1D(rng) * total_lights);
 

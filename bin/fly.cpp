@@ -194,7 +194,7 @@ int main(int argc, char *argv[]) {
     glm::vec2 mouse_prev = cursorPosition(window);
 
     RenderBatch batch = renderer.makeRenderBatch();
-    batch.initEnvironment(0, renderer.makeEnvironment(scene, cam.eye, cam.look, cam.up));
+    batch.initEnvironment(0, renderer.makeEnvironment(scene, cam.eye, cam.look, cam.up, 60.f));
     //envs.back().addLight(glm::vec3(-1.950218, 1.623819, 0.863453), glm::vec3(10.f));
     //envs.back().addLight(glm::vec3(1.762336, 1.211801, -4.574429), glm::vec3(10.f));
     //envs.back().addLight(glm::vec3(8.107919, 1.345027, -1.867001), glm::vec3(10.f));
