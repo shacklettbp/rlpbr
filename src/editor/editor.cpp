@@ -6,6 +6,7 @@
 #include "rlpbr_core/utils.hpp"
 #include "rlpbr_core/scene.hpp"
 
+#include <GLFW/glfw3.h>
 #include <imgui.h>
 #include "imgui_extensions.hpp"
 
@@ -15,6 +16,7 @@
 #include <thread>
 
 #include <glm/gtc/type_ptr.hpp>
+#include <glm/gtc/quaternion.hpp>
 #include <glm/gtx/string_cast.hpp>
 
 using namespace std;
@@ -24,6 +26,7 @@ namespace editor {
 
 namespace InternalConfig {
 inline constexpr float cameraMoveSpeed = 5.f;
+inline constexpr float mouseSpeed = 2e-4f;
 
 inline constexpr auto nsPerFrame = chrono::nanoseconds(8333333);
 inline constexpr auto nsPerFrameLongWait =
@@ -138,6 +141,8 @@ void Editor::loadScene(const char *scene_name)
         false,
         optional<EditorEpisodes>(),
         EpisodeConfig(),
+        {},
+        -1,
     });
 }
 
@@ -224,20 +229,72 @@ static void handleCamera(GLFWwindow *window, EditorScene &scene)
     };
 
     glm::vec3 translate(0.f);
-    if (keyPressed(GLFW_KEY_W)) {
-        translate += scene.cam.up;
+
+    auto cursorPosition = [window]() {
+        double mouse_x, mouse_y;
+        glfwGetCursorPos(window, &mouse_x, &mouse_y);
+
+        return glm::vec2(mouse_x, -mouse_y);
+    };
+
+
+    if (glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_2) == GLFW_PRESS) {
+        glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+
+        glm::vec2 mouse_cur = cursorPosition();
+        glm::vec2 mouse_delta = mouse_cur - scene.cam.mousePrev;
+
+        auto around_right = glm::angleAxis(
+            mouse_delta.y * InternalConfig::mouseSpeed, scene.cam.right);
+
+        auto around_up = glm::angleAxis(
+            -mouse_delta.x * InternalConfig::mouseSpeed, glm::vec3(0, 1, 0));
+
+        auto rotation = around_up * around_right;
+
+        scene.cam.up = rotation * scene.cam.up;
+        scene.cam.view = rotation * scene.cam.view;
+        scene.cam.right = rotation * scene.cam.right;
+
+        if (keyPressed(GLFW_KEY_W)) {
+            translate += scene.cam.view;
+        }
+
+        if (keyPressed(GLFW_KEY_A)) {
+            translate -= scene.cam.right;
+        }
+
+        if (keyPressed(GLFW_KEY_S)) {
+            translate -= scene.cam.view;
+        }
+
+        if (keyPressed(GLFW_KEY_D)) {
+            translate += scene.cam.right;
+        }
+
+        scene.cam.mousePrev = mouse_cur;
+    } else {
+        if (keyPressed(GLFW_KEY_W)) {
+            translate += scene.cam.up;
+        }
+
+        if (keyPressed(GLFW_KEY_A)) {
+            translate -= scene.cam.right;
+        }
+
+        if (keyPressed(GLFW_KEY_S)) {
+            translate -= scene.cam.up;
+        }
+
+        if (keyPressed(GLFW_KEY_D)) {
+            translate += scene.cam.right;
+        }
+
+        scene.cam.mousePrev = cursorPosition();
     }
 
-    if (keyPressed(GLFW_KEY_A)) {
-        translate -= scene.cam.right;
-    }
-
-    if (keyPressed(GLFW_KEY_S)) {
-        translate -= scene.cam.up;
-    }
-
-    if (keyPressed(GLFW_KEY_D)) {
-        translate += scene.cam.right;
+    if (glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_2) == GLFW_RELEASE) {
+        glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
     }
 
     scene.cam.position += translate * InternalConfig::cameraMoveSpeed *
@@ -418,6 +475,102 @@ static void handleEpisodes(EditorScene &scene)
     ImGui::End();
 }
 
+static void handleLights(EditorScene &scene)
+{
+    ImGui::Begin("Lights");
+    ImGui::Separator();
+    if (ImGui::Button("Add Light")) {
+        const float area_offset = 0.25f;
+        AreaLight new_light {
+            {
+                glm::vec3(-area_offset, 0, -area_offset),
+                glm::vec3(-area_offset, 0, area_offset),
+                glm::vec3(area_offset, 0, -area_offset),
+                glm::vec3(area_offset, 0, area_offset),
+            },
+            glm::vec3(0),
+        };
+
+        if (scene.selectedLight == -1) {
+            new_light.translate = scene.cam.position + 0.5f * scene.cam.view;
+        } else {
+            new_light.translate = scene.lights[scene.selectedLight].translate +
+                glm::vec3(2.f * area_offset, 0, 2.f * area_offset);
+        }
+
+        scene.lights.push_back(new_light);
+        scene.selectedLight = scene.lights.size() - 1;
+    }
+
+    ImGuiEXT::PushDisabled(scene.lights.size() <= 1);
+    ImGui::PushItemWidth(4.f * ImGui::GetFontSize());
+
+    ImGui::DragInt("Selected Light", &scene.selectedLight, 0.05f,
+                   0, scene.lights.size() - 1,
+                   "%d", ImGuiSliderFlags_AlwaysClamp);
+
+    ImGui::PopItemWidth();
+    ImGuiEXT::PopDisabled();
+
+    ImGuiEXT::PushDisabled(scene.selectedLight == -1);
+
+    AreaLight *cur_light = nullptr;
+    if (scene.selectedLight != -1) {
+        cur_light = &scene.lights[scene.selectedLight];
+    }
+
+    glm::vec3 fake(0);
+    auto pos_ptr = glm::value_ptr(fake);
+    if (cur_light) {
+        pos_ptr = glm::value_ptr(cur_light->translate);
+    }
+
+    ImGui::PushItemWidth(ImGui::GetFontSize() * 15.f);
+    glm::vec3 speed(0.01f);
+    ImGuiEXT::DragFloat3SeparateRange("Position",
+        pos_ptr,
+        glm::value_ptr(speed),
+        glm::value_ptr(scene.bbox.pMin),
+        glm::value_ptr(scene.bbox.pMax),
+        "%.3f",
+        ImGuiSliderFlags_AlwaysClamp);
+
+    ImGuiEXT::PopDisabled();
+
+
+    bool save = ImGui::Button("Save Lights");
+    ImGui::SameLine();
+    bool load = ImGui::Button("Load Lights");
+
+    if (save || load) {
+        filesystem::path lights_path =
+            filesystem::path(scene.scenePath).replace_extension("lights");
+        if (save) {
+            ofstream lights_out(lights_path, ios::binary);
+            uint32_t num_lights = scene.lights.size();
+            lights_out.write((char *)&num_lights, sizeof(uint32_t));
+            for (const AreaLight &light : scene.lights) {
+                lights_out.write((char *)&light, sizeof(AreaLight));
+            }
+        }
+
+        if (load) {
+            ifstream lights_in(lights_path, ios::binary);
+            uint32_t num_lights;
+            lights_in.read((char *)&num_lights, sizeof(uint32_t));
+            scene.lights.clear();
+            scene.lights.reserve(num_lights);
+            for (int i = 0; i < (int)num_lights; i++) {
+                AreaLight light;
+                lights_in.read((char *)&light, sizeof(AreaLight));
+                scene.lights.push_back(light);
+            }
+        }
+    }
+
+    ImGui::End();
+}
+
 static float throttleFPS(chrono::time_point<chrono::steady_clock> start) {
     using namespace chrono;
     using namespace chrono_literals;
@@ -454,6 +607,7 @@ void Editor::loop()
         handleNavmesh(scene);
         handleEpisodes(scene);
         handleCamera(window, scene);
+        handleLights(scene);
         render(scene, frame_duration);
 
         frame_duration = throttleFPS(start_time);
@@ -480,6 +634,47 @@ static void renderCFGUI(Renderer::FrameConfig &cfg,
     ImGui::TextUnformatted("Camera");
     ImGui::Separator();
 
+    auto side_size = ImGui::CalcTextSize(" Bottom " );
+    side_size.y *= 1.4f;
+    ImGui::PushStyleVar(ImGuiStyleVar_ButtonTextAlign,
+                        ImVec2(0.5f, 0.f));
+
+    if (ImGui::Button("Top", side_size)) {
+        cam.position = glm::vec3(0.f, 10.f, 0.f);
+        cam.view = glm::vec3(0, -1, 0.f);
+        cam.up = glm::vec3(0, 0, 1.f);
+        cam.right = glm::cross(cam.view, cam.up);
+    }
+
+    ImGui::SameLine();
+
+    if (ImGui::Button("Left", side_size)) {
+        cam.position = glm::vec3(-10.f, 0, 0);
+        cam.view = glm::vec3(1, 0, 0);
+        cam.up = glm::vec3(0, 1, 0);
+        cam.right = glm::cross(cam.view, cam.up);
+    }
+
+    ImGui::SameLine();
+
+    if (ImGui::Button("Right", side_size)) {
+        cam.position = glm::vec3(10.f, 0, 0);
+        cam.view = glm::vec3(-1, 0, 0);
+        cam.up = glm::vec3(0, 1, 0);
+        cam.right = glm::cross(cam.view, cam.up);
+    }
+
+    ImGui::SameLine();
+
+    if (ImGui::Button("Bottom", side_size)) {
+        cam.position = glm::vec3(0, -10, 0);
+        cam.view = glm::vec3(0, 1, 0);
+        cam.up = glm::vec3(0, 0, 1);
+        cam.right = glm::cross(cam.view, cam.up);
+    }
+
+    ImGui::PopStyleVar();
+
     auto ortho_size = ImGui::CalcTextSize(" Orthographic ");
     ImGui::PushStyleVar(ImGuiStyleVar_SelectableTextAlign,
                         ImVec2(0.5f, 0.f));
@@ -495,6 +690,7 @@ static void renderCFGUI(Renderer::FrameConfig &cfg,
     }
 
     ImGui::SameLine();
+
     ImGui::PopStyleVar();
 
     ImGui::TextUnformatted("Projection");
@@ -607,8 +803,12 @@ void Editor::render(EditorScene &scene, float frame_duration)
         }
     }
 
+    total_vertices += scene.lights.size() * 4;
+    uint32_t total_light_indices = scene.lights.size() * 6;
+
     vector<OverlayVertex> tmp_verts(total_vertices);
-    vector<uint32_t> tmp_indices(total_tri_indices + total_line_indices);
+    vector<uint32_t> tmp_indices(total_tri_indices + total_line_indices +
+                                 total_light_indices);
 
     OverlayVertex *vert_ptr = tmp_verts.data();
     uint32_t *idx_ptr = tmp_indices.data();
@@ -632,6 +832,29 @@ void Editor::render(EditorScene &scene, float frame_duration)
                    sizeof(uint32_t) *scene.navmesh->renderData.boundaryLines.size());
             idx_ptr += scene.navmesh->renderData.boundaryLines.size();
         }
+    }
+
+    for (int i = 0; i < (int)scene.lights.size(); i++) {
+        auto &light = scene.lights[i];
+        bool is_selected = i == scene.selectedLight;
+        uint32_t idx_offset = i * 4;
+
+        for (int j = 0; j < 4; j++) {
+            *vert_ptr++ = OverlayVertex {
+                light.vertices[j] + light.translate,
+                is_selected ?
+                    glm::u8vec4(130, 130, 255, 255) :
+                    glm::u8vec4(255, 255, 255, 255),
+            };
+        }
+
+        *idx_ptr++ = idx_offset + 1;
+        *idx_ptr++ = idx_offset + 3;
+        *idx_ptr++ = idx_offset + 2;
+
+        *idx_ptr++ = idx_offset + 1;
+        *idx_ptr++ = idx_offset + 2;
+        *idx_ptr++ = idx_offset;
     }
 
     if (scene.episodes.has_value()) {
@@ -663,9 +886,10 @@ void Editor::render(EditorScene &scene, float frame_duration)
     }
 
     renderer_.render(scene.hdl.get(), scene.cam, scene.renderCfg,
-                     tmp_verts.size(), tmp_verts.data(),
+                     tmp_verts.data(), tmp_indices.data(),
+                     tmp_verts.size(), 
                      total_tri_indices, total_line_indices,
-                     tmp_indices.data());
+                     total_light_indices);
 }
 
 Editor::Editor(uint32_t gpu_id, uint32_t img_width, uint32_t img_height)

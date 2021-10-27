@@ -572,46 +572,59 @@ static vector<LightProperties> processLights(
     ProcessedGeometry<PackedVertex> &geo,
     vector<InstanceProperties> &instances,
     vector<Material> &materials,
-    const AABB &scene_bbox)
+    const AABB &scene_bbox,
+    const filesystem::path &lights_path)
 {
     vector<LightProperties> lights = initial_lights;
 
-    auto addLight = [&](glm::vec3 light_position) {
-         float offset = 0.25f;
+    materials.push_back(Material {
+        "light_material",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        glm::vec3(0.f),
+        0.f,
+        glm::vec3(0.f),
+        0.f,
+        0.f,
+        0.f,
+        1.4f,
+        0.f,
+        0.f,
+        glm::vec3(0.f),
+        0.f,
+        0.f,
+        0.f,
+        glm::vec3(100.f, 90.f, 90.f),
+        false,
+    });
 
-         glm::vec3 a(light_position.x - offset,
-                     light_position.y,
-                     light_position.z - offset);
-         glm::vec3 b(light_position.x - offset,
-                     light_position.y,
-                     light_position.z + offset);
-         glm::vec3 c(light_position.x + offset,
-                     light_position.y,
-                     light_position.z - offset);
-         glm::vec3 d(light_position.x + offset,
-                     light_position.y,
-                     light_position.z + offset);
-
+    auto addLight = [&](glm::vec3 *verts, glm::vec3 translate) {
          geo.vertices.push_back(PackedVertex {
-             a,
+             verts[0] + translate,
              encodeNormalTangent(glm::vec3(0.f, -1.f, 0.f),
                                  glm::vec4(1.f, 0.f, 0.f, 1.f)),
              glm::vec2(0.f),
          });
          geo.vertices.push_back(PackedVertex {
-             b,
+             verts[1] + translate,
              encodeNormalTangent(glm::vec3(0.f, -1.f, 0.f),
                                  glm::vec4(1.f, 0.f, 0.f, 1.f)),
              glm::vec2(0.f),
          });
          geo.vertices.push_back(PackedVertex {
-             c,
+             verts[2] + translate,
              encodeNormalTangent(glm::vec3(0.f, -1.f, 0.f),
                                  glm::vec4(1.f, 0.f, 0.f, 1.f)),
              glm::vec2(0.f),
          });
          geo.vertices.push_back(PackedVertex {
-             d,
+             verts[3] + translate,
              encodeNormalTangent(glm::vec3(0.f, -1.f, 0.f),
                                  glm::vec4(1.f, 0.f, 0.f, 1.f)),
              glm::vec2(0.f),
@@ -641,33 +654,6 @@ static vector<LightProperties> processLights(
          });
          geo.objectNames.push_back(name);
 
-         materials.push_back(Material {
-             name,
-             "",
-             "",
-             "",
-             "",
-             "",
-             "",
-             "",
-             "",
-             glm::vec3(0.f),
-             0.f,
-             glm::vec3(0.f),
-             0.f,
-             0.f,
-             0.f,
-             1.4f,
-             0.f,
-             0.f,
-             glm::vec3(0.f),
-             0.f,
-             0.f,
-             0.f,
-             glm::vec3(100.f, 90.f, 90.f),
-             false,
-         });
-
          instances.push_back(InstanceProperties {
              name,
              uint32_t(geo.objectInfos.size() - 1),
@@ -690,15 +676,24 @@ static vector<LightProperties> processLights(
          lights.push_back(tri_light);
     };
 
-#if 0
-    addLight(glm::vec3(12.257022, 2.599679, -0.536874));
-    addLight(glm::vec3(6.974469, 2.599679, -1.988935));
-    addLight(glm::vec3(0.999015, 2.599679, -4.346648));
-    addLight(glm::vec3(-1.375, 2.599679, 0.588));
-    addLight(glm::vec3(-3.019, 2.599679, -4.04));
-    addLight(glm::vec3(-7.689, 2.599679, -1.475));
-#endif
+    ifstream serialized_lights(lights_path, ios::binary);
 
+    if (!serialized_lights.is_open()) return lights;
+
+    {
+        uint32_t num_lights;
+        serialized_lights.read((char *)&num_lights, sizeof(uint32_t));
+
+        for (int i = 0; i < (int)num_lights; i++) {
+            glm::vec3 verts[4];
+            serialized_lights.read((char *)&verts, sizeof(glm::vec3) * 4);
+            glm::vec3 translate;
+            serialized_lights.read((char *)&translate, sizeof(glm::vec3));
+            addLight(verts, translate);
+        }
+    }
+
+#if 0
     {
         glm::vec3 ceiling_min(INFINITY, INFINITY, INFINITY);
         glm::vec3 ceiling_max(-INFINITY, -INFINITY, -INFINITY);
@@ -774,6 +769,7 @@ static vector<LightProperties> processLights(
             }
         }
     }
+#endif
 
 #if 0
     for (const auto &inst : instances) {
@@ -1220,8 +1216,11 @@ void ScenePreprocessor::dump(string_view out_path_name)
 
     vector<Material> materials = scene_data_->desc.materials;
 
+    auto lights_path =
+        filesystem::path(out_path_name).replace_extension("lights");
     auto processed_lights = processLights(scene_data_->desc.defaultLights,
-        processed_geometry, processed_instances, materials, default_bbox);
+        processed_geometry, processed_instances, materials, default_bbox,
+        lights_path);
 
     auto processed_physics_state =
         ProcessedPhysicsState::make(processed_geometry, !scene_data_->dumpSDFs);

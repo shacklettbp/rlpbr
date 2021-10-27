@@ -53,7 +53,8 @@ layout (set = 1, binding = 2) readonly buffer MatParams {
 
 layout (location = 0) in InInterface {
     vec3 cameraSpacePosition;
-    vec3 normal;
+    vec3 camNormal;
+    vec3 objNormal;
     vec4 tangentAndSign;
     vec2 uv;
     flat uint materialIndex;
@@ -84,5 +85,6 @@ void main()
     Material mat = processMaterial(mat_params, base_texture_idx,
         iface.uv, vec4(0.f));
 
-    out_color = vec4(mat.rho, 1.f);
+    out_color = vec4(mat.rho, 1.f) * abs(dot(normalize(iface.cameraSpacePosition),
+                                         normalize(iface.camNormal)));
 }

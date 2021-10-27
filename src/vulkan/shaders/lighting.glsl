@@ -325,9 +325,114 @@ void sampleTriangleLight(in TriangleLight tri_light,
 }
 
 // Output functions
-
+#define ENABLE_RIS 1
+#ifdef ENABLE_RIS
 LightInfo sampleLights(inout Sampler rng, in Environment env, 
-    in vec3 origin, in vec3 base_normal)
+    in vec3 origin, in vec3 world_geo_normal,
+    in vec3 world_shading_normal)
+{
+    vec2 light_sample_uv = samplerGet2D(rng);
+
+    uint32_t total_lights = env.numLights;
+    float inv_selection_pdf = float(total_lights);
+    
+    const int num_ris_lights = 4;
+    SceneAddresses scene_addrs = sceneAddrs[env.sceneID];
+
+    vec3 selected_origin;
+    vec3 selected_dir;
+    float selected_dist;
+    float selected_dist2;
+    float selected_weight;
+    float selected_cos_theta;
+    uint32_t selected_mat = ~0u;
+    float total_ris_weight = 0.f;
+
+    for (int i = 0; i < num_ris_lights; i++) {
+        TriangleLight light;
+        {
+            uint32_t light_idx = min(
+                uint32_t(samplerGet1D(rng) * total_lights),
+                total_lights - 1);
+
+            PackedLight packed =
+                lights[nonuniformEXT(env.baseLightOffset + light_idx)];
+            light = unpackTriangleLight(scene_addrs.vertAddr,
+                                        scene_addrs.idxAddr,
+                                        packed.data);
+        }
+
+        vec3 sampled_pos = getTriangleLightPoint(light, light_sample_uv);
+        vec3 dir_check = sampled_pos - origin;
+
+        vec3 shadow_offset_normal =
+            dot(dir_check, world_geo_normal) > 0 ?
+                world_geo_normal  : -world_geo_normal;
+
+        vec3 shadow_origin =
+            offsetRayOrigin(origin, shadow_offset_normal);
+
+        vec3 to_light = sampled_pos - shadow_origin;
+        
+        float dist_to_light2 = dot(to_light, to_light);
+        float dist_to_light = sqrt(dist_to_light2);
+        to_light /= dist_to_light;
+
+        vec3 c = cross(light.verts[1] - light.verts[0],
+                       light.verts[2] - light.verts[0]);
+
+        float c_len = length(c);
+        vec3 tri_normal = c / c_len;
+        float tri_area = 0.5f * c_len;
+
+        float inv_source_pdf = tri_area * inv_selection_pdf;
+
+        float cos_theta = abs(dot(tri_normal, to_light));
+        float inv_dist2 = dist_to_light2 == 0.f ? 0.f : 1.f / dist_to_light2;
+        float target_weight = cos_theta * inv_dist2;
+
+        float ris_weight = target_weight * inv_source_pdf;
+
+        float ris_selector = samplerGet1D(rng);
+
+        total_ris_weight += ris_weight;
+
+        // Hack to ensure first entry is selected
+        // This shouldn't be necessary, but there is a weird situation
+        // where ris_weight / total_ris_weight == 1 - epsilon,
+        // on the first iteration, and ris_selector == 1 - epsilon
+        if (selected_mat == ~0u ||
+                ris_selector < (ris_weight / total_ris_weight)) {
+            selected_origin = shadow_origin;
+            selected_dir = to_light;
+            selected_dist = dist_to_light;
+            selected_dist2 = dist_to_light2;
+            selected_weight = target_weight;
+            selected_mat = light.matIdx;
+            selected_cos_theta = cos_theta;
+        }
+    }
+
+    // Normalize resampled weight and convert to solid angle PDF
+    float pdf = selected_weight / (total_ris_weight / num_ris_lights) *
+        (selected_dist2 / selected_cos_theta);
+
+    vec3 emittance = getMaterialEmittance(scene_addrs.matAddr,
+                                          selected_mat);
+
+    LightInfo info;
+    info.lightSample.toLight = selected_dir;
+    info.lightSample.irradiance = emittance;
+    info.lightSample.pdf = pdf;
+    info.shadowRayOrigin = selected_origin;
+    info.shadowRayLength = selected_dist;
+
+    return info;
+}
+
+#else
+LightInfo sampleLights(inout Sampler rng, in Environment env, 
+    in vec3 origin, in vec3 base_normal, in vec3 shading_normal)
 {
     //uint32_t total_lights = env.numLights + 1;
     uint32_t total_lights = env.numLights;
@@ -408,6 +513,7 @@ LightInfo sampleLights(inout Sampler rng, in Environment env,
 
     return info;
 }
+#endif
 
 DeltaLightInfo getLight(in Environment env, int idx, vec3 origin)
 {

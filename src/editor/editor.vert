@@ -41,8 +41,8 @@ struct Vertex {
 };
 
 struct InstanceTransform {
-    mat4x3 o2w;
-    mat4x3 w2o;
+    vec4 o2w[3];
+    vec4 w2o[3];
 };
 
 layout (set = 0, binding = 0, scalar) readonly buffer TransformInfos {
@@ -63,7 +63,8 @@ layout (push_constant, scalar) uniform PushConstant {
 
 layout (location = 0) out OutInterface {
     vec3 cameraSpacePosition;
-    vec3 normal;
+    vec3 camNormal;
+    vec3 objNormal;
     vec4 tangentAndSign;
     vec2 uv;
     flat uint materialIndex;
@@ -92,31 +93,40 @@ Vertex unpackVertex(uint32_t idx)
     return vert;
 }
 
+void getTransforms(in uint32_t inst_idx, out mat4 o2w, out mat3 n2w)
+{
+    InstanceTransform txfm = transforms[gl_InstanceIndex];
+
+    o2w = mat4(txfm.o2w[0].xyz, 0.f,
+               txfm.o2w[0].w, txfm.o2w[1].xy, 0.f,
+               txfm.o2w[1].zw, txfm.o2w[2].x, 0.f,
+               txfm.o2w[2].yzw, 1.f);
+
+    n2w = mat3(txfm.w2o[0][0], txfm.w2o[0][3], txfm.w2o[1][2],
+               txfm.w2o[0][1], txfm.w2o[1][0], txfm.w2o[1][3],
+               txfm.w2o[0][2], txfm.w2o[1][1], txfm.w2o[2][0]);
+}
+
 void main()
 {
     Vertex v = unpackVertex(gl_VertexIndex);
     vec4 object_space = vec4(v.position, 1.f);
 
-    InstanceTransform txfm = transforms[gl_InstanceIndex];
+    mat4 o2w;
+    mat3 n2w;
+    getTransforms(gl_InstanceIndex, o2w, n2w);
 
-    mat4 model_mat = mat4(txfm.o2w[0], 0.f,
-                          txfm.o2w[1], 0.f,
-                          txfm.o2w[2], 0.f,
-                          txfm.o2w[3], 1.f);
-
-    mat4 normal_mat = mat4(txfm.w2o[0], 0.f,
-                           txfm.w2o[1], 0.f,
-                           txfm.w2o[2], 0.f,
-                           txfm.w2o[3], 1.f);
-
-    mat4 mv = draw_const.view * model_mat;
+    mat4 mv = draw_const.view * o2w;
 
     vec4 camera_space = mv * object_space;
+
+    mat3 normal_mv = mat3(draw_const.view) * n2w;
 
     gl_Position = draw_const.proj * camera_space;
 
     iface.cameraSpacePosition = camera_space.xyz;
-    iface.normal = v.normal;
+    iface.camNormal = normal_mv * v.normal;
+    iface.objNormal = v.normal;
     iface.tangentAndSign = v.tangentAndSign;
     iface.uv = v.uv;
     iface.materialIndex = matIndices[gl_InstanceIndex];

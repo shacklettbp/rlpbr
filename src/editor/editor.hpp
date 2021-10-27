@@ -27,6 +27,11 @@ struct EditorEpisodes {
     std::vector<uint32_t> indices;
 };
 
+struct AreaLight {
+    std::array<glm::vec3, 4> vertices;
+    glm::vec3 translate;
+};
+
 struct EditorScene {
     std::string scenePath;
     std::shared_ptr<Scene> hdl;
@@ -45,6 +50,9 @@ struct EditorScene {
 
     std::optional<EditorEpisodes> episodes;
     EpisodeConfig episodeCfg;
+
+    std::vector<AreaLight> lights;
+    int selectedLight;
 };
 
 class Editor {

@@ -1053,8 +1053,7 @@ Renderer::Renderer(uint32_t gpu_id, uint32_t img_width, uint32_t img_height)
       loader_(dev, alloc, transfer_wrapper_,
               render_transfer_wrapper_,
               scene_set_,
-              //dev.gfxQF, ~0u)
-              dev.gfxQF, 128)
+              dev.gfxQF, ~0u)
 {
     for (int i = 0; i < (int)frames_.size(); i++) {
         makeFrame(dev, alloc, fb_dims_, render_pass_,
@@ -1147,11 +1146,12 @@ static pair<glm::mat4, glm::mat4> computeCameraMatrices(
 
 void Renderer::render(Scene *raw_scene, const EditorCam &cam,
                       const FrameConfig &cfg,
-                      uint32_t num_overlay_vertices,
-                      const OverlayVertex *overlay_vertices,
+                      const OverlayVertex *extra_vertices,
+                      const uint32_t *extra_indices,
+                      uint32_t num_extra_vertices,
                       uint32_t num_overlay_tri_indices,
                       uint32_t num_overlay_line_indices,
-                      const uint32_t *overlay_indices)
+                      uint32_t num_light_indices)
 {
     vk::VulkanScene *scene = static_cast<vk::VulkanScene *>(raw_scene);
 
@@ -1250,47 +1250,59 @@ void Renderer::render(Scene *raw_scene, const EditorCam &cam,
         }
     }
 
-    for (int i = 0; i < (int)num_overlay_vertices; i++) {
-        frame.renderInput.overlayVertices[i] = overlay_vertices[i];
+    for (int i = 0; i < (int)num_extra_vertices; i++) {
+        frame.renderInput.overlayVertices[i] = extra_vertices[i];
     }
 
-    uint32_t *overlay_idx_ptr = frame.renderInput.overlayIndices;
+    uint32_t *extra_idx_ptr = frame.renderInput.overlayIndices;
     int total_overlay_indices =
-        num_overlay_line_indices + num_overlay_tri_indices;
+        num_overlay_line_indices + num_overlay_tri_indices +
+        num_light_indices;
     assert(total_overlay_indices <
            (int)InternalConfig::initMaxOverlayIndices);
-    assert(num_overlay_vertices < InternalConfig::initMaxOverlayVertices);
+    assert(num_extra_vertices < InternalConfig::initMaxOverlayVertices);
 
     for (int i = 0; i < (int)total_overlay_indices; i++) {
-        overlay_idx_ptr[i] = overlay_indices[i];
+        extra_idx_ptr[i] = extra_indices[i];
     }
 
     if (total_overlay_indices > 0) {
         glm::vec4 fake;
-        if (!cfg.wireframeOnly) {
-            dev.dt.cmdBindPipeline(draw_cmd,
-                VK_PIPELINE_BIND_POINT_GRAPHICS,
-                overlay_pipeline_.hdls[
-                    InternalConfig::navPipelineIdxs.filled]);
-            dev.dt.cmdBindDescriptorSets(draw_cmd,
-                VK_PIPELINE_BIND_POINT_GRAPHICS,
-                overlay_pipeline_.layout, 0, 1,
-                &frame.overlayShaderSet, 0, nullptr);
+        dev.dt.cmdBindPipeline(draw_cmd,
+            VK_PIPELINE_BIND_POINT_GRAPHICS,
+            overlay_pipeline_.hdls[
+                InternalConfig::navPipelineIdxs.filled]);
+        dev.dt.cmdBindDescriptorSets(draw_cmd,
+            VK_PIPELINE_BIND_POINT_GRAPHICS,
+            overlay_pipeline_.layout, 0, 1,
+            &frame.overlayShaderSet, 0, nullptr);
 
+        dev.dt.cmdPushConstants(draw_cmd, overlay_pipeline_.layout,
+            VK_SHADER_STAGE_VERTEX_BIT |
+            VK_SHADER_STAGE_FRAGMENT_BIT,
+            offsetof(NavmeshPushConst, color),
+            sizeof(glm::vec4), &fake);
+
+        if (!cfg.wireframeOnly) {
             dev.dt.cmdBindIndexBuffer(draw_cmd,
                 frame.renderInput.buffer.buffer,
                 frame.renderInput.overlayIndexOffset,
                 VK_INDEX_TYPE_UINT32);
 
-            dev.dt.cmdPushConstants(draw_cmd, overlay_pipeline_.layout,
-                VK_SHADER_STAGE_VERTEX_BIT |
-                VK_SHADER_STAGE_FRAGMENT_BIT,
-                offsetof(NavmeshPushConst, color),
-                sizeof(glm::vec4), &fake);
-
             dev.dt.cmdDrawIndexed(draw_cmd, num_overlay_tri_indices,
                                  1, 0, 0, 0);
+
         }
+
+        dev.dt.cmdBindIndexBuffer(draw_cmd,
+            frame.renderInput.buffer.buffer,
+            frame.renderInput.overlayIndexOffset +
+                sizeof(uint32_t) * (num_overlay_tri_indices +
+                                    num_overlay_line_indices),
+            VK_INDEX_TYPE_UINT32);
+
+        dev.dt.cmdDrawIndexed(draw_cmd, num_light_indices,
+                             1, 0, 0, 0);
 
         VkPipeline wire_pipeline = overlay_pipeline_.hdls[
             cfg.linesNoDepthTest ?

@@ -351,7 +351,7 @@ PathVertexState processPathVertex(inout Sampler rng, in Environment env,
     }
 
     LightInfo light_info = sampleLights(rng, env,
-        hit.position, hit.geoNormal);
+        hit.position, hit.geoNormal, hit.tangentFrame.normal);
     
     ShadeResult shade_result = shade(rng, hit.material,
         light_info.lightSample, -ray_dir, hit.tangentFrame);
@@ -478,7 +478,7 @@ PrimaryResult directLighting(in u32vec3 idx, in uint32_t linear_idx,
     result.vertState.radiance = hit.material.emittance;
 
     LightInfo light_info = sampleLights(rng, env,
-        hit.position, hit.geoNormal);
+        hit.position, hit.geoNormal, hit.tangentFrame.normal);
     
     vec3 wi = normalize(worldToLocalIncoming(light_info.lightSample.toLight,
                                              hit.tangentFrame));

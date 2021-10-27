@@ -62,6 +62,7 @@ struct EditorCam {
     bool perspective = true;
     float fov = 90.f;
     float orthoHeight = 5.f;
+    glm::vec2 mousePrev {0.f, 0.f};
 };
 
 class Renderer {
@@ -87,11 +88,12 @@ public:
     void startFrame();
     void render(Scene *scene, const EditorCam &cam,
                 const FrameConfig &cfg,
-                uint32_t num_overlay_vertices,
-                const OverlayVertex *overlay_vertices,
+                const OverlayVertex *extra_vertices,
+                const uint32_t *extra_indices,
+                uint32_t num_extra_vertices,
                 uint32_t num_overlay_tri_indices,
                 uint32_t num_overlay_line_indices,
-                const uint32_t *overlay_indices);
+                uint32_t num_light_indices);
 
     void waitForIdle();
 
