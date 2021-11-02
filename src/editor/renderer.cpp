@@ -1053,7 +1053,7 @@ Renderer::Renderer(uint32_t gpu_id, uint32_t img_width, uint32_t img_height)
       loader_(dev, alloc, transfer_wrapper_,
               render_transfer_wrapper_,
               scene_set_,
-              dev.gfxQF, ~0u)
+              dev.gfxQF, 128)
 {
     for (int i = 0; i < (int)frames_.size(); i++) {
         makeFrame(dev, alloc, fb_dims_, render_pass_,
@@ -1283,26 +1283,20 @@ void Renderer::render(Scene *raw_scene, const EditorCam &cam,
             offsetof(NavmeshPushConst, color),
             sizeof(glm::vec4), &fake);
 
-        if (!cfg.wireframeOnly) {
-            dev.dt.cmdBindIndexBuffer(draw_cmd,
-                frame.renderInput.buffer.buffer,
-                frame.renderInput.overlayIndexOffset,
-                VK_INDEX_TYPE_UINT32);
+        dev.dt.cmdBindIndexBuffer(draw_cmd,
+            frame.renderInput.buffer.buffer,
+            frame.renderInput.overlayIndexOffset,
+            VK_INDEX_TYPE_UINT32);
 
+        if (!cfg.wireframeOnly) {
             dev.dt.cmdDrawIndexed(draw_cmd, num_overlay_tri_indices,
                                  1, 0, 0, 0);
 
         }
 
-        dev.dt.cmdBindIndexBuffer(draw_cmd,
-            frame.renderInput.buffer.buffer,
-            frame.renderInput.overlayIndexOffset +
-                sizeof(uint32_t) * (num_overlay_tri_indices +
-                                    num_overlay_line_indices),
-            VK_INDEX_TYPE_UINT32);
-
         dev.dt.cmdDrawIndexed(draw_cmd, num_light_indices,
-                             1, 0, 0, 0);
+            1, num_overlay_tri_indices + num_overlay_line_indices,
+            0, 0);
 
         VkPipeline wire_pipeline = overlay_pipeline_.hdls[
             cfg.linesNoDepthTest ?
@@ -1317,12 +1311,6 @@ void Renderer::render(Scene *raw_scene, const EditorCam &cam,
                                      overlay_pipeline_.layout, 0, 1,
                                      &frame.overlayShaderSet, 0, nullptr);
 
-        dev.dt.cmdBindIndexBuffer(draw_cmd,
-            frame.renderInput.buffer.buffer,
-            frame.renderInput.overlayIndexOffset +
-                sizeof(uint32_t) * num_overlay_tri_indices,
-            VK_INDEX_TYPE_UINT32);
-
         dev.dt.cmdPushConstants(draw_cmd, overlay_pipeline_.layout,
             VK_SHADER_STAGE_VERTEX_BIT |
             VK_SHADER_STAGE_FRAGMENT_BIT,
@@ -1330,7 +1318,7 @@ void Renderer::render(Scene *raw_scene, const EditorCam &cam,
             sizeof(glm::vec4), &fake);
 
         dev.dt.cmdDrawIndexed(draw_cmd, num_overlay_line_indices,
-                             1, 0, 0, 0);
+                             1, num_overlay_tri_indices, 0, 0);
     }
     
     dev.dt.cmdEndRenderPass(draw_cmd);

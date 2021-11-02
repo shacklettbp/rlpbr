@@ -834,10 +834,11 @@ void Editor::render(EditorScene &scene, float frame_duration)
         }
     }
 
+    uint32_t light_start_idx = vert_ptr - tmp_verts.data();
     for (int i = 0; i < (int)scene.lights.size(); i++) {
         auto &light = scene.lights[i];
         bool is_selected = i == scene.selectedLight;
-        uint32_t idx_offset = i * 4;
+        uint32_t idx_offset = i * 4 + light_start_idx;
 
         for (int j = 0; j < 4; j++) {
             *vert_ptr++ = OverlayVertex {
@@ -856,6 +857,7 @@ void Editor::render(EditorScene &scene, float frame_duration)
         *idx_ptr++ = idx_offset + 2;
         *idx_ptr++ = idx_offset;
     }
+
 
     if (scene.episodes.has_value()) {
         const EditorEpisodes &episode_data = *scene.episodes;
