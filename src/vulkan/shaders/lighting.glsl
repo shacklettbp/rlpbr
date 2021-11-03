@@ -414,8 +414,9 @@ LightInfo sampleLights(inout Sampler rng, in Environment env,
     }
 
     // Normalize resampled weight and convert to solid angle PDF
-    float pdf = selected_weight / (total_ris_weight / num_ris_lights) *
-        (selected_dist2 / selected_cos_theta);
+    float pdf = total_ris_weight == 0 || selected_cos_theta == 0 ? 0.f :
+        selected_weight * (num_ris_lights / total_ris_weight) *
+            (selected_dist2 / selected_cos_theta);
 
     vec3 emittance = getMaterialEmittance(scene_addrs.matAddr,
                                           selected_mat);
