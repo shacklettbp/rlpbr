@@ -331,8 +331,6 @@ LightInfo sampleLights(inout Sampler rng, in Environment env,
     in vec3 origin, in vec3 world_geo_normal,
     in vec3 world_shading_normal)
 {
-    vec2 light_sample_uv = samplerGet2D(rng);
-
     uint32_t total_lights = env.numLights;
     float inv_selection_pdf = float(total_lights);
     
@@ -362,6 +360,7 @@ LightInfo sampleLights(inout Sampler rng, in Environment env,
                                         packed.data);
         }
 
+        vec2 light_sample_uv = samplerGet2D(rng);
         vec3 sampled_pos = getTriangleLightPoint(light, light_sample_uv);
         vec3 dir_check = sampled_pos - origin;
 
@@ -426,7 +425,10 @@ LightInfo sampleLights(inout Sampler rng, in Environment env,
     info.lightSample.irradiance = emittance;
     info.lightSample.pdf = pdf;
     info.shadowRayOrigin = selected_origin;
-    info.shadowRayLength = selected_dist;
+
+    // Hack, if shadow ray is right length, seem to be FP issues
+    // where it still intersects
+    info.shadowRayLength = selected_dist - 1e-6f;
 
     return info;
 }
