@@ -6,9 +6,7 @@
 
 #include <glm/gtx/transform.hpp>
 
-// FIXME
-#define STB_IMAGE_WRITE_IMPLEMENTATION
-#include "stb_image_write.h"
+#include "oiio_bridge.hpp"
 
 using namespace std;
 using namespace RLpbr;
@@ -52,13 +50,14 @@ glm::vec3 tonemap(glm::vec3 v)
     return v * (1.f + (v / 0.15f)) / (1.f + v);
 }
 
-void saveFrame(const char *fname, const half *dev_ptr,
+void saveFrame(string fprefix, const half *dev_ptr,
                uint32_t width, uint32_t height, uint32_t num_channels)
 {
     auto buffer = copyToHost(dev_ptr, width, height, num_channels);
 
     uint32_t num_pixels = buffer.size() / num_channels;
     vector<uint8_t> sdr_buffer(num_pixels * 3);
+    vector<half> hdr_buffer(num_pixels * 3);
 
     for (unsigned pixel = 0; pixel < num_pixels; pixel++) {
         uint32_t i = pixel * num_channels;
@@ -78,10 +77,12 @@ void saveFrame(const char *fname, const half *dev_ptr,
             if (v < 0) v = 0.f;
             if (v > 1) v = 1.f;
             sdr_buffer[k + j] = uint8_t(v * 255.f);
+            hdr_buffer[k + j] = buffer[i + j];
         }
     }
 
-    stbi_write_bmp(fname, width, height, 3, sdr_buffer.data());
+    saveSDR((fprefix + ".png").c_str(), width, height, sdr_buffer.data());
+    saveHDR((fprefix + ".exr").c_str(), width, height, hdr_buffer.data(), true);
 }
 
 int main(int argc, char *argv[]) {
@@ -171,7 +172,7 @@ int main(int argc, char *argv[]) {
     half *base_out_ptr = renderer.getOutputPointer(batch);
 
     for (uint32_t batch_idx = 0; batch_idx < batch_size; batch_idx++) {
-        saveFrame(("/tmp/out_color_" + to_string(batch_idx) + ".bmp").c_str(),
+        saveFrame("/tmp/out_color_" + to_string(batch_idx),
                   base_out_ptr + batch_idx * out_dim.x * out_dim.y * 4,
                   out_dim.x, out_dim.y, 4);
     }

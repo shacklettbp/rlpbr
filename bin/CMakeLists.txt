@@ -8,10 +8,15 @@ add_executable(singlebench
 )
 target_link_libraries(singlebench rlpbr)
 
-add_executable(save_frame
-    save_frame.cpp
-)
-target_link_libraries(save_frame rlpbr stb)
+find_package(OpenImageIO QUIET)
+
+if (OpenImageIO_FOUND)
+    add_executable(save_frame
+        save_frame.cpp
+        oiio_bridge.hpp oiio_bridge.cpp
+    )
+    target_link_libraries(save_frame rlpbr OpenImageIO)
+endif()
 
 add_executable(make_sequence
     make_sequence.cpp
