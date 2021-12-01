@@ -460,13 +460,19 @@ GLTFScene gltfLoad(filesystem::path gltf_path) noexcept
                     material_idx = 0;
                 }
 
+                uint64_t indices_idx;
+                auto idx_error = prim["indices"].get(indices_idx);
+                if (idx_error) {
+                    indices_idx = ~0u;
+                }
+
                 prims.push_back({
                     position_idx,
                     normal_idx,
                     uv_idx,
                     color_idx,
-                    static_cast<uint32_t>(prim["indices"].get_uint64()),
-                    static_cast<uint32_t>(material_idx),
+                    uint32_t(indices_idx),
+                    uint32_t(material_idx),
                 });
             }
 
@@ -802,36 +808,46 @@ static vector<Mesh<VertexType>> gltfParseMesh(
 
         uint32_t max_idx = 0;
 
-        auto index_type = scene.accessors[prim.indicesIdx].type;
+        if (prim.indicesIdx != ~0u) {
+            auto index_type = scene.accessors[prim.indicesIdx].type;
 
-        if (index_type == GLTFComponentType::UINT32) {
-            auto idx_accessor =
-                getGLTFAccessorView<const uint32_t>(scene, prim.indicesIdx);
-            indices.reserve(idx_accessor.size());
+            if (index_type == GLTFComponentType::UINT32) {
+                auto idx_accessor =
+                    getGLTFAccessorView<const uint32_t>(scene, prim.indicesIdx);
+                indices.reserve(idx_accessor.size());
 
-            for (uint32_t idx : idx_accessor) {
-                if (idx > max_idx) {
-                    max_idx = idx;
+                for (uint32_t idx : idx_accessor) {
+                    if (idx > max_idx) {
+                        max_idx = idx;
+                    }
+
+                    indices.push_back(idx);
                 }
+            } else if (index_type == GLTFComponentType::UINT16) {
+                auto idx_accessor =
+                    getGLTFAccessorView<const uint16_t>(scene, prim.indicesIdx);
+                indices.reserve(idx_accessor.size());
 
-                indices.push_back(idx);
-            }
-        } else if (index_type == GLTFComponentType::UINT16) {
-            auto idx_accessor =
-                getGLTFAccessorView<const uint16_t>(scene, prim.indicesIdx);
-            indices.reserve(idx_accessor.size());
+                for (uint16_t idx : idx_accessor) {
+                    if (idx > max_idx) {
+                        max_idx = idx;
+                    }
 
-            for (uint16_t idx : idx_accessor) {
-                if (idx > max_idx) {
-                    max_idx = idx;
+                    indices.push_back(idx);
                 }
-
-                indices.push_back(idx);
+            } else {
+                cerr << "GLTF loading failed: unsupported index type"
+                          << endl;
+                abort();
             }
         } else {
-            cerr << "GLTF loading failed: unsupported index type"
-                      << endl;
-            abort();
+            indices.reserve(position_accessor->size());
+
+            for (int i = 0; i < (int)position_accessor->size(); i++) {
+                indices.push_back(i);
+            }
+
+            max_idx = position_accessor->size() - 1;
         }
 
         max_idx = min(uint32_t(position_accessor->size()), max_idx);
