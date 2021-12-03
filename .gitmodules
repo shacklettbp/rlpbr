@@ -31,3 +31,6 @@
 [submodule "external/simdjson"]
 	path = external/simdjson
 	url = https://github.com/simdjson/simdjson.git
+[submodule "external/libtexutil"]
+	path = external/libtexutil
+	url = https://github.com/shacklettbp/libtexutil

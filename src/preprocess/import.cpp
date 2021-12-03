@@ -28,16 +28,16 @@ template <typename VertexType, typename MaterialType>
 SceneDescription<VertexType, MaterialType>
 SceneDescription<VertexType, MaterialType>::parseScene(
     string_view scene_path, const glm::mat4 &base_txfm,
-    optional<string_view> texture_dir)
+    const TextureCallback &texture_cb)
 {
     if (isGLTF(scene_path)) {
         return parseGLTF<VertexType, MaterialType>(scene_path,
-            base_txfm, texture_dir);
+            base_txfm, texture_cb);
     }
 
     if (isHabitatJSON(scene_path)) {
         return parseHabitatJSON<VertexType, MaterialType>(scene_path,
-            base_txfm, texture_dir);
+            base_txfm, texture_cb);
     }
 
     cerr << "Unsupported input format" << endl;
@@ -84,10 +84,15 @@ SceneDescription<VertexType, MaterialType>::mergeScene(
     };
 }
 
-template struct SceneDescription<Vertex, Material>;
-
 }
 }
 
 #include "gltf.inl"
 #include "habitat_json.inl"
+
+namespace RLpbr {
+namespace SceneImport {
+template struct SceneDescription<Vertex, Material>;
+}
+}
+

@@ -155,7 +155,7 @@ HabitatJSON::Scene habitatJSONLoad(string_view scene_path_name)
 template <typename VertexType, typename MaterialType>
 SceneDescription<VertexType, MaterialType> parseHabitatJSON(
     string_view scene_path, const glm::mat4 &base_txfm,
-    optional<string_view> texture_dir)
+    const TextureCallback &texture_cb)
 {
     using namespace HabitatJSON;
     using SceneDesc = SceneDescription<VertexType, MaterialType>;
@@ -163,7 +163,7 @@ SceneDescription<VertexType, MaterialType> parseHabitatJSON(
     auto raw_scene = habitatJSONLoad(scene_path);
 
     SceneDesc desc = parseGLTF<VertexType, MaterialType>(
-            raw_scene.stagePath, base_txfm, texture_dir);
+            raw_scene.stagePath, base_txfm, texture_cb);
     desc.envMap = raw_scene.envMap;
 
     unordered_map<string, uint32_t> loaded_gltfs;
@@ -186,7 +186,7 @@ SceneDescription<VertexType, MaterialType> parseHabitatJSON(
         } else {
             auto inst_desc = parseGLTF<VertexType, MaterialType>(
                 inst.gltfPath, glm::mat4(1.f),
-                texture_dir);
+                texture_cb);
 
             bool is_transparent = false;
             for (const auto &child_inst : inst_desc.defaultInstances) {
@@ -221,7 +221,7 @@ SceneDescription<VertexType, MaterialType> parseHabitatJSON(
 
     for (const AdditionalObject &obj : raw_scene.additionalObjects) {
         auto obj_desc = parseGLTF<VertexType, MaterialType>(
-            obj.gltfPath, base_txfm, texture_dir);
+            obj.gltfPath, base_txfm, texture_cb);
 
         auto [merged_obj, mat_idxs] =
             SceneDesc::mergeScene(obj_desc, 0);

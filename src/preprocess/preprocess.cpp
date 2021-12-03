@@ -23,6 +23,7 @@
 #include "physics.inl"
 #include "rlpbr_core/scene.hpp"
 
+
 using namespace std;
 
 namespace RLpbr {
@@ -32,14 +33,36 @@ using namespace SceneImport;
 struct PreprocessData {
     SceneDescription<Vertex, Material> desc;
     string dataDir;
-    bool dumpSDFs;
+    bool buildSDFs;
 };
+
+struct TextureProcessingContext {
+    const char *outputDir;
+};
+
+static void readTextureAndGenerateMipMaps(string_view texture_name,
+                                          TextureType type,
+                                          const uint8_t *data,
+                                          uint64_t num_bytes,
+                                          void *cb_data)
+{
+    const auto &ctx = *(TextureProcessingContext *)cb_data;
+
+    auto out_path = filesystem::path(ctx.outputDir) / texture_name;
+
+    texutil::generateMips(out_path.c_str(),
+                          type, data, num_bytes)
+}
+
+static void textureCallbackNOOP(string_view, TextureType, const uint8_t *,
+                                uint64_t, void *)
+{}
 
 static PreprocessData parseSceneData(string_view scene_path,
                                      const glm::mat4 &base_txfm,
                                      optional<string_view> data_dir,
-                                     bool dump_textures,
-                                     bool dump_sdfs)
+                                     bool process_textures,
+                                     bool build_sdfs)
 {
     string serialized_data_dir;
     if (!data_dir.has_value()) {
@@ -47,21 +70,30 @@ static PreprocessData parseSceneData(string_view scene_path,
     } else {
         serialized_data_dir = data_dir.value();
     }
+
+    TextureProcessingContext texture_ctx {
+        serialized_data_dir.c_str(),
+    };
+
+    TextureCallback texture_cb(
+        process_textures ? readTextureAndGenerateMipMaps : textureCallbackNOOP,
+        &texture_ctx);
+
     return PreprocessData {
         SceneDescription<Vertex, Material>::parseScene(scene_path, base_txfm,
-            dump_textures ? data_dir : optional<string_view>()),
+                                                       texture_cb),
         serialized_data_dir,
-        dump_sdfs,
+        build_sdfs,
     };
 }
 
 ScenePreprocessor::ScenePreprocessor(string_view gltf_path,
                                      const glm::mat4 &base_txfm,
                                      optional<string_view> data_dir,
-                                     bool dump_textures,
-                                     bool dump_sdfs)
+                                     bool process_textures,
+                                     bool build_sdfs)
     : scene_data_(new PreprocessData(parseSceneData(gltf_path,
-        base_txfm, data_dir, dump_textures, dump_sdfs)))
+        base_txfm, data_dir, process_textures, build_sdfs)))
 {}
 
 template <typename VertexType>
@@ -1223,7 +1255,7 @@ void ScenePreprocessor::dump(string_view out_path_name)
         lights_path);
 
     auto processed_physics_state =
-        ProcessedPhysicsState::make(processed_geometry, !scene_data_->dumpSDFs);
+        ProcessedPhysicsState::make(processed_geometry, !scene_data_->buildSDFs);
 
     filesystem::path out_path(out_path_name);
     string basename = out_path;
@@ -1512,7 +1544,7 @@ void ScenePreprocessor::dump(string_view out_path_name)
 
         write_instances(instances, bbox);
 
-        write_sdfs(processed_physics_state, data_dir, scene_data_->dumpSDFs);
+        write_sdfs(processed_physics_state, data_dir, scene_data_->buildSDFs);
 
         write_staging(geometry, material_metadata, processed_physics_state,
                       hdr);

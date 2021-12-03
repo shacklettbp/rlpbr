@@ -630,8 +630,10 @@ static StridedSpan<T> getGLTFAccessorView(const GLTFScene &scene,
                                 accessor.numElems);
 }
 
-static void dumpGLTFTexture(const GLTFScene &scene, const GLTFImage &img,
-                            string_view texture_dir, string_view texture_name)
+static inline void dumpGLTFTexture(const GLTFScene &scene,
+                                   const GLTFImage &img,
+                                   string_view texture_name,
+                                   const TextureCallback &texture_cb)
 {
     const GLTFBufferView &buffer_view = scene.bufferViews[img.viewIdx];
     if (buffer_view.stride > 1) {
@@ -639,21 +641,23 @@ static void dumpGLTFTexture(const GLTFScene &scene, const GLTFImage &img,
         abort();
     }
 
-    ofstream tex_dump(filesystem::path(texture_dir) / texture_name);
-
     const uint8_t *tex_ptr = scene.internalData.data() + buffer_view.offset;
 
-    tex_dump.write(reinterpret_cast<const char *>(tex_ptr), buffer_view.numBytes);
+    TextureType type;
+
+    texture_cb(texture_name, type,
+               scene.internalData.data() + buffer_view.offset,
+               buffer_view.numBytes);
 }
 
 template <typename MaterialType>
 vector<MaterialType> gltfParseMaterials(const GLTFScene &scene,
-    optional<string_view> texture_dir)
+    const TextureCallback &texture_cb)
 {
     vector<MaterialType> materials;
     materials.reserve(scene.materials.size());
 
-    unordered_set<uint32_t> internal_tracker;
+    unordered_set<uint32_t> texture_tracker;
 
     auto extractTex = [&](uint32_t tex_idx) {
         string tex_name = "";
@@ -677,11 +681,9 @@ vector<MaterialType> gltfParseMaterials(const GLTFScene &scene,
 
                 tex_name = scene.sceneName + "_" + to_string(tex_idx) + ext;
 
-                if (texture_dir.has_value()) {
-                    auto inserted = internal_tracker.emplace(tex_idx);
-                    if (inserted.second) {
-                        dumpGLTFTexture(scene, img, texture_dir.value(), tex_name);
-                    }
+                auto inserted = texture_tracker.emplace(tex_idx);
+                if (inserted.second) {
+                    dumpGLTFTexture(scene, img, tex_name, texture_cb);
                 }
             }
         }
@@ -1002,12 +1004,12 @@ static std::vector<InstanceProperties> gltfParseInstances(
 template <typename VertexType, typename MaterialType>
 SceneDescription<VertexType, MaterialType> parseGLTF(
     filesystem::path scene_path, const glm::mat4 &base_txfm,
-    optional<string_view> texture_dir)
+    const TextureCallback &texture_cb)
 {
     auto raw_scene = gltfLoad(scene_path);
 
     vector<MaterialType> materials =
-        gltfParseMaterials<MaterialType>(raw_scene, texture_dir);
+        gltfParseMaterials<MaterialType>(raw_scene, texture_cb);
 
     vector<Object<VertexType>> geometry;
 

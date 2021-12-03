@@ -132,7 +132,7 @@ GLTFScene gltfLoad(const std::string_view gltf_path) noexcept;
 template <typename VertexType, typename MaterialType>
 SceneDescription<VertexType, MaterialType> parseGLTF(
     std::filesystem::path scene_path, const glm::mat4 &base_txfm,
-    std::optional<std::string_view> texture_dir);
+    const TextureCallback &texture_cb);
 
 }
 }

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <rlpbr_core/scene.hpp>
+#include "texture.hpp"
 
 #include <optional>
 #include <vector>
@@ -69,8 +70,8 @@ struct SceneDescription {
     std::string envMap;
 
     static SceneDescription parseScene(std::string_view scene_path,
-        const glm::mat4 &base_txfm,
-        std::optional<std::string_view> texture_dir);
+                                       const glm::mat4 &base_txfm,
+                                       const TextureCallback &texture_cb);
 
     static std::pair<Object<VertexType>, std::vector<uint32_t>> mergeScene(
         SceneDescription desc, uint32_t mat_offset=0);
