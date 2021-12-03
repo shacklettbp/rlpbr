@@ -1,18 +1,19 @@
-RLpbr: Physically Based Rendering for Reinforcement Learning
+RLpbr: Physically Based Rendering for RL
 ============================================================
 
-This project is a work in progress high-performance raytracing based renderer for reinforcement learning (RL).
+This project is a work in progress high-performance ray tracing based renderer for reinforcement learning (RL).
 
 Renderer Features:
-* Batch rendering API (render many observations simultaneously)
+
 * Path Tracing backend for physically based light transport simulation:
     * Soft Shadows
     * Global Illumination
     * Transparency
     * Reflections
 * Direct lighting only backend designed for maximum performance at the cost of visual fidelity
+* Batch rendering API (render many observations simultaneously)
 
- RLpbr is an evolution of the renderer described in _Large Batch Simulation for Deep Reinforcement Learning_ (ICLR 2021): [github.com/shacklettbp/bps3D](https://github.com/shacklettbp/bps3D). While the project's main focus is on enabling physically based dynamic lighting in interactive environments, RLpbr also can be used as a replacement for bps3D in scanned 3D environments like Matterport3D and Gibson. Due to the use of raytracing, performance can be up to an order of magnitude faster than the already state of the art performance available from bps3D.
+ RLpbr is an evolution of the renderer described in _Large Batch Simulation for Deep Reinforcement Learning_ (ICLR 2021): [github.com/shacklettbp/bps3D](https://github.com/shacklettbp/bps3D). While the project's main focus is on enabling physically based dynamic lighting in interactive environments, RLpbr also can be used as a replacement for bps3D in scanned 3D environments like Matterport3D and Gibson. Due to the ray tracing acceleration hardware on modern GPUs, performance can be up to an order of magnitude faster than the already state of the art performance available from bps3D.
 
 Integration
 -----------
@@ -26,7 +27,7 @@ Dependencies
 * NVIDIA GPU
 * CUDA 10.1 or higher
 * OpenImageIO
-* NVIDIA driver with Vulkan 1.2 and VK\_KHR\_ray\_query support (if in doubt use latest available)
+* NVIDIA driver with Vulkan 1.2 and `VK_KHR_ray_query` support (if in doubt use latest available)
 * Vulkan headers and loader (described below)
 
 The easiest way to obtain the Vulkan dependencies is by installing the latest version of the official Vulkan SDK, available at <https://vulkan.lunarg.com/sdk/home>. Detailed instructions for installing the SDK are [here](https://vulkan.lunarg.com/doc/sdk/latest/linux/getting_started.html), specifically the "System Requirements" and "Set up the runtime environment" sections. Be sure that the Vulkan SDK is enabled in your current shell before building.
@@ -37,7 +38,7 @@ Building
 A standalone copy of RLpbr can be built for experimentation purposes as follows:
 ```bash
 git clone --recursive https://github.com/shacklettbp/rlpbr
-cd bps3D
+cd rlpbr
 mkdir build
 cd build
 cmake -DCMAKE_BUILD_TYPE=RelWithDebInfo ..
