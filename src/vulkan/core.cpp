@@ -12,45 +12,141 @@
 #include <optional>
 #include <vector>
 
+#include <dlfcn.h>
+
 using namespace std;
-
-extern "C" {
-VKAPI_ATTR VkResult VKAPI_CALL vkCreateInstance(const VkInstanceCreateInfo *,
-                                                const VkAllocationCallbacks *,
-                                                VkInstance *);
-
-VKAPI_ATTR VkResult VKAPI_CALL
-vkEnumerateInstanceLayerProperties(uint32_t *, VkLayerProperties *);
-}
 
 namespace RLpbr {
 namespace vk {
 
-static bool haveValidationLayers()
+struct InitializationDispatch {
+    PFN_vkGetInstanceProcAddr
+        getInstanceAddr;
+    PFN_vkEnumerateInstanceVersion
+        enumerateInstanceVersion;
+    PFN_vkEnumerateInstanceExtensionProperties
+        enumerateInstanceExtensionProperties;
+    PFN_vkEnumerateInstanceLayerProperties
+        enumerateInstanceLayerProperties;
+    PFN_vkCreateInstance createInstance;
+};
+
+struct InstanceInitializer {
+    VkInstance hdl;
+    InitializationDispatch dt;
+    bool validationEnabled;
+};
+
+static InitializationDispatch fetchInitDispatchTable(
+    PFN_vkGetInstanceProcAddr get_inst_addr)
+{
+    if (get_inst_addr == VK_NULL_HANDLE) {
+        void *libvk = dlopen("libvulkan.so", RTLD_LAZY | RTLD_LOCAL);
+        if (!libvk) {
+            cerr << "Couldn't find libvulkan.so" << endl;
+            abort();
+        }
+
+        get_inst_addr = (PFN_vkGetInstanceProcAddr)dlsym(libvk, "vkGetInstanceProcAddr");
+        if (get_inst_addr == nullptr) {
+            cerr << "Couldn't find get inst_addr" << endl;
+            abort();
+        }
+
+        get_inst_addr = (PFN_vkGetInstanceProcAddr)get_inst_addr(
+            VK_NULL_HANDLE, "vkGetInstanceProcAddr");
+        if (get_inst_addr == VK_NULL_HANDLE) {
+            cerr << "Refetching vkGetInstanceProcAddr after dlsym failed" << endl;
+            abort();
+        }
+
+        dlclose(libvk);
+    } 
+
+    auto get_addr = [&](const char *name) {
+        auto ptr = get_inst_addr(nullptr, name);
+
+        if (!ptr) {
+            cerr << "Failed to load "<< name << " for vulkan initialization." << endl;
+            abort();
+        }
+
+        return ptr;
+    };
+
+    return InitializationDispatch {
+        get_inst_addr,
+        reinterpret_cast<PFN_vkEnumerateInstanceVersion>(
+            get_addr("vkEnumerateInstanceVersion")),
+        reinterpret_cast<PFN_vkEnumerateInstanceExtensionProperties>(
+            get_addr("vkEnumerateInstanceExtensionProperties")),
+        reinterpret_cast<PFN_vkEnumerateInstanceLayerProperties>(
+            get_addr("vkEnumerateInstanceLayerProperties")),
+        reinterpret_cast<PFN_vkCreateInstance>(get_addr("vkCreateInstance")),
+    };
+}
+
+static bool checkValidationAvailable(const InitializationDispatch &dt)
 {
     uint32_t num_layers;
-    REQ_VK(vkEnumerateInstanceLayerProperties(&num_layers, nullptr));
+    REQ_VK(dt.enumerateInstanceLayerProperties(&num_layers, nullptr));
 
     DynArray<VkLayerProperties> layers(num_layers);
 
-    REQ_VK(vkEnumerateInstanceLayerProperties(&num_layers, layers.data()));
+    REQ_VK(dt.enumerateInstanceLayerProperties(&num_layers, layers.data()));
 
-    for (uint32_t layer_idx = 0; layer_idx < num_layers; layer_idx++) {
+    bool have_validation_layer = false;
+    for (int layer_idx = 0; layer_idx < (int)num_layers; layer_idx++) {
         const auto &layer_prop = layers[layer_idx];
         if (!strcmp("VK_LAYER_KHRONOS_validation", layer_prop.layerName)) {
-            return true;
+            have_validation_layer = true;
+            break;
         }
     }
 
     // FIXME check for VK_EXT_debug_utils
 
-    cerr << "Validation layers unavailable" << endl;
-    return false;
+    uint32_t num_exts;
+    REQ_VK(dt.enumerateInstanceExtensionProperties(nullptr, &num_exts,
+                                                   nullptr));
+
+    DynArray<VkExtensionProperties> exts(num_exts);
+
+    REQ_VK(dt.enumerateInstanceExtensionProperties(nullptr, &num_exts,
+                                                   exts.data()));
+
+    bool have_debug_ext = false;
+    for (int ext_idx = 0; ext_idx < (int)num_exts; ext_idx++) {
+        const auto &ext_prop = exts[ext_idx];
+        if (!strcmp("VK_EXT_debug_utils", ext_prop.extensionName)) {
+            have_debug_ext = true;
+            break;
+        }
+    }
+
+    if (have_validation_layer && have_debug_ext) {
+        return true;
+    } else {
+        cerr << "Validation layers unavailable" << endl;
+        return false;
+    }
 }
 
-static VkInstance createInstance(bool enable_validation,
-                                 const vector<const char *> &extra_exts)
+static InstanceInitializer initInstance(
+    PFN_vkGetInstanceProcAddr init_get_inst_addr,
+    bool want_validation,
+    const vector<const char *> &extra_exts)
 {
+    InitializationDispatch dt = fetchInitDispatchTable(init_get_inst_addr);
+
+    uint32_t inst_version;
+    REQ_VK(dt.enumerateInstanceVersion(&inst_version));
+    if (VK_API_VERSION_MAJOR(inst_version) == 1 &&
+        VK_API_VERSION_MINOR(inst_version) < 2) {
+        cerr << "At least Vulkan 1.2 required" << endl;
+        abort();
+    }
+
     VkApplicationInfo app_info {};
     app_info.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
     app_info.pApplicationName = "RLpbr";
@@ -63,6 +159,8 @@ static VkInstance createInstance(bool enable_validation,
     vector<VkValidationFeatureEnableEXT> val_enabled;
     VkValidationFeaturesEXT val_features {};
     val_features.sType = VK_STRUCTURE_TYPE_VALIDATION_FEATURES_EXT;
+
+    bool enable_validation = want_validation && checkValidationAvailable(dt);
 
     if (enable_validation) {
         layers.push_back("VK_LAYER_KHRONOS_validation");
@@ -105,9 +203,13 @@ static VkInstance createInstance(bool enable_validation,
     }
 
     VkInstance inst;
-    REQ_VK(vkCreateInstance(&inst_info, nullptr, &inst));
+    REQ_VK(dt.createInstance(&inst_info, nullptr, &inst));
 
-    return inst;
+    return {
+        inst,
+        dt,
+        enable_validation,
+    };
 }
 
 static VKAPI_ATTR VkBool32 VKAPI_CALL
@@ -126,10 +228,10 @@ validationDebug(VkDebugUtilsMessageSeverityFlagBitsEXT,
 }
 
 static VkDebugUtilsMessengerEXT makeDebugCallback(VkInstance hdl,
-                                                  const InstanceDispatch &dt)
+                                                  PFN_vkGetInstanceProcAddr get_addr)
 {
     auto makeMessenger = reinterpret_cast<PFN_vkCreateDebugUtilsMessengerEXT>(
-        dt.getInstanceProcAddr(hdl, "vkCreateDebugUtilsMessengerEXT"));
+        get_addr(hdl, "vkCreateDebugUtilsMessengerEXT"));
 
     assert(makeMessenger != nullptr);
 
@@ -151,13 +253,19 @@ static VkDebugUtilsMessengerEXT makeDebugCallback(VkInstance hdl,
     return messenger;
 }
 
-InstanceState::InstanceState(bool enable_validation,
+InstanceState::InstanceState(PFN_vkGetInstanceProcAddr get_inst_addr,
+                             bool enable_validation,
                              bool need_present,
                              const vector<const char *> &extra_exts)
-    : hdl(createInstance(enable_validation && haveValidationLayers(),
-                         extra_exts)),
-      dt(hdl, need_present),
-      debug_(enable_validation ? makeDebugCallback(hdl, dt) : VK_NULL_HANDLE)
+    : InstanceState(initInstance(get_inst_addr, enable_validation, extra_exts), need_present)
+{}
+
+InstanceState::InstanceState(InstanceInitializer init, bool need_present)
+    : hdl(init.hdl),
+      dt(hdl, init.dt.getInstanceAddr, need_present),
+      debug_(init.validationEnabled ?
+                makeDebugCallback(hdl, init.dt.getInstanceAddr) :
+                VK_NULL_HANDLE)
 {}
 
 static void fillQueueInfo(VkDeviceQueueCreateInfo &info,
@@ -378,6 +486,13 @@ DeviceState InstanceState::makeDevice(
     VkDevice dev;
     REQ_VK(dt.createDevice(phy, &dev_create_info, nullptr, &dev));
 
+    PFN_vkGetDeviceProcAddr get_dev_addr = 
+        (PFN_vkGetDeviceProcAddr)dt.getInstanceProcAddr(hdl, "vkGetDeviceProcAddr");
+    if (get_dev_addr == VK_NULL_HANDLE) {
+        cerr << "Failed to load vkGetDeviceProcAddr" << endl;
+        abort();
+    }
+
     return DeviceState {*gfx_queue_family,
                         *compute_queue_family,
                         *transfer_queue_family,
@@ -386,7 +501,7 @@ DeviceState InstanceState::makeDevice(
                         num_transfer_queues,
                         phy,
                         dev,
-                        DeviceDispatch(dev, need_present, true)};
+                        DeviceDispatch(dev, get_dev_addr, need_present, true)};
 }
 
 }

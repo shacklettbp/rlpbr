@@ -1,5 +1,3 @@
-add_definitions(-DVK_NO_PROTOTYPES)
-
 # Hack to prefer linking against vulkan sdk
 IF (DEFINED ENV{VULKAN_SDK})
     IF (DEFINED CMAKE_PREFIX_PATH)
@@ -66,13 +64,21 @@ add_library(rlpbr_vulkan_headless SHARED
     linux_hacks.cpp
 )
 
-target_compile_definitions(rlpbr_vulkan PRIVATE
-    "-DSHADER_DIR=${CMAKE_CURRENT_SOURCE_DIR}/shaders/")
+target_compile_definitions(rlpbr_vulkan
+    PRIVATE
+        "-DSHADER_DIR=${CMAKE_CURRENT_SOURCE_DIR}/shaders/"
+    PUBLIC
+        "-DVK_NO_PROTOTYPES"
+)
 
 target_include_directories(rlpbr_vulkan
-    PUBLIC "${CMAKE_CURRENT_BINARY_DIR}/dispatch")
+    PUBLIC
+        "${CMAKE_CURRENT_BINARY_DIR}/dispatch"
+        "${Vulkan_INCLUDE_DIRS}"
+)
+
 target_link_libraries(rlpbr_vulkan
-    rlpbr_core Vulkan::Vulkan CUDA::cudart
+    rlpbr_core CUDA::cudart
     glslang spirv_reflect SPIRV glslang-default-resource-limits
     stb glfw)
 

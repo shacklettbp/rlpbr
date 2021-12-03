@@ -81,13 +81,18 @@ def gen_single_src(funcs, lookup_func):
         pointer_type = "PFN_" + func
         inst_hpp += f"{pad}{pointer_type} {member_name};\n"
         trail = ',' if i < len(funcs) - 1 else ''
-        inst_cpp += f"{pad}  {member_name}({cond} reinterpret_cast<{pointer_type}>(checkPtr({lookup_func}(ctx, \"{func}\"), \"{func}\"))){trail}\n"
+        # Vulkan 1.2.193 vkGetInstanceProcAddr cannot be called with a valid instance as argument.
+        # Just reuse the existing vkGetInstanceProcAddr pointer in this case
+        if func == 'vkGetInstanceProcAddr':
+            inst_cpp += f"{pad}  {member_name}({cond} {lookup_func}){trail}\n"
+        else:
+            inst_cpp += f"{pad}  {member_name}({cond} reinterpret_cast<{pointer_type}>(checkPtr({lookup_func}(ctx, \"{func}\"), \"{func}\"))){trail}\n"
 
     return inst_hpp, inst_cpp
 
 def gen_src(instance_funcs, device_funcs):
-    inst_hpp, inst_cpp = gen_single_src(instance_funcs, 'vkGetInstanceProcAddr')
-    dev_hpp, dev_cpp = gen_single_src(device_funcs, 'vkGetDeviceProcAddr')
+    inst_hpp, inst_cpp = gen_single_src(instance_funcs, 'get_inst_addr')
+    dev_hpp, dev_cpp = gen_single_src(device_funcs, 'get_dev_addr')
 
     return inst_hpp, inst_cpp, dev_hpp, dev_cpp
 

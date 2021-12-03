@@ -627,7 +627,7 @@ static Pipeline<3> makeNavmeshPipeline(const DeviceState &dev,
 
 static InstanceState initializeInstance()
 {
-    vk::PresentationState::init();
+    auto get_inst_addr = vk::PresentationState::init();
     vk::ShaderPipeline::initCompiler();
 
     bool enable_validation;
@@ -638,7 +638,7 @@ static InstanceState initializeInstance()
         enable_validation = true;
     }
 
-    return InstanceState(enable_validation, true,
+    return InstanceState(get_inst_addr, enable_validation, true,
                          PresentationState::getInstanceExtensions());
 }
 
@@ -918,6 +918,32 @@ static VkRenderPass makeImGuiRenderPass(const DeviceState &dev,
     return render_pass;
 }
 
+struct ImGUIVkLookupData {
+    PFN_vkGetDeviceProcAddr getDevAddr;
+    VkDevice dev;
+    PFN_vkGetInstanceProcAddr getInstAddr;
+    VkInstance inst;
+};
+
+static PFN_vkVoidFunction imguiVKLookup(const char *fname,
+                                        void *user_data)
+{
+    auto data = (ImGUIVkLookupData *)user_data;
+
+    auto addr = data->getDevAddr(data->dev, fname);
+
+    if (!addr) {
+        addr = data->getInstAddr(data->inst, fname);
+    }
+
+    if (!addr) {
+        cerr << "Failed to load ImGUI vulkan function: " << fname << endl;
+        abort();
+    }
+
+    return addr;
+}
+
 static VkRenderPass imguiInit(GLFWwindow *window, const DeviceState &dev,
                               const InstanceState &inst, VkQueue ui_queue,
                               VkPipelineCache pipeline_cache,
@@ -977,6 +1003,13 @@ static VkRenderPass imguiInit(GLFWwindow *window, const DeviceState &dev,
     VkRenderPass imgui_renderpass = makeImGuiRenderPass(dev, color_fmt,
                                                         depth_fmt);
 
+    ImGUIVkLookupData lookup_data {
+        dev.dt.getDeviceProcAddr,
+        dev.hdl,
+        inst.dt.getInstanceProcAddr,
+        inst.hdl,
+    };
+    ImGui_ImplVulkan_LoadFunctions(imguiVKLookup, &lookup_data);
     ImGui_ImplVulkan_Init(&vk_init, imgui_renderpass);
 
     VkCommandPool tmp_pool = makeCmdPool(dev, dev.gfxQF);

@@ -73,6 +73,7 @@ device:
 - vkCmdSetScissor
 - vkCmdSetLineWidth
 - vkDeviceWaitIdle
+- vkGetDeviceProcAddr
 - need_present:
     - vkCreateSwapchainKHR
     - vkGetSwapchainImagesKHR

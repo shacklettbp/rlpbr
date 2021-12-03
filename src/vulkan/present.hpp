@@ -18,7 +18,7 @@ struct Swapchain {
 
 class PresentationState {
 public:
-    static void init();
+    static PFN_vkGetInstanceProcAddr init();
     static std::vector<const char *> getInstanceExtensions();
     static VkSurfaceFormatKHR selectSwapchainFormat(const InstanceState &inst,
                                                     VkPhysicalDevice phy,

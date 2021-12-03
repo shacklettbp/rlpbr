@@ -812,13 +812,13 @@ static glm::u32vec3 getLaunchSize(const RenderConfig &cfg)
 static InstanceState makeInstance(const InitConfig &init_cfg)
 {
     if (init_cfg.needPresent) {
-        PresentationState::init();
+        auto get_inst_addr = PresentationState::init();
 
-        return InstanceState(init_cfg.validate, true,
+        return InstanceState(get_inst_addr, init_cfg.validate, true,
                              PresentationState::getInstanceExtensions());
 
     } else {
-        return InstanceState(init_cfg.validate, false, {});
+        return InstanceState(nullptr, init_cfg.validate, false, {});
     }
 }
 

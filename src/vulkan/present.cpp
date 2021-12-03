@@ -9,12 +9,15 @@ using namespace std;
 namespace RLpbr {
 namespace vk {
 
-void PresentationState::init()
+PFN_vkGetInstanceProcAddr PresentationState::init()
 {
     if (!glfwInit()) {
         cerr << "Failed to initialize GLFW" << endl;
         fatalExit();
     }
+
+    return (PFN_vkGetInstanceProcAddr)glfwGetInstanceProcAddress(
+        VK_NULL_HANDLE, "vkGetInstanceProcAddr");
 }
 
 vector<const char *> PresentationState::getInstanceExtensions()

@@ -30,12 +30,15 @@ public:
     DeviceState(DeviceState &&) = default;
 };
 
+struct InstanceInitializer;
+
 struct InstanceState {
 public:
     const VkInstance hdl;
     const InstanceDispatch dt;
 
-    InstanceState(bool enable_validation,
+    InstanceState(PFN_vkGetInstanceProcAddr get_inst_addr,
+                  bool enable_validation,
                   bool need_present,
                   const std::vector<const char *> &extra_exts);
 
@@ -51,6 +54,8 @@ public:
             present_check) const;
 
 private:
+    InstanceState(InstanceInitializer init, bool need_present);
+
     const VkDebugUtilsMessengerEXT debug_;
 
     VkPhysicalDevice findPhysicalDevice(const DeviceUUID &uuid) const;
