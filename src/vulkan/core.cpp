@@ -35,34 +35,12 @@ struct InstanceInitializer {
     VkInstance hdl;
     InitializationDispatch dt;
     bool validationEnabled;
+    void *loaderHandle;
 };
 
 static InitializationDispatch fetchInitDispatchTable(
     PFN_vkGetInstanceProcAddr get_inst_addr)
 {
-    if (get_inst_addr == VK_NULL_HANDLE) {
-        void *libvk = dlopen("libvulkan.so", RTLD_LAZY | RTLD_LOCAL);
-        if (!libvk) {
-            cerr << "Couldn't find libvulkan.so" << endl;
-            abort();
-        }
-
-        get_inst_addr = (PFN_vkGetInstanceProcAddr)dlsym(libvk, "vkGetInstanceProcAddr");
-        if (get_inst_addr == nullptr) {
-            cerr << "Couldn't find get inst_addr" << endl;
-            abort();
-        }
-
-        get_inst_addr = (PFN_vkGetInstanceProcAddr)get_inst_addr(
-            VK_NULL_HANDLE, "vkGetInstanceProcAddr");
-        if (get_inst_addr == VK_NULL_HANDLE) {
-            cerr << "Refetching vkGetInstanceProcAddr after dlsym failed" << endl;
-            abort();
-        }
-
-        dlclose(libvk);
-    } 
-
     auto get_addr = [&](const char *name) {
         auto ptr = get_inst_addr(nullptr, name);
 
@@ -133,11 +111,34 @@ static bool checkValidationAvailable(const InitializationDispatch &dt)
 }
 
 static InstanceInitializer initInstance(
-    PFN_vkGetInstanceProcAddr init_get_inst_addr,
+    PFN_vkGetInstanceProcAddr get_inst_addr,
     bool want_validation,
     const vector<const char *> &extra_exts)
 {
-    InitializationDispatch dt = fetchInitDispatchTable(init_get_inst_addr);
+    void *libvk = nullptr;
+    if (get_inst_addr == VK_NULL_HANDLE) {
+        libvk = dlopen("libvulkan.so", RTLD_LAZY | RTLD_LOCAL);
+        if (!libvk) {
+            cerr << "Couldn't find libvulkan.so" << endl;
+            abort();
+        }
+
+        get_inst_addr = (PFN_vkGetInstanceProcAddr)dlsym(libvk,
+            "vkGetInstanceProcAddr");
+        if (get_inst_addr == nullptr) {
+            cerr << "Couldn't find get inst_addr" << endl;
+            abort();
+        }
+
+        get_inst_addr = (PFN_vkGetInstanceProcAddr)get_inst_addr(
+            VK_NULL_HANDLE, "vkGetInstanceProcAddr");
+        if (get_inst_addr == VK_NULL_HANDLE) {
+            cerr << "Refetching vkGetInstanceProcAddr after dlsym failed" << endl;
+            abort();
+        }
+    } 
+
+    InitializationDispatch dt = fetchInitDispatchTable(get_inst_addr);
 
     uint32_t inst_version;
     REQ_VK(dt.enumerateInstanceVersion(&inst_version));
@@ -209,6 +210,7 @@ static InstanceInitializer initInstance(
         inst,
         dt,
         enable_validation,
+        libvk,
     };
 }
 
@@ -265,8 +267,18 @@ InstanceState::InstanceState(InstanceInitializer init, bool need_present)
       dt(hdl, init.dt.getInstanceAddr, need_present),
       debug_(init.validationEnabled ?
                 makeDebugCallback(hdl, init.dt.getInstanceAddr) :
-                VK_NULL_HANDLE)
+                VK_NULL_HANDLE),
+      loader_handle_(init.loaderHandle)
 {}
+
+InstanceState::~InstanceState()
+{
+    // FIXME: cleanup vulkan stuff
+    
+    if (loader_handle_ != nullptr) {
+        dlclose(loader_handle_);
+    }
+}
 
 static void fillQueueInfo(VkDeviceQueueCreateInfo &info,
                           uint32_t idx,

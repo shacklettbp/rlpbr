@@ -41,6 +41,7 @@ public:
                   bool enable_validation,
                   bool need_present,
                   const std::vector<const char *> &extra_exts);
+    ~InstanceState();
 
     InstanceState(const InstanceState &) = delete;
     InstanceState(InstanceState &&) = default;
@@ -57,6 +58,7 @@ private:
     InstanceState(InstanceInitializer init, bool need_present);
 
     const VkDebugUtilsMessengerEXT debug_;
+    void *loader_handle_;
 
     VkPhysicalDevice findPhysicalDevice(const DeviceUUID &uuid) const;
 };
