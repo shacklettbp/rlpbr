@@ -1,10 +1,9 @@
-RLpbr: Physically Based Rendering for RL
+RLpbr: Physically Based Rendering for<br/>Reinforcement Learning
 ============================================================
 
 This project is a work in progress high-performance ray tracing based renderer for reinforcement learning (RL).
 
-Renderer Features:
-
+**Features**:
 * Path Tracing backend for physically based light transport simulation:
     * Soft Shadows
     * Global Illumination
@@ -24,9 +23,10 @@ Dependencies
 ------------
 
 * CMake
+* OpenImageIO
+* ISPC
 * NVIDIA GPU
 * CUDA 10.1 or higher
-* OpenImageIO
 * NVIDIA driver with Vulkan 1.2 and `VK_KHR_ray_query` support (if in doubt use latest available)
 * Vulkan headers and loader (described below)
 
