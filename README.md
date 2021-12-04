@@ -64,4 +64,4 @@ Basic Usage
 -----------
 
  * 3D Fly Camera: `./build/bin/fly scene_file.bps [SAMPLES PER PIXEL] [PATH TRACER DEPTH]`
- * Benchmarking: `./build/bin/singlebench scene_file.bps BATCH_SIZE RESOLUTION SAMPLES [SAMPLES PER PIXEL] [PATH TRACER DEPTH]`
+ * Benchmarking: `./build/bin/singlebench scene_file.bps BATCH_SIZE RESOLUTION [SAMPLES PER PIXEL] [PATH TRACER DEPTH]`
