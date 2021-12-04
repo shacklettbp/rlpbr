@@ -209,9 +209,7 @@ GLTFScene gltfLoad(filesystem::path gltf_path) noexcept
                     } else if (mime == "image/x-basis") {
                         img.type = GLTFImageType::BASIS;
                     } else {
-                        cerr << "Unsupported mime type: " << mime << endl;
-                        img.type = GLTFImageType::JPEG;
-                        //abort();
+                        img.type = GLTFImageType::UNKNOWN;
                     }
 
                     img.viewIdx = view_idx;
@@ -633,6 +631,7 @@ static StridedSpan<T> getGLTFAccessorView(const GLTFScene &scene,
 static inline void dumpGLTFTexture(const GLTFScene &scene,
                                    const GLTFImage &img,
                                    string_view texture_name,
+                                   texutil::TextureType texture_type,
                                    const TextureCallback &texture_cb)
 {
     const GLTFBufferView &buffer_view = scene.bufferViews[img.viewIdx];
@@ -641,13 +640,10 @@ static inline void dumpGLTFTexture(const GLTFScene &scene,
         abort();
     }
 
-    const uint8_t *tex_ptr = scene.internalData.data() + buffer_view.offset;
+    const uint8_t *texture_ptr = scene.internalData.data() + buffer_view.offset;
 
-    TextureType type;
-
-    texture_cb(texture_name, type,
-               scene.internalData.data() + buffer_view.offset,
-               buffer_view.numBytes);
+    texture_cb(texture_name, texture_type,
+               texture_ptr, buffer_view.numBytes);
 }
 
 template <typename MaterialType>
@@ -659,7 +655,7 @@ vector<MaterialType> gltfParseMaterials(const GLTFScene &scene,
 
     unordered_set<uint32_t> texture_tracker;
 
-    auto extractTex = [&](uint32_t tex_idx) {
+    auto extractTex = [&](uint32_t tex_idx, texutil::TextureType tex_type) {
         string tex_name = "";
         if (tex_idx < scene.textures.size()) {
             const GLTFImage &img =
@@ -668,22 +664,12 @@ vector<MaterialType> gltfParseMaterials(const GLTFScene &scene,
             if (img.type == GLTFImageType::EXTERNAL) {
                 tex_name = img.filePath;
             } else {
-                const char *ext;
-                if (img.type == GLTFImageType::JPEG) {
-                    ext = ".jpg";
-                } else if (img.type == GLTFImageType::PNG) {
-                    ext = ".png";
-                } else {
-                    cerr << "GLTF: Unsupported internal image type"
-                         << endl;
-                    abort();
-                }
-
-                tex_name = scene.sceneName + "_" + to_string(tex_idx) + ext;
+                tex_name = scene.sceneName + "_" + to_string(tex_idx);
 
                 auto inserted = texture_tracker.emplace(tex_idx);
                 if (inserted.second) {
-                    dumpGLTFTexture(scene, img, tex_name, texture_cb);
+                    dumpGLTFTexture(scene, img, tex_name, tex_type,
+                                    texture_cb);
                 }
             }
         }
@@ -710,14 +696,23 @@ vector<MaterialType> gltfParseMaterials(const GLTFScene &scene,
 
         materials.push_back({
             gltf_mat.name,
-            extractTex(gltf_mat.baseColorIdx),
-            extractTex(gltf_mat.metallicRoughnessIdx),
-            extractTex(gltf_mat.specularIdx),
-            extractTex(gltf_mat.normalIdx),
-            extractTex(gltf_mat.emittanceIdx),
-            extractTex(gltf_mat.transmissionIdx),
-            extractTex(gltf_mat.clearcoatIdx),
-            extractTex(gltf_mat.anisoIdx),
+            extractTex(gltf_mat.baseColorIdx,
+                       texutil::TextureType::FourChannelSRGB),
+            extractTex(gltf_mat.metallicRoughnessIdx,
+                       texutil::TextureType::TwoChannelLinear),
+            extractTex(gltf_mat.specularIdx,
+                       texutil::TextureType::FourChannelSRGB),
+            extractTex(gltf_mat.normalIdx,
+                       texutil::TextureType::NormalMap),
+            extractTex(gltf_mat.emittanceIdx,
+                       // FIXME: should be HDR
+                       texutil::TextureType::FourChannelSRGB),
+            extractTex(gltf_mat.transmissionIdx,
+                       texutil::TextureType::TwoChannelLinear),
+            extractTex(gltf_mat.clearcoatIdx,
+                       texutil::TextureType::TwoChannelLinear),
+            extractTex(gltf_mat.anisoIdx,
+                       texutil::TextureType::TwoChannelLinear),
             base_color,
             transmission,
             gltf_mat.baseSpecular,

@@ -41,7 +41,7 @@ struct TextureProcessingContext {
 };
 
 static void readTextureAndGenerateMipMaps(string_view texture_name,
-                                          TextureType type,
+                                          texutil::TextureType type,
                                           const uint8_t *data,
                                           uint64_t num_bytes,
                                           void *cb_data)
@@ -49,13 +49,14 @@ static void readTextureAndGenerateMipMaps(string_view texture_name,
     const auto &ctx = *(TextureProcessingContext *)cb_data;
 
     auto out_path = filesystem::path(ctx.outputDir) / texture_name;
+    out_path += ".tex";
 
     texutil::generateMips(out_path.c_str(),
-                          type, data, num_bytes)
+                          type, data, num_bytes);
 }
 
-static void textureCallbackNOOP(string_view, TextureType, const uint8_t *,
-                                uint64_t, void *)
+static void textureCallbackNOOP(string_view, texutil::TextureType,
+                                const uint8_t *, uint64_t, void *)
 {}
 
 static PreprocessData parseSceneData(string_view scene_path,

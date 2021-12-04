@@ -42,6 +42,7 @@ struct GLTFAccessor {
 };
     
 enum class GLTFImageType {
+    UNKNOWN,
     JPEG,
     PNG,
     BASIS,
