@@ -348,7 +348,7 @@ LightInfo sampleLights(inout Sampler rng, in Environment env,
 
     for (int i = 0; i < num_ris_lights; i++) {
         TriangleLight light;
-        {
+        if (total_lights > 0) {
             uint32_t light_idx = min(
                 uint32_t(samplerGet1D(rng) * total_lights),
                 total_lights - 1);
@@ -358,6 +358,11 @@ LightInfo sampleLights(inout Sampler rng, in Environment env,
             light = unpackTriangleLight(scene_addrs.vertAddr,
                                         scene_addrs.idxAddr,
                                         packed.data);
+        } else {
+            light.matIdx = 0;
+            light.verts[0] = vec3(0);
+            light.verts[1] = vec3(0);
+            light.verts[2] = vec3(0);
         }
 
         vec2 light_sample_uv = samplerGet2D(rng);

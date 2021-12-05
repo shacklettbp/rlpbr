@@ -432,7 +432,7 @@ PrimaryResult directLighting(in u32vec3 idx, in uint32_t linear_idx,
     rayQueryEXT primary_query;
     bool primary_hit = traceShadeRay(primary_query, env.tlasAddr,
                                      ray_origin, ray_dir, 3);
-
+    
     PrimaryResult result;
 
     if (!primary_hit) {

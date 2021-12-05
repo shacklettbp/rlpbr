@@ -556,14 +556,18 @@ static void handleLights(EditorScene &scene)
 
         if (load) {
             ifstream lights_in(lights_path, ios::binary);
-            uint32_t num_lights;
-            lights_in.read((char *)&num_lights, sizeof(uint32_t));
-            scene.lights.clear();
-            scene.lights.reserve(num_lights);
-            for (int i = 0; i < (int)num_lights; i++) {
-                AreaLight light;
-                lights_in.read((char *)&light, sizeof(AreaLight));
-                scene.lights.push_back(light);
+            if (lights_in.is_open()) {
+                uint32_t num_lights;
+                lights_in.read((char *)&num_lights, sizeof(uint32_t));
+                scene.lights.clear();
+                scene.lights.reserve(num_lights);
+                for (int i = 0; i < (int)num_lights; i++) {
+                    AreaLight light;
+                    lights_in.read((char *)&light, sizeof(AreaLight));
+                    scene.lights.push_back(light);
+                }
+            } else {
+                cout << "Lights not found" << endl;
             }
         }
     }
