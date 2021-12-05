@@ -7,6 +7,10 @@
 #include <fstream>
 #include <vector>
 #include <unordered_set>
+#include <thread>
+#include <mutex>
+#include <condition_variable>
+#include <atomic>
 
 #include <glm/gtc/type_precision.hpp>
 #include <glm/gtc/type_ptr.hpp>
@@ -36,9 +40,121 @@ struct PreprocessData {
     bool buildSDFs;
 };
 
-struct TextureProcessingContext {
-    const char *outputDir;
+struct TextureRequest {
+    TextureRequest(DynArray<uint8_t> &&d, texutil::TextureType t,
+                   filesystem::path &&p)
+        : data(move(d)), type(t), outPath(move(p))
+    {}
+
+    DynArray<uint8_t> data;
+    texutil::TextureType type;
+    filesystem::path outPath;
 };
+
+class TextureProcessor {
+public:
+    TextureProcessor(const char *output_dir)
+        : output_dir_(output_dir),
+          num_workers_(thread::hardware_concurrency()),
+          mutex_(),
+          worker_wait_(),
+          queue_wait_(),
+          exit_(false),
+          workers_(),
+          requests_()
+    {
+        workers_.reserve(num_workers_);
+        requests_.reserve(num_workers_);
+
+        for (int i = 0; i < (int)num_workers_; i++) {
+            workers_.emplace_back([&]() {
+                processTextures();
+            });
+        }
+    }
+
+    ~TextureProcessor()
+    {
+        exit_ = true;
+        for (auto &t : workers_) {
+            t.join();
+        }
+    }
+
+    void queueTexture(string_view texture_name,
+                      texutil::TextureType type,
+                      const uint8_t *data,
+                      uint64_t num_bytes)
+    {
+        auto out_path = output_dir_ / texture_name;
+        out_path += ".tex";
+
+        DynArray<uint8_t> data_stage(num_bytes);
+        memcpy(data_stage.data(), data, num_bytes);
+
+        {
+            unique_lock<mutex> lock(mutex_);
+
+            while (requests_.size() == num_workers_) {
+                queue_wait_.wait(lock);
+            } 
+
+            requests_.emplace_back(move(data_stage), type, move(out_path));
+        }
+
+        worker_wait_.notify_one();
+    }
+
+    optional<TextureRequest> dequeueTexture()
+    {
+        optional<TextureRequest> request;
+
+        {
+            unique_lock<mutex> lock(mutex_);
+
+            while (requests_.size() == 0 && !exit_) {
+                worker_wait_.wait(lock);
+
+            }
+
+            if (requests_.size() > 0) {
+                request.emplace(move(requests_.back()));
+                requests_.pop_back();
+            } 
+        }
+
+        queue_wait_.notify_one();
+        return request;
+    }
+
+    void processTextures()
+    {
+        while (true) {
+            auto request = dequeueTexture();
+
+            if (!request.has_value()) {
+                return;
+            }
+
+            texutil::generateMips(request->outPath.c_str(),
+                                  request->type,
+                                  request->data.data(),
+                                  request->data.size());
+        }
+    }
+
+private:
+    filesystem::path output_dir_;
+    uint32_t num_workers_;
+    mutex mutex_;
+    condition_variable worker_wait_;
+    condition_variable queue_wait_;
+    bool exit_;
+
+    vector<thread> workers_;
+    vector<TextureRequest> requests_;
+};
+
 
 static void readTextureAndGenerateMipMaps(string_view texture_name,
                                           texutil::TextureType type,
@@ -46,13 +162,9 @@ static void readTextureAndGenerateMipMaps(string_view texture_name,
                                           uint64_t num_bytes,
                                           void *cb_data)
 {
-    const auto &ctx = *(TextureProcessingContext *)cb_data;
+    auto &processor = *(TextureProcessor *)cb_data;
 
-    auto out_path = filesystem::path(ctx.outputDir) / texture_name;
-    out_path += ".tex";
-
-    texutil::generateMips(out_path.c_str(),
-                          type, data, num_bytes);
+    processor.queueTexture(texture_name, type, data, num_bytes);
 }
 
 static void textureCallbackNOOP(string_view, texutil::TextureType,
@@ -72,17 +184,17 @@ static PreprocessData parseSceneData(string_view scene_path,
         serialized_data_dir = data_dir.value();
     }
 
-    TextureProcessingContext texture_ctx {
-        serialized_data_dir.c_str(),
-    };
+    TextureProcessor tex_processor(serialized_data_dir.c_str());
 
     TextureCallback texture_cb(
         process_textures ? readTextureAndGenerateMipMaps : textureCallbackNOOP,
-        &texture_ctx);
+        &tex_processor);
+
+    auto scene_desc = SceneDescription<Vertex, Material>::parseScene(
+        scene_path, base_txfm, texture_cb);
 
     return PreprocessData {
-        SceneDescription<Vertex, Material>::parseScene(scene_path, base_txfm,
-                                                       texture_cb),
+        move(scene_desc),
         serialized_data_dir,
         build_sdfs,
     };
