@@ -75,7 +75,12 @@ public:
 
     ~TextureProcessor()
     {
-        exit_ = true;
+        {
+            unique_lock<mutex> lock(mutex_);
+            exit_ = true;
+        }
+        worker_wait_.notify_all();
+
         for (auto &t : workers_) {
             t.join();
         }
@@ -1377,6 +1382,11 @@ void ScenePreprocessor::dump(string_view out_path_name)
     dumpIDMap(basename, processed_geometry, processed_instances, materials);
 
     ofstream out(out_path, ios::binary);
+    if (!out.is_open()) {
+        cerr << "Failed to open: " << out_path << " for writing" << endl;
+        abort();
+    }
+
     auto write = [&](auto val) {
         out.write(reinterpret_cast<const char *>(&val), sizeof(decltype(val)));
     };
