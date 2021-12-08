@@ -523,25 +523,25 @@ LightInfo sampleLights(inout Sampler rng, in Environment env,
 }
 #endif
 
-DeltaLightInfo getLight(in Environment env, int idx, vec3 origin)
+DeltaLightInfo getLight(in Environment env, int idx)
 {
-    vec3 position = origin;
-    vec3 irradiance = 0.3f * vec3(2.5f, 2.4f, 2.3f);
-    if (idx == 0) {
-        position = vec3(12.11, 1.469, -4.1517);
-    } else if (idx == 1) {
-        position = vec3(9.250230, 1.506868, -0.526671);
-    } else if (idx == 2) {
-        position = vec3(8.711510, 1.529880, -0.520881);
-    } else if (idx == 3) {
-        position = vec3(7.986629, 1.492613, -4.335118);
-    } else if (idx == 4) {
-        position = vec3(8.251885, 1.528721, -0.533173);
-    }
+    PackedLight packed =
+        lights[nonuniformEXT(env.baseLightOffset + idx)];
+
+    SceneAddresses scene_addrs = sceneAddrs[env.sceneID];
+
+    TriangleLight light = unpackTriangleLight(scene_addrs.vertAddr,
+        scene_addrs.idxAddr,
+        packed.data);
+
+    vec3 emittance = getMaterialEmittance(scene_addrs.matAddr,
+                                          light.matIdx);
+
+    vec3 position = 0.5 * light.verts[0] + 0.5 * light.verts[2];
 
     DeltaLightInfo info;
     info.position = position;
-    info.irradiance = irradiance;
+    info.irradiance = emittance / 8.f;
 
     return info;
 }

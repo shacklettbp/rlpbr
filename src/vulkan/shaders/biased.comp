@@ -119,8 +119,11 @@ layout (set = 1, binding = 1) uniform texture2D textures[];
 // materials.glsl
 vec4 fetchSceneTexture(uint32_t idx, vec2 uv, vec4 uv_derivs)
 {
-    return textureGrad(sampler2D(textures[nonuniformEXT(idx)],
-        repeatSampler), uv, uv_derivs.xy, uv_derivs.zw);
+    //return textureGrad(sampler2D(textures[nonuniformEXT(idx)],
+    //    repeatSampler), uv, uv_derivs.xy, uv_derivs.zw);
+    //
+    return textureLod(sampler2D(textures[nonuniformEXT(idx)],
+        repeatSampler), uv, 0.f);
 }
 
 u32vec4 fetchSceneMaterialParams(MatRef ref, uint32_t idx, uint32_t sub_idx)
@@ -132,12 +135,12 @@ u32vec4 fetchSceneMaterialParams(MatRef ref, uint32_t idx, uint32_t sub_idx)
                    gl_GlobalInvocationID.y == 0 && \
                    gl_GlobalInvocationID.z == 0)
 
+#include "unpack.glsl"
 #include "materials.glsl"
+#include "geometry.glsl"
 #include "bsdf.glsl"
 #include "lighting.glsl"
 #include "restir.glsl"
-#include "unpack.glsl"
-#include "geometry.glsl"
 #include "camera.glsl"
 
 // Support functions
@@ -259,10 +262,13 @@ DirectResult directLighting(in u32vec3 idx, in uint32_t linear_idx,
     HitInfo hit = processHit(primary_query, env, ray_dir, ray_cone);
 
     bool need_second = false;
-    if (hit.material.roughness == 0.f ||
-        hit.material.transparencyMask == 0.f) {
+    if ((hit.material.roughness == 0.f ||
+        hit.material.transparencyMask == 0.f ||
+        hit.material.transmission == 1.f) &&
+        hit.material.emittance == vec3(0)) {
         need_second = true;
     }
+
     vec3 secondary_ray_dir;
     if (hit.material.transmission != 1.f) {
         secondary_ray_dir = reflect(ray_dir, hit.tangentFrame.normal);
@@ -316,45 +322,49 @@ DirectResult directLighting(in u32vec3 idx, in uint32_t linear_idx,
     vec2 prev_screen_pos = getScreenSpacePosition(prev_cam, hit.position);
     i32vec2 prev_pixel_coords = getPixelCoords(prev_screen_pos);
 
-    env.numLights = 5;
-    for (int i = 0; i < env.numLights; i++) {
-        DeltaLightInfo light_info = getLight(env, i, cam.origin);
+    result.radiance = hit.material.emittance +
+        0.1 * hit.material.rho * abs(wo.z);
 
-        float mask = 1.f;
-        for (int j = 0; j < 4; j++) {
-            vec3 jittered_pos = light_info.position +
-                sampleSphereUniform(samplerGet2D(rng)) * 0.02f;
+    // Hack, each square light is 2 tri lights
+    int num_lights = int(env.numLights) / 2;
 
-            vec3 to_light = jittered_pos - hit.position;
-            vec3 shadow_offset_normal =
-                dot(to_light, hit.geoNormal) > 0 ? hit.geoNormal : -hit.geoNormal;
-
-            vec3 shadow_origin =
-                offsetRayOrigin(hit.position, shadow_offset_normal);
-
-            to_light = jittered_pos - shadow_origin;
-
-            bool occluded = traceShadowRay(env.tlasAddr,
-                                           shadow_origin,
-                                           to_light,
-                                           1.f,
-                                           1);
-            //if (occluded) {
-            //    mask -= 1.f / 4.f;
-            //}
-        }
+    for (int i = 0; i < num_lights; i++) {
+        DeltaLightInfo light_info = getLight(env, i * 2);
 
         vec3 to_light = light_info.position - hit.position;
+        vec3 shadow_offset_normal =
+            dot(to_light, hit.geoNormal) > 0 ? hit.geoNormal : -hit.geoNormal;
+
+        vec3 shadow_origin =
+            offsetRayOrigin(hit.position, shadow_offset_normal);
+
+        vec3 shadow_dir = light_info.position - shadow_origin;
+        float shadow_ray_len = length(shadow_dir);
+        shadow_dir /= shadow_ray_len;
+
+        bool occluded = traceShadowRay(env.tlasAddr,
+                                       shadow_origin,
+                                       shadow_dir,
+                                       shadow_ray_len - 1e-6,
+                                       1);
+
         float light_distance = length(to_light);
         to_light /= light_distance;
 
         vec3 wi = normalize(worldToLocalIncoming(to_light, hit.tangentFrame));
 
-        vec3 bsdf_response = evalBSDF(bsdf_params, wo, wi);
-        vec3 nee = bsdf_response * light_info.irradiance /
+        float bsdf_pdf;
+        vec3 bsdf_response = evalBSDF(bsdf_params, wo, wi, bsdf_pdf);
+        vec3 nee = bsdf_response * light_info.irradiance * abs(wi.z) /
             (light_distance * light_distance);
 
-        result.radiance += mask * nee + 0.003 * hit.material.rho;
+        if (occluded) {
+            nee = vec3(0);
+        }
+
+        result.radiance += nee;
+
+        subgroupBarrier();
     }
 
     return result;
