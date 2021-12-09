@@ -16,13 +16,17 @@ add_library(rlpbr SHARED
 target_link_libraries(rlpbr
     PUBLIC 
         rlpbr_core
-        rlpbr_optix
         rlpbr_vulkan
         rlpbr_vulkan_headless
     INTERFACE
         CUDA::cudart
         glm
 )
+
+if (OPTIX_ENABLED)
+    target_link_libraries(rlpbr PUBLIC rlpbr_optix)
+    target_compile_definitions(rlpbr PRIVATE OPTIX_ENABLED)
+endif()
 
 target_include_directories(rlpbr
     INTERFACE

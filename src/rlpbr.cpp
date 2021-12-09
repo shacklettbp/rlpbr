@@ -3,7 +3,10 @@
 #include <rlpbr_core/scene.hpp>
 #include <rlpbr_core/utils.hpp>
 
+#ifdef OPTIX_ENABLED
 #include "optix/render.hpp"
+#endif
+
 #include "vulkan/render.hpp"
 
 #include <functional>
@@ -43,8 +46,12 @@ static RendererImpl makeBackend(const RenderConfig &cfg)
 
     switch(cfg.backend) {
         case BackendSelect::Optix: {
+#ifdef OPTIX_ENABLED
             auto *renderer = new optix::OptixBackend(cfg, validate);
             return makeRendererImpl<optix::OptixBackend>(renderer);
+#endif
+            cerr << "Optix support not enabled at compile time." << endl;
+            abort();
         }
         case BackendSelect::Vulkan: {
             auto *renderer = new vk::VulkanBackend(cfg, validate);

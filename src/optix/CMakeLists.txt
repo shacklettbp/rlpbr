@@ -3,7 +3,12 @@ if (DEFINED ENV{OPTIX_ROOT})
 endif()
 
 if (NOT DEFINED OPTIX_ROOT)
-    message(FATAL_ERROR "Need to specify path to optix")
+    message(STATUS "No path to optix specified, not building optix backend")
+    set(OPTIX_ENABLED OFF PARENT_SCOPE)
+
+    return()
+else()
+    set(OPTIX_ENABLED ON PARENT_SCOPE)
 endif()
 
 add_library(rlpbr_optix SHARED
