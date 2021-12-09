@@ -152,6 +152,10 @@ static RenderState makeRenderState(const DeviceState &dev,
         sampling_define = "UNIFORM_SAMPLING";
     }
 
+    if (cfg.flags & RenderFlags::ForceUniform) {
+        sampling_define = "UNIFORM_SAMPLING";
+    }
+
     vector<string> shader_defines {
         string("SPP (") + to_string(cfg.spp) + "u)",
         string("MAX_DEPTH (") + to_string(cfg.maxDepth) + "u)",
@@ -179,7 +183,7 @@ static RenderState makeRenderState(const DeviceState &dev,
         shader_defines.push_back("PRIMARY_ONLY");
     }
 
-    if (cfg.auxiliaryOutputs) {
+    if (cfg.flags & RenderFlags::AuxiliaryOutputs) {
          shader_defines.emplace_back("AUXILIARY_OUTPUTS");
     }
 
@@ -190,8 +194,18 @@ static RenderState makeRenderState(const DeviceState &dev,
 
     ShaderPipeline::initCompiler();
 
+    const char *shader_name;
+    switch (cfg.mode) {
+        case RenderMode::PathTracer:
+            shader_name = "pathtracer.comp";
+            break;
+        case RenderMode::Biased:
+            shader_name = "biased.comp";
+            break;
+    }
+
     ShaderPipeline shader(dev,
-        {cfg.pathTracer ? "pathtracer.comp" : "biased.comp"},
+        { shader_name },
         {
             {0, 4, repeat_sampler, 1, 0},
             {0, 5, clamp_sampler, 1, 0},
@@ -846,7 +860,7 @@ VulkanBackend::VulkanBackend(const RenderConfig &cfg,
           cfg.numLoaders,
           cfg.maxTextureResolution == 0 ? ~0u :
               cfg.maxTextureResolution,
-          cfg.auxiliaryOutputs,
+          cfg.flags & RenderFlags::AuxiliaryOutputs,
       }),
       inst(makeInstance(init_cfg)),
       dev(makeDevice(inst, cfg, init_cfg)),

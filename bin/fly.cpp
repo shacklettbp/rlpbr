@@ -153,7 +153,7 @@ int main(int argc, char *argv[]) {
     }
 
     Renderer renderer({0, 1, 1, img_dims.x, img_dims.y, spp, depth, 0,
-        false, true, false, 0.f, BackendSelect::Vulkan});
+        RenderMode::PathTracer, {}, 0.f, BackendSelect::Vulkan});
 
     array<cudaStream_t, 2> copy_streams;
 

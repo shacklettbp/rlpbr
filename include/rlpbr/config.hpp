@@ -4,9 +4,20 @@
 
 namespace RLpbr {
 
-enum class BackendSelect {
+enum class BackendSelect : uint32_t {
     Optix,
     Vulkan,
+};
+
+enum class RenderMode : uint32_t {
+    PathTracer,
+    Biased,
+};
+
+enum class RenderFlags : uint32_t {
+    AuxiliaryOutputs = 1 << 0,
+    ForceUniform = 1 << 1,
+    EnablePhysics = 1 << 2,
 };
 
 struct RenderConfig {
@@ -18,11 +29,28 @@ struct RenderConfig {
     uint32_t spp;
     uint32_t maxDepth;
     uint32_t maxTextureResolution;
-    bool enablePhysics;
-    bool pathTracer;
-    bool auxiliaryOutputs;
+    RenderMode mode;
+    RenderFlags flags;
     float clampThreshold;
     BackendSelect backend;
 };
+
+inline RenderFlags & operator|=(RenderFlags &a, RenderFlags b)
+{
+    a = RenderFlags(static_cast<uint32_t>(a) | static_cast<uint32_t>(b));
+    return a;
+}
+
+inline bool operator&(RenderFlags a, RenderFlags b)
+{
+    return (static_cast<uint32_t>(a) & static_cast<uint32_t>(b)) > 0;
+}
+
+inline RenderFlags operator|(RenderFlags a, RenderFlags b)
+{
+    a |= b;
+
+    return a;
+}
 
 }

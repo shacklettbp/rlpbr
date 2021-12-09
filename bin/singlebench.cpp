@@ -56,7 +56,7 @@ int main(int argc, char *argv[]) {
     cout << "Loaded " << views.size() << " views" << endl;
 
     Renderer renderer({0, 1, batch_size, res, res, spp, path_depth, 0,
-        false, true, false, 0.f, BackendSelect::Vulkan});
+        RenderMode::PathTracer, {}, 0.f, BackendSelect::Vulkan});
 
     auto loader = renderer.makeLoader();
     auto scene = loader.loadScene(argv[1]);

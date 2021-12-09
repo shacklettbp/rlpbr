@@ -155,6 +155,10 @@ static Pipeline buildPipeline(OptixDeviceContext ctx, const RenderConfig &cfg,
     } else {
         sampling_define = "-DZSOBOL_SAMPLING";
     }
+    
+    if (cfg.flags & RenderFlags::ForceUniform) {
+        sampling_define = "-DUNIFORM_SAMPLING";
+    }
 
     vector extra_compile_options {
         string("-DSPP=(") + to_string(cfg.spp) + "u)",
@@ -168,7 +172,7 @@ static Pipeline buildPipeline(OptixDeviceContext ctx, const RenderConfig &cfg,
         move(sampling_define),
     };
 
-    if (cfg.auxiliaryOutputs) {
+    if (cfg.flags & RenderFlags::AuxiliaryOutputs) {
         extra_compile_options.emplace_back("-DAUXILIARY_OUTPUTS");
         extra_compile_options.emplace_back(string("-DNORMAL_PTR=(") +
                 to_string((uintptr_t)base_buffers.normalBuffer) + "ul)");
@@ -347,13 +351,15 @@ static RenderState makeRenderState(const RenderConfig &cfg,
     REQ_CUDA(cudaHostAlloc(&param_buffer, total_param_bytes,
         cudaHostAllocMapped | cudaHostAllocWriteCombined));
 
+    bool aux_enabled = cfg.flags & RenderFlags::AuxiliaryOutputs;
+
     RenderState state {
         (half *)allocCU(sizeof(half) * 4 * cfg.batchSize * cfg.imgHeight *
                         cfg.imgWidth * num_frames),
-        cfg.auxiliaryOutputs ? 
+        aux_enabled ? 
             (half *)allocCU(sizeof(half) * 3 * cfg.batchSize * cfg.imgHeight *
                             cfg.imgWidth * num_frames) : nullptr,
-        cfg.auxiliaryOutputs ?
+        aux_enabled ?
             (half *)allocCU(sizeof(half) * 3 * cfg.batchSize * cfg.imgHeight *
                             cfg.imgWidth * num_frames) : nullptr,
         param_buffer,
@@ -387,7 +393,7 @@ static RenderState makeRenderState(const RenderConfig &cfg,
         half *normal_ptr = nullptr;
         half *albedo_ptr = nullptr;
 
-        if (cfg.auxiliaryOutputs) {
+        if (aux_enabled) {
             normal_ptr = state.normal + 3 * frame_idx * cfg.batchSize *
                 cfg.imgHeight * cfg.imgWidth;
             albedo_ptr = state.albedo + 3 * frame_idx * cfg.batchSize *
@@ -514,7 +520,9 @@ static BSDFLookupTables loadBSDFLookupTables(TextureManager &tex_mgr,
 
 static optional<PhysicsSimulator> makePhysicsSimulator(const RenderConfig &cfg)
 {
-    if (!cfg.enablePhysics) return optional<PhysicsSimulator>();
+    if (!(cfg.flags & RenderFlags::EnablePhysics)) {
+        return optional<PhysicsSimulator>();
+    }
 
     return PhysicsSimulator(PhysicsConfig {
         cfg.batchSize,

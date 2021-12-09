@@ -36,18 +36,18 @@ float toSRGB(float v)
 
 glm::vec3 tonemap(glm::vec3 v)
 {
-    //v *= 0.6;
+    v *= 0.8;
 
-    //float A = 2.51f;
-    //float B = 0.03f;
-    //float C = 2.43f;
-    //float D = 0.59f;
-    //float E = 0.14f;
+    float A = 2.51f;
+    float B = 0.03f;
+    float C = 2.43f;
+    float D = 0.59f;
+    float E = 0.14f;
 
-    //v = clamp((v*(A*v+B))/(v*(C*v+D)+E), 0.f, 1.f);
-    //return v;
+    v = clamp((v*(A*v+B))/(v*(C*v+D)+E), 0.f, 1.f);
+    return v;
     
-    return v * (1.f + (v / 0.15f)) / (1.f + v);
+    //return v * (1.f + (v / 0.15f)) / (1.f + v);
 }
 
 void saveFrame(string fprefix, const half *dev_ptr,
@@ -108,7 +108,7 @@ int main(int argc, char *argv[]) {
     }
 
     Renderer renderer({0, 1, batch_size, out_dim.x, out_dim.y, spp, depth,
-                       0, false, true, false, 0.f, BackendSelect::Vulkan});
+                       0, RenderMode::PathTracer, {}, 0.f, BackendSelect::Vulkan});
 
     auto loader = renderer.makeLoader();
     auto scene = loader.loadScene(argv[1]);
@@ -138,9 +138,13 @@ int main(int argc, char *argv[]) {
     //glm::vec3 look(11.293303, 1.406617, -1.591388);
     //glm::vec3 up(0, 1, 0);
     
-    glm::vec3 eye(-2.396987, 1.257544, 5.563847);
-    glm::vec3 look(-1.796038, 1.336225, 4.768434);
-    glm::vec3 up(-0.026884, 0.996575, 0.078269);
+    //glm::vec3 eye(-2.396987, 1.257544, 5.563847);
+    //glm::vec3 look(-1.796038, 1.336225, 4.768434);
+    //glm::vec3 up(-0.026884, 0.996575, 0.078269);
+
+    glm::vec3 eye(-12.557019, 0.883798, -11.455655);
+    glm::vec3 look(-13.162226, 0.959754, -10.663220);
+    glm::vec3 up(0.026162, 0.996801, -0.075568);
 
     //glm::vec3 eye(7.1, 1.673785, -0.217743);
     //glm::vec3 look(7.655676, 1.512004, -0.946787);

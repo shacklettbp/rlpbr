@@ -163,7 +163,7 @@ int main(int argc, char *argv[]) {
     }
 
     Renderer renderer({0, 1, 1, out_dim.x, out_dim.y, spp, depth,
-                       0, false, true, false, 0.f, BackendSelect::Vulkan});
+                       0, RenderMode::PathTracer, {}, 0.f, BackendSelect::Vulkan});
 
     auto loader = renderer.makeLoader();
     auto scene = loader.loadScene(argv[1]);
