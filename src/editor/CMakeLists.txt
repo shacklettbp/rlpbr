@@ -1,7 +1,3 @@
-include(FindPkgConfig)
-
-find_package(ZLIB REQUIRED)
-
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
 
 add_library(editor_sys STATIC
@@ -9,8 +5,6 @@ add_library(editor_sys STATIC
 )
 
 if (${CMAKE_SYSTEM_NAME} STREQUAL "Linux")
-    pkg_check_modules(gtk3 REQUIRED IMPORTED_TARGET gtk+-3.0)
-
     target_compile_definitions(editor_sys PRIVATE
         USE_GTK
     )

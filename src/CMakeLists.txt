@@ -33,5 +33,6 @@ target_include_directories(rlpbr
         ${MAIN_INCLUDE_DIR}
 )
 
-add_subdirectory(editor)
-
+if (ENABLE_EDITOR)
+    add_subdirectory(editor)
+endif()

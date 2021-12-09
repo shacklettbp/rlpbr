@@ -1,6 +1,7 @@
 cmake_minimum_required(VERSION 3.10 FATAL_ERROR)
 cmake_policy(VERSION 3.10)
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
+include(FindPkgConfig)
 
 set(NAME rlpbr)
 
@@ -34,6 +35,20 @@ endif()
 
 # FIXME
 find_package(glfw3 3.3 QUIET)
+find_package(ZLIB QUIET)
+pkg_check_modules(gtk3 QUIET IMPORTED_TARGET gtk+-3.0)
+if (${CMAKE_SYSTEM_NAME} STREQUAL "Linux" AND gtk3_FOUND)
+    set(SYS_GUI_FOUND ON)
+else()
+    set(SYS_GUI_FOUND OFF)
+endif()
+
+if (glfw3_FOUND AND ZLIB_FOUND AND SYS_GUI_FOUND AND NOT DISABLE_EDITOR)
+    set(ENABLE_EDITOR ON)
+else()
+    message(STATUS "Not building editor")
+    set(ENABLE_EDITOR OFF)
+endif()
 
 add_subdirectory(external)
 
