@@ -157,8 +157,8 @@ int main(int argc, char *argv[]) {
                 glm::make_vec3(cur_var.data()),
                 1, mean, var, total_count);
         }
-    }
 
-    cout << glm::to_string(mean) << endl;
-    cout << glm::to_string(var) << endl;
+        cout << glm::to_string(mean) << endl;
+        cout << glm::to_string(var) << endl;
+    }
 }
