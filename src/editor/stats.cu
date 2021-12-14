@@ -113,7 +113,7 @@ __host__ MeanVarContext getMeanVarContext(uint32_t batch_size,
 
 __device__ inline double reinhard(double x)
 {
-    return x / (1 + x);
+    return x / (1.0 + x);
 }
 
 __host__ pair<array<float, 3>, array<float, 3>> computeMeanAndVar(
