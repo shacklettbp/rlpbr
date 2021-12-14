@@ -111,13 +111,18 @@ __host__ MeanVarContext getMeanVarContext(uint32_t batch_size,
     };
 }
 
+__device__ inline double reinhard(double x)
+{
+    return x / (1 + x);
+}
+
 __host__ pair<array<float, 3>, array<float, 3>> computeMeanAndVar(
     half *batch_raw, const MeanVarContext &ctx)
 {
     sum<mv_block_size><<<ctx.numBlocks, mv_block_size, 0, ctx.strm>>>(
         ctx.scratch, ctx.numPixels,
         [batch_raw] __device__ (int64_t base, int channel) {
-            return double(batch_raw[4 * base + channel]);
+            return reinhard(double(batch_raw[4 * base + channel]));
         });
 
     sum<mv_block_size><<<1, ctx.numBlocks, 0, ctx.strm>>>(
@@ -130,7 +135,7 @@ __host__ pair<array<float, 3>, array<float, 3>> computeMeanAndVar(
         ctx.scratch + 3, ctx.numPixels,
         [batch_raw, scratch=ctx.scratch, num_pixels=ctx.numPixels] __device__ (
                 int64_t base, int channel) {
-            double input = double(batch_raw[4 * base + channel]);
+            double input = reinhard(double(batch_raw[4 * base + channel]));
             double mean = scratch[channel] / double(num_pixels);
 
             double diff = input - mean;
