@@ -48,6 +48,8 @@ struct Navmesh {
                       void *scratch) const;
 
     static uint32_t scratchBytesPerTri();
+
+    glm::vec3 getRandomPoint();
 };
 
 std::optional<Navmesh> buildNavmesh(const NavmeshConfig &cfg,

@@ -111,6 +111,39 @@ uint32_t Navmesh::findPath(const glm::vec3 &start, const glm::vec3 &end,
     return (uint32_t)path_size;
 }
 
+glm::vec3 Navmesh::getRandomPoint()
+{
+    constexpr int max_tries = 10;
+
+    dtQueryFilter filter;
+    filter.setIncludeFlags(POLYFLAGS_WALK);
+    filter.setExcludeFlags(0);
+
+    auto rand_cb = []() {
+        return (float)rand() / float(RAND_MAX + 1u);
+    };
+
+    glm::vec3 result(0.f);
+    int i;
+    for (i = 0; i < max_tries; i++) {
+        dtPolyRef ref = 0;
+        dtStatus status =
+            internal->detourQuery->findRandomPoint(&filter, rand_cb, &ref,
+                                                  glm::value_ptr(result));
+
+        if (dtStatusSucceed(status)) {
+            break;
+        }
+    }
+
+    if (i == max_tries) {
+        cerr << "Failed to get random point on navmesh" << endl;
+        abort();
+    }
+
+    return result;
+}
+
 static NavmeshRenderData buildRenderData(
     const vector<glm::vec3> &orig_vertices)
 {

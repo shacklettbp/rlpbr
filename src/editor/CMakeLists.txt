@@ -38,10 +38,21 @@ target_link_libraries(imgui_impl
         glfw
 )
 
+add_library(navmesh_utils STATIC
+    navmesh.hpp navmesh.cpp
+)
+
+target_link_libraries(navmesh_utils PUBLIC
+    RecastNavigation::Recast
+    RecastNavigation::Detour
+    rlpbr_core
+    rlpbr_vulkan
+    meshoptimizer
+)
+
 add_executable(editor
     editor.hpp editor.cpp
     renderer.hpp renderer.cpp
-    navmesh.hpp navmesh.cpp
     utils.hpp
     json.hpp json.cpp
 )
@@ -54,12 +65,20 @@ target_link_libraries(editor PRIVATE
     editor_sys
     rlpbr_core
     rlpbr_vulkan
+    navmesh_utils
     glm
     glfw
-    RecastNavigation::Recast
-    RecastNavigation::Detour
-    meshoptimizer
     imgui_impl
     ZLIB::ZLIB
     simdjson
+)
+
+string(APPEND CMAKE_CUDA_FLAGS " --extended-lambda")
+add_executable(stats
+    stats.cpp stats.hpp stats.cu
+)
+
+target_link_libraries(stats PRIVATE
+    rlpbr
+    navmesh_utils
 )
