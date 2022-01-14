@@ -25,6 +25,7 @@
 #endif
 
 //#define USE_MIS 1
+//#define ENABLE_RIS 1
 
 // GLSL wants this for uint64_t -> accel struct conversion
 #extension GL_EXT_ray_tracing : require
@@ -121,8 +122,11 @@ layout (set = 1, binding = 1) uniform texture2D textures[];
 // materials.glsl
 vec4 fetchSceneTexture(uint32_t idx, vec2 uv, vec4 uv_derivs)
 {
-    return textureGrad(sampler2D(textures[nonuniformEXT(idx)],
-        repeatSampler), uv, uv_derivs.xy, uv_derivs.zw);
+    //return textureGrad(sampler2D(textures[nonuniformEXT(idx)],
+    //    repeatSampler), uv, uv_derivs.xy, uv_derivs.zw);
+    //
+    return textureLod(sampler2D(textures[nonuniformEXT(idx)],
+        repeatSampler), uv, 0.f);
 }
 
 u32vec4 fetchSceneMaterialParams(MatRef ref, uint32_t idx, uint32_t sub_idx)
@@ -413,7 +417,7 @@ vec3 envMapMiss(uint32_t tex_offset, vec3 ray_dir, float bounce_pdf,
 
 struct PrimaryResult {
     PathVertexState vertState;
-    RayCone rayCone;
+    RayDifferential rayDifferential;
 #ifdef AUXILIARY_OUTPUTS
     vec3 auxNormal;
     vec3 auxAlbedo;
@@ -427,7 +431,9 @@ PrimaryResult directLighting(in u32vec3 idx, in uint32_t linear_idx,
 {
     vec3 ray_origin;
     vec3 ray_dir;
-    computeCameraRay(cam, idx, samplerGet2D(rng), ray_origin, ray_dir);
+    RayDifferential ray_diff;
+    computeCameraRay(cam, idx, samplerGet2D(rng), ray_origin, ray_dir,
+                     ray_diff);
 
     rayQueryEXT primary_query;
     bool primary_hit = traceShadeRay(primary_query, env.tlasAddr,
@@ -446,10 +452,8 @@ PrimaryResult directLighting(in u32vec3 idx, in uint32_t linear_idx,
         return result;
     }
 
-    RayCone ray_cone = initRayCone(cam);
-
-    HitInfo hit = processHit(primary_query, env, ray_dir, ray_cone);
-    result.rayCone = ray_cone;
+    HitInfo hit = processHit(primary_query, env, ray_dir, ray_diff);
+    result.rayDifferential = ray_diff;
 
     result.instanceID = getHitInstance(primary_query);
 
@@ -539,7 +543,7 @@ PrimaryResult directLighting(in u32vec3 idx, in uint32_t linear_idx,
 
 vec3 indirectLighting(in Environment env, in vec3 ray_origin, in vec3 ray_dir,
                       in vec3 path_weight, in float bounce_pdf,
-                      in uint32_t bounce_flags, inout RayCone ray_cone,
+                      in uint32_t bounce_flags, inout RayDifferential ray_diff,
                       inout Sampler rng)
 {
     vec3 indirect_contrib = vec3(0.f);
@@ -569,7 +573,7 @@ vec3 indirectLighting(in Environment env, in vec3 ray_origin, in vec3 ray_dir,
             break;
         }
 
-        HitInfo hit = processHit(bounce_query, env, ray_dir, ray_cone);
+        HitInfo hit = processHit(bounce_query, env, ray_dir, ray_diff);
 
         PathVertexState bounce_state =
             processPathVertex(rng, env, hit, ray_dir, ray_origin, bounce_pdf,
@@ -638,13 +642,13 @@ void main()
         vec3 path_weight;
         float bounce_pdf;
         uint32_t bounce_flags;
-        RayCone ray_cone;
+        RayDifferential ray_diff;
         {
             PrimaryResult primary_result =
                 directLighting(idx, linear_idx, cam, prev_cam, env, rng);
 
             sample_radiance = primary_result.vertState.radiance;
-            ray_cone = primary_result.rayCone;
+            ray_diff = primary_result.rayDifferential;
             ray_origin = primary_result.vertState.bounceOrigin;
             ray_dir = primary_result.vertState.bounceDir;
             path_weight = primary_result.vertState.bounceWeight;
@@ -660,7 +664,7 @@ void main()
 
         sample_radiance += indirectLighting(env, ray_origin, ray_dir,
                                             path_weight, bounce_pdf,
-                                            bounce_flags, ray_cone, rng);
+                                            bounce_flags, ray_diff, rng);
 
         pixel_radiance += sample_radiance / SPP;
     }

@@ -119,11 +119,11 @@ layout (set = 1, binding = 1) uniform texture2D textures[];
 // materials.glsl
 vec4 fetchSceneTexture(uint32_t idx, vec2 uv, vec4 uv_derivs)
 {
-    //return textureGrad(sampler2D(textures[nonuniformEXT(idx)],
-    //    repeatSampler), uv, uv_derivs.xy, uv_derivs.zw);
-    //
-    return textureLod(sampler2D(textures[nonuniformEXT(idx)],
-        repeatSampler), uv, 0.f);
+    return textureGrad(sampler2D(textures[nonuniformEXT(idx)],
+        repeatSampler), uv, uv_derivs.xy, uv_derivs.zw);
+    
+    //return textureLod(sampler2D(textures[nonuniformEXT(idx)],
+    //    repeatSampler), uv, 0.f);
 }
 
 u32vec4 fetchSceneMaterialParams(MatRef ref, uint32_t idx, uint32_t sub_idx)
@@ -237,7 +237,8 @@ DirectResult directLighting(in u32vec3 idx, in uint32_t linear_idx,
 {
     vec3 ray_origin;
     vec3 ray_dir;
-    computeCameraRay(cam, idx, vec2(0), ray_origin, ray_dir);
+    RayDifferential ray_diff;
+    computeCameraRay(cam, idx, vec2(0), ray_origin, ray_dir, ray_diff);
 
     rayQueryEXT primary_query;
     bool primary_hit = traceShadeRay(primary_query, env.tlasAddr,
@@ -257,14 +258,12 @@ DirectResult directLighting(in u32vec3 idx, in uint32_t linear_idx,
 
     result.instanceID = getHitInstance(primary_query);
 
-    RayCone ray_cone = initRayCone(cam);
-
-    HitInfo hit = processHit(primary_query, env, ray_dir, ray_cone);
+    HitInfo hit = processHit(primary_query, env, ray_dir, ray_diff);
 
     bool need_second = false;
-    if ((hit.material.roughness == 0.f ||
+    if (((hit.material.roughness < 0.2f && hit.material.metallic > 0.8f) ||
         hit.material.transparencyMask == 0.f ||
-        hit.material.transmission == 1.f) &&
+        hit.material.transmission > 0.9f) &&
         hit.material.emittance == vec3(0)) {
         need_second = true;
     }
@@ -298,7 +297,7 @@ DirectResult directLighting(in u32vec3 idx, in uint32_t linear_idx,
         }
 
         result.instanceID = getHitInstance(secondary_query);
-        hit = processHit(secondary_query, env, secondary_ray_dir, ray_cone);
+        hit = processHit(secondary_query, env, secondary_ray_dir, ray_diff);
         ray_dir = secondary_ray_dir;
     }
 
@@ -323,7 +322,7 @@ DirectResult directLighting(in u32vec3 idx, in uint32_t linear_idx,
     i32vec2 prev_pixel_coords = getPixelCoords(prev_screen_pos);
 
     result.radiance = hit.material.emittance +
-        0.1 * hit.material.rho * abs(wo.z);
+        0.1 * hit.material.rho;
 
     // Hack, each square light is 2 tri lights
     int num_lights = int(env.numLights) / 2;

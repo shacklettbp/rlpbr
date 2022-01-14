@@ -124,8 +124,6 @@ uint32_t unpackLight(in Environment env,
 
 vec3 evalEnvMap(uint32_t map_idx, vec3 dir)
 {
-    return vec3(0.f);
-
     vec2 uv = dirToLatLong(dir);
 
     vec3 v =
@@ -325,7 +323,6 @@ void sampleTriangleLight(in TriangleLight tri_light,
 }
 
 // Output functions
-#define ENABLE_RIS 1
 #ifdef ENABLE_RIS
 LightInfo sampleLights(inout Sampler rng, in Environment env, 
     in vec3 origin, in vec3 world_geo_normal,
@@ -442,8 +439,7 @@ LightInfo sampleLights(inout Sampler rng, in Environment env,
 LightInfo sampleLights(inout Sampler rng, in Environment env, 
     in vec3 origin, in vec3 base_normal, in vec3 shading_normal)
 {
-    //uint32_t total_lights = env.numLights + 1;
-    uint32_t total_lights = env.numLights;
+    uint32_t total_lights = env.numLights + 1;
     //uint32_t total_lights = 1;
 
     uint32_t light_idx = uint32_t(samplerGet1D(rng) * total_lights);

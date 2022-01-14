@@ -3,8 +3,16 @@
 
 #include "inputs.glsl"
 
+struct RayDifferential {
+    vec3 dOdX;
+    vec3 dOdY;
+    vec3 dDdX;
+    vec3 dDdY;
+};
+
 void computeCameraRay(in Camera camera, in u32vec3 idx, in vec2 jitter,
-                      out vec3 ray_origin, out vec3 ray_dir)
+                      out vec3 ray_origin, out vec3 ray_dir,
+                      out RayDifferential differential)
 {
     vec2 jittered_raster = vec2(idx.x, idx.y) + jitter;
 
@@ -15,8 +23,23 @@ void computeCameraRay(in Camera camera, in u32vec3 idx, in vec2 jitter,
     vec3 up = camera.up * camera.upScale;
 
     ray_origin = camera.origin;
-    ray_dir = normalize(
-        right * screen.x + up * screen.y + camera.view);
+    ray_dir = right * screen.x + up * screen.y + camera.view;
+
+    float dir_len_sq = dot(ray_dir, ray_dir);
+
+    vec3 rhat = right * 2.f / float(RES_X);
+    vec3 uhat = -up * 2.f / float(RES_Y);
+    
+    float dir_len_32 = inversesqrt(dir_len_sq) / dir_len_sq;
+
+    differential.dOdX = vec3(0.f);
+    differential.dOdY = vec3(0.f);
+    differential.dDdX = (dir_len_sq * rhat - dot(ray_dir, rhat) * ray_dir) *
+        dir_len_32;
+    differential.dDdY = (dir_len_sq * uhat - dot(ray_dir, uhat) * ray_dir) *
+        dir_len_32;
+
+    ray_dir = ray_dir * inversesqrt(dir_len_sq);
 }
 
 vec2 getScreenSpacePosition(Camera camera, vec3 world_pos)

@@ -3,6 +3,7 @@
 
 #include "inputs.glsl"
 #include "unpack.glsl"
+#include "camera.glsl"
 
 struct HitInfo {
     vec3 position;
@@ -144,7 +145,7 @@ TangentFrame tangentFrameToWorld(mat4x3 o2w, mat4x3 w2o, TangentFrame frame,
 void getHitParams(in rayQueryEXT ray_query, out vec2 barys,
                   out uint32_t tri_idx, out uint32_t material_offset,
                   out uint32_t geo_idx, out uint32_t mesh_offset,
-                  out mat4x3 o2w, out mat4x3 w2o)
+                  out float hit_t, out mat4x3 o2w, out mat4x3 w2o)
 {
     barys = rayQueryGetIntersectionBarycentricsEXT(ray_query, true);
 
@@ -161,6 +162,8 @@ void getHitParams(in rayQueryEXT ray_query, out vec2 barys,
         rayQueryGetIntersectionInstanceShaderBindingTableRecordOffsetEXT(
             ray_query, true));
 
+    hit_t = rayQueryGetIntersectionTEXT(ray_query, true);
+
     o2w = rayQueryGetIntersectionObjectToWorldEXT(ray_query, true);
     w2o = rayQueryGetIntersectionWorldToObjectEXT(ray_query, true);
 }
@@ -168,6 +171,27 @@ void getHitParams(in rayQueryEXT ray_query, out vec2 barys,
 uint32_t getHitInstance(in rayQueryEXT ray_query)
 {
     return uint32_t(rayQueryGetIntersectionInstanceIdEXT(ray_query, true));
+}
+
+#if 0
+void barycentricWorldDerivatives(
+    vec3 A1, vec3 A2,
+    out vec3 du_dx, out vec3 dv_dx)
+{
+    vec3 Nt = cross(A1, A2) / dot(Nt, Nt);
+    du_dx = cross(A2, Nt);
+    dv_dx = cross(Nt, A1);
+}
+
+mat3 WorldScreenDerivatives(vec4 x)
+{
+    float wMx = dot(WorldToTargetMatrix[3], x);
+    maat3 dx_dxt = mat3(TargetToWorldMatrix);
+    dx_dxt[0] -= x.x * TargetToWorldMatrix[3].xyz;
+    dx_dxt[1] -= x.y * TargetToWorldMatrix[3].xyz;
+    dx_dxt[2] -= x.z * TargetToWorldMatrix[3].xyz;
+
+    return dx_dxt;
 }
 
 // Ray Tracing Gems II Chapter 7
@@ -213,14 +237,85 @@ float updateRayCone(in vec3 position, inout RayCone cone)
     return cone.pixelSpread * cone.totalDistance;
 }
 
+#endif
+
+void updateRayDifferential(inout RayDifferential ray_diff,
+                           in vec3 d, in float t, in vec3 n)
+{
+    vec3 dodx = ray_diff.dOdX + t * ray_diff.dDdX;
+    vec3 dody = ray_diff.dOdY + t * ray_diff.dDdY;
+
+    float inv_cos_dir = 1.f / dot(d, n);
+    float dtdx = -dot(dodx, n) * inv_cos_dir;
+    float dtdy = -dot(dody, n) * inv_cos_dir;
+
+    ray_diff.dOdX = dodx + d * dtdx;
+    ray_diff.dOdY = dody + d * dtdy;
+}
+
+vec4 UVDerivsFromRayDifferential(RayDifferential ray_diff, vec3 d,
+                                 vec3 p0, vec3 p1, vec3 p2,
+                                 vec2 uv0, vec2 uv1, vec2 uv2,
+                                 float t)
+{
+#if 0
+    vec3 e1 = p1 - p0;
+    vec3 e2 = p2 - p0;
+
+    vec2 g1 = uv1 - uv0;
+    vec2 g2 = uv2 - uv0;
+
+    vec3 Nu = cross(e2, n);
+    vec3 Nv = cross(e1, n);
+
+    vec3 Lu = Nu / dot(Nu, e1);
+    vec3 Lv = Nv / dot(Nv, e2);
+
+    vec4 dbary = vec4(
+        dot(Lu, ray_diff.dOdX),
+        dot(Lv, ray_diff.dOdX),
+        dot(Lu, ray_diff.dOdY),
+        dot(Lv, ray_diff.dOdY));
+
+    return vec4(
+        dbary.x * g1 + dbary.y * g2,
+        dbary.z * g1 + dbary.w * g2);
+#endif
+
+    vec3 e1 = p1 - p0;
+    vec3 e2 = p2 - p0;
+
+    vec2 g1 = uv1 - uv0;
+    vec2 g2 = uv2 - uv0;
+
+    float inv_k = 1.f / dot(cross(e1, e2), d);
+
+    vec3 cu = cross(e2, d);
+    vec3 cv = cross(d, e1);
+
+    vec3 q = ray_diff.dOdX + t * ray_diff.dDdX;
+    vec3 r = ray_diff.dOdY + t * ray_diff.dDdY;
+
+    vec4 dbary = inv_k * vec4(
+        dot(cu, q),
+        dot(cv, q),
+        dot(cu, r),
+        dot(cv, r));
+
+    return vec4(
+        dbary.x * g1 + dbary.y * g2,
+        dbary.z * g1 + dbary.w * g2);
+}
+
 HitInfo processHit(in rayQueryEXT ray_query, in Environment env,
-                   in vec3 outgoing_dir, inout RayCone ray_cone)
+                   in vec3 outgoing_dir, inout RayDifferential ray_diff)
 {
     vec2 barys;
     uint32_t tri_idx, material_offset, geo_idx, mesh_offset;
+    float hit_t;
     mat4x3 o2w, w2o;
     getHitParams(ray_query, barys, tri_idx,
-                 material_offset, geo_idx, mesh_offset, o2w, w2o);
+                 material_offset, geo_idx, mesh_offset, hit_t, o2w, w2o);
 
     SceneAddresses scene_addrs = sceneAddrs[env.sceneID];
 
@@ -244,6 +339,7 @@ HitInfo processHit(in rayQueryEXT ray_query, in Environment env,
         world_geo_normal *= -1.f;
     }
 
+#if 0
     float cone_width = updateRayCone(world_position, ray_cone);
     vec4 uv_derivs = UVDerivsFromRayCone(outgoing_dir,
                                          world_geo_normal,
@@ -251,6 +347,20 @@ HitInfo processHit(in rayQueryEXT ray_query, in Environment env,
                                          cone_width,
                                          hit_tri.a.uv, hit_tri.b.uv,
                                          hit_tri.c.uv);
+#endif
+
+    //updateRayDifferential(ray_diff, outgoing_dir, hit_t,
+    //                      world_geo_normal);
+
+    vec4 uv_derivs = UVDerivsFromRayDifferential(ray_diff,
+                                                 outgoing_dir,
+                                                 world_a,
+                                                 world_b,
+                                                 world_c,
+                                                 hit_tri.a.uv,
+                                                 hit_tri.b.uv,
+                                                 hit_tri.c.uv,
+                                                 hit_t / 10.f);
 
     vec2 uv = interpolateUV(hit_tri.a.uv, hit_tri.b.uv, hit_tri.c.uv,
                             barys);
