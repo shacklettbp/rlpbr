@@ -291,10 +291,54 @@ loadTextureFromDisk(const string &tex_path, uint32_t texel_bytes,
         cur_offset += lvl_x * lvl_y * texel_bytes;
     }
 
+    assert(cur_offset == num_decompressed_bytes);
+
     free(compressed_data);
 
     return make_tuple(img_data, num_decompressed_bytes, glm::u32vec2(x, y),
                       num_levels, -float(num_skip_levels));
+}
+
+static tuple<void *, uint64_t, glm::u32vec3,
+             void *, uint64_t, glm::u32vec3>
+    loadEnvironmentMapFromDisk(const string &env_path)
+{
+    ifstream tex_file(env_path, ios::in | ios::binary);
+
+    auto read_uint = [&tex_file]() {
+        uint32_t v;
+        tex_file.read((char *)&v, sizeof(uint32_t));
+        return v;
+    };
+
+    uint32_t num_env_mips = read_uint();
+    uint32_t env_width = read_uint();
+    uint32_t env_height = read_uint();
+    uint64_t env_bytes;
+    tex_file.read((char *)&env_bytes, sizeof(uint64_t));
+
+    void *env_staging = malloc(env_bytes);
+    tex_file.read((char *)env_staging, env_bytes);
+
+    uint32_t num_imp_mips = read_uint();
+    uint32_t imp_width = read_uint();
+    uint32_t imp_height = read_uint();
+
+    assert(imp_width == imp_height);
+    uint64_t imp_bytes;
+    tex_file.read((char *)&imp_bytes, sizeof(uint64_t));
+
+    void *imp_staging = malloc(imp_bytes);
+    tex_file.read((char *)imp_staging, imp_bytes);
+
+    return {
+        env_staging,
+        env_bytes,
+        { env_width, env_height, num_env_mips },
+        imp_staging,
+        imp_bytes,
+        { imp_width, imp_height, num_imp_mips },
+    };
 }
 
 struct StagedTextures {
@@ -314,6 +358,7 @@ struct StagedTextures {
     vector<uint32_t> clearcoat;
     vector<uint32_t> anisotropic;
     optional<uint32_t> envMap;
+    optional<uint32_t> importanceMap;
 };
 
 static optional<StagedTextures> prepareSceneTextures(const DeviceState &dev,
@@ -328,7 +373,7 @@ static optional<StagedTextures> prepareSceneTextures(const DeviceState &dev,
         texture_info.clearcoat.size() + texture_info.anisotropic.size();
 
     if (!texture_info.envMap.empty()) {
-        num_textures += 1;
+        num_textures += 2;
     }
 
     if (num_textures == 0) {
@@ -418,16 +463,25 @@ static optional<StagedTextures> prepareSceneTextures(const DeviceState &dev,
                                              twoCompUnorm);
 
     optional<uint32_t> env_loc;
+    optional<uint32_t> env_importance_loc;
 
     if (!texture_info.envMap.empty()) {
-        int x, y, n;
-        float *img_data = stbi_loadf(
-            (texture_info.textureDir + texture_info.envMap).c_str(),
-            &x, &y, &n, 4);
+        string env_path = texture_info.textureDir + texture_info.envMap;
+        auto [env_data, env_data_bytes, env_dims,
+              imp_data, imp_data_bytes, imp_dims] =
+            loadEnvironmentMapFromDisk(
+                env_path);
 
-        env_loc = stageTexture(img_data, x * y * 4 * sizeof(float), x, y, 1,
+        env_loc = stageTexture(env_data, env_data_bytes,
+                               env_dims.x, env_dims.y, env_dims.z,
             alloc.getTextureFormat(TextureFormat::R32G32B32A32_SFLOAT),
             getTexelBytes(TextureFormat::R32G32B32A32_SFLOAT));
+
+
+        env_importance_loc = stageTexture(imp_data, imp_data_bytes,
+                                          imp_dims.x, imp_dims.y, imp_dims.z,
+            alloc.getTextureFormat(TextureFormat::R32_SFLOAT),
+            getTexelBytes(TextureFormat::R32_SFLOAT));
     }
 
     size_t num_device_bytes = cur_tex_offset;
@@ -450,7 +504,7 @@ static optional<StagedTextures> prepareSceneTextures(const DeviceState &dev,
     for (int i = 0 ; i < (int)num_textures; i++) {
         char *cur_ptr = (char *)texture_staging.ptr + stage_offsets[i];
         memcpy(cur_ptr, host_ptrs[i], host_sizes[i]);
-        stbi_image_free(host_ptrs[i]);
+        free(host_ptrs[i]);
     }
 
     texture_staging.flush(dev);
@@ -515,6 +569,7 @@ static optional<StagedTextures> prepareSceneTextures(const DeviceState &dev,
         move(clearcoat_locs),
         move(anisotropic_locs),
         move(env_loc),
+        move(env_importance_loc),
     };
 }
 
@@ -1188,7 +1243,13 @@ shared_ptr<Scene> VulkanLoader::loadScene(SceneLoadData &&load_info)
 
     DescriptorUpdates desc_updates(1);
     vector<VkDescriptorImageInfo> descriptor_views;
-    descriptor_views.reserve(load_info.hdr.numMaterials * 8 + 1);
+    descriptor_views.reserve(load_info.hdr.numMaterials * 8 + 2);
+
+    VkDescriptorImageInfo null_img {
+        VK_NULL_HANDLE,
+        VK_NULL_HANDLE,
+        VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+    };
 
     if (staged_textures->envMap.has_value()) {
         descriptor_views.push_back({
@@ -1196,12 +1257,15 @@ shared_ptr<Scene> VulkanLoader::loadScene(SceneLoadData &&load_info)
             texture_views[staged_textures->envMap.value()],
             VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
         });
-    } else {
+
         descriptor_views.push_back({
             VK_NULL_HANDLE,
-            VK_NULL_HANDLE,
+            texture_views[staged_textures->importanceMap.value()],
             VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
         });
+    } else {
+        descriptor_views.push_back(null_img);
+        descriptor_views.push_back(null_img);
     }
 
     for (int mat_idx = 0; mat_idx < (int)load_info.hdr.numMaterials;
@@ -1219,11 +1283,7 @@ shared_ptr<Scene> VulkanLoader::loadScene(SceneLoadData &&load_info)
                     VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
                 });
             } else {
-                descriptor_views.push_back({
-                    VK_NULL_HANDLE,
-                    VK_NULL_HANDLE,
-                    VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-                });
+                descriptor_views.push_back(null_img);
             }
         };
 
@@ -1270,7 +1330,7 @@ shared_ptr<Scene> VulkanLoader::loadScene(SceneLoadData &&load_info)
         assert(load_info.hdr.numMaterials < VulkanConfig::max_materials);
 
         uint32_t texture_offset = scene_id *
-            (1 + VulkanConfig::max_materials *
+            (2 + VulkanConfig::max_materials *
              VulkanConfig::textures_per_material);
         desc_updates.textures(scene_set_,
                               descriptor_views.data(),

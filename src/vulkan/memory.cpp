@@ -493,7 +493,6 @@ static array<VkFormat, size_t(TextureFormat::COUNT)> chooseTextureFormats(
 
     setFormat(TextureFormat::R32_SFLOAT, array {
         VK_FORMAT_R32_SFLOAT,
-        VK_FORMAT_R32G32B32A32_SFLOAT,
     });
 
     setFormat(TextureFormat::BC5_UNORM, array {
