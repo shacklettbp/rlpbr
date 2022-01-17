@@ -135,16 +135,68 @@ vec3 evalEnvMap(uint32_t map_idx, vec3 dir)
 LightSample sampleEnvMap(uint32_t map_idx,
     vec2 uv, float inv_selection_pdf)
 {
+    int num_levels =
+        textureQueryLevels(sampler2D(textures[map_idx + 1], clampSampler));
+
+    ivec2 pos = ivec2(0);
+
+    for (int level_idx = num_levels - 2; level_idx >= 0; level_idx--) {
+        pos *= 2;
+
+        vec4 w;
+        w.x = texelFetch(sampler2D(textures[map_idx + 1], clampSampler),
+                         pos, level_idx).r;
+        w.y = texelFetch(sampler2D(textures[map_idx + 1], clampSampler),
+                         pos + ivec2(1, 0), level_idx).r;
+        w.z = texelFetch(sampler2D(textures[map_idx + 1], clampSampler),
+                         pos + ivec2(0, 1), level_idx).r;
+        w.w = texelFetch(sampler2D(textures[map_idx + 1], clampSampler),
+                         pos + ivec2(1, 1), level_idx).r;
+
+        vec2 q;
+        q.x = w.x + w.z;
+        q.y = w.y + w.w;
+
+        ivec2 off;
+
+        float d = q.x / (q.x + q.y);
+
+        if (uv.x < d) {
+            off.x = 0;
+            uv.x /= d;
+        } else {
+            off.x = 1;
+            uv.x = (uv.x - d) / (1.f - d);
+        }
+
+        float e = off.x == 0 ? (w.x / q.x) : (w.y / q.y);
+
+        if (uv.y < e) {
+            off.y = 0;
+            uv.y /= e;
+        } else {
+            off.y = 1;
+            uv.y = (uv.y - e) / (1.f - e);
+        }
+
+        pos += off;
+    }
+
+    ivec2 dims =
+        textureSize(sampler2D(textures[map_idx + 1], clampSampler), 0);
+
+    uv = (vec2(pos) + uv) / dims;
     vec3 dir = octSphereMap(uv);
 
-    vec3 irradiance = evalEnvMap(map_idx, dir);
+    float pdf = textureLod(sampler2D(textures[map_idx + 1], clampSampler),
+                           uv, 0).r;
 
-    const float inv_pdf = 4.f * M_PI;
+    vec3 irradiance = evalEnvMap(map_idx, dir);
 
     LightSample light_sample;
     light_sample.toLight = dir;
     light_sample.irradiance = irradiance;
-    light_sample.pdf = 1.f / (inv_pdf * inv_selection_pdf);
+    light_sample.pdf = pdf / (4.f * M_PI * inv_selection_pdf);
 
     return light_sample;
 }
