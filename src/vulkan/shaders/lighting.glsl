@@ -186,9 +186,10 @@ LightSample sampleEnvMap(uint32_t map_idx,
         textureSize(sampler2D(textures[map_idx + 1], clampSampler), 0);
 
     uv = (vec2(pos) + uv) / dims;
+
     vec3 dir = octSphereMap(uv);
 
-    float pdf = textureLod(sampler2D(textures[map_idx + 1], clampSampler),
+    float imp_pdf = textureLod(sampler2D(textures[map_idx + 1], clampSampler),
                            uv, 0).r;
 
     vec3 irradiance = evalEnvMap(map_idx, dir);
@@ -196,9 +197,19 @@ LightSample sampleEnvMap(uint32_t map_idx,
     LightSample light_sample;
     light_sample.toLight = dir;
     light_sample.irradiance = irradiance;
-    light_sample.pdf = pdf / (4.f * M_PI * inv_selection_pdf);
+    light_sample.pdf = imp_pdf / (4.f * M_PI * inv_selection_pdf);
 
     return light_sample;
+}
+
+float envMapPDF(uint32_t map_idx, vec3 dir, float inv_selection_pdf)
+{
+    vec2 uv = invOctSphereMap(dir);
+
+    float imp_pdf = textureLod(sampler2D(textures[map_idx + 1], clampSampler),
+                      uv, 0).r;
+
+    return imp_pdf / (4.f * M_PI * inv_selection_pdf);
 }
 
 vec3 getTriangleLightPoint(TriangleLight light, vec2 uv)
@@ -492,7 +503,6 @@ LightInfo sampleLights(inout Sampler rng, in Environment env,
     in vec3 origin, in vec3 base_normal, in vec3 shading_normal)
 {
     uint32_t total_lights = env.numLights + 1;
-    //uint32_t total_lights = 1;
 
     uint32_t light_idx = uint32_t(samplerGet1D(rng) * total_lights);
 
@@ -531,6 +541,7 @@ LightInfo sampleLights(inout Sampler rng, in Environment env,
     } else {
         light_sample = sampleEnvMap(env.baseTextureOffset, light_sample_uv,
                                     inv_selection_pdf);
+
         dir_check = light_sample.toLight;
     }
 

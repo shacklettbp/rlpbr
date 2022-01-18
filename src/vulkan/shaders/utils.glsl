@@ -87,7 +87,22 @@ vec2 dirToLatLong(vec3 dir)
     return vec2(atan(n.x, -n.z) * (M_1_PI / 2.f) + 0.5f, acos(n.y) * M_1_PI);
 }
 
+// For the two equal area functions below to correctly map between eachother
+// There needs to be a sign function that returns 1.0 for 0.0 and
+// -1.0 for -0.0. This is due to the discontinuity in the octahedral map
+// between the upper left triangle and bottom left triangle for example
+// (same on right). Check image in RT Gems 16.5.4.2, light purple and dark
+// purple for example.
+float signPreserveZero(float v)
+{
+    int32_t i = floatBitsToInt(v);
+
+    return (i < 0) ? -1.0 : 1.0;
+}
+
 // Ray Tracing Gems 16.5.4.2
+// Better description in Clarberg's
+// "Fast Equal-Area Mapping of the (Hemi)Sphere using SIMD"
 vec3 octSphereMap(vec2 u)
 {
     u = u * 2.f - 1.f;
@@ -100,17 +115,40 @@ vec3 octSphereMap(vec2 u)
     // division-by-zero test), using sign(u) to map the result to the
     // correct quadrant below
     float phi = (r == 0.f) ? 0.f :
-        M_PI_4 * ((abs(u.y) - abs(u.x)) / r + 1.f);
+        (M_PI_4 * ((abs(u.y) - abs(u.x)) / r + 1.f));
 
     float f = r * sqrt(2.f - r * r);
-    float x = f * sign(u.x) * cos(phi);
-    float y = f * sign(u.y) * sin(phi);
-    float z = sign(d) * (1.f - r * r);
+
+    // abs() around f * cos/sin(phi) is necessary because they can return
+    // negative 0 due to floating precision
+    float x = signPreserveZero(u.x) * abs(f * cos(phi));
+    float y = signPreserveZero(u.y) * abs(f * sin(phi));
+    float z = signPreserveZero(d) * (1.f - r * r);
 
     return vec3(x, y, z);
 }
 
-vec3 octahedralVectorDecode(vec2 f) {
+vec2 invOctSphereMap(vec3 dir)
+{
+    float r = sqrt(1.f - abs(dir.z));
+    float phi = atan(abs(dir.y), abs(dir.x));
+
+    vec2 uv;
+    uv.y = r * phi * M_2_PI;
+    uv.x = r - uv.y;
+
+    if (dir.z < 0.f) {
+        uv = 1.f - uv.yx;
+    }
+
+    uv.x *= signPreserveZero(dir.x);
+    uv.y *= signPreserveZero(dir.y);
+
+    return uv * 0.5f + 0.5f;
+}
+
+vec3 octahedralVectorDecode(vec2 f)
+{
      f = f * 2.0 - 1.0;
      // https://twitter.com/Stubbesaurus/status/937994790553227264
      vec3 n = vec3(f.x, f.y, 1.f - abs(f.x) - abs(f.y));

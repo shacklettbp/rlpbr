@@ -24,7 +24,7 @@
 #extension GL_EXT_debug_printf : enable
 #endif
 
-//#define USE_MIS 1
+#define USE_MIS 1
 //#define ENABLE_RIS 1
 
 // GLSL wants this for uint64_t -> accel struct conversion
@@ -397,7 +397,7 @@ PathVertexState processPathVertex(inout Sampler rng, in Environment env,
 }
 
 vec3 envMapMiss(uint32_t tex_offset, vec3 ray_dir, float bounce_pdf,
-                uint32_t bounce_flags)
+                uint32_t bounce_flags, uint32_t num_lights)
 {
     vec3 radiance = evalEnvMap(tex_offset, ray_dir);
 
@@ -406,7 +406,7 @@ vec3 envMapMiss(uint32_t tex_offset, vec3 ray_dir, float bounce_pdf,
     }
 
 #ifdef USE_MIS
-    float light_pdf = 1.f / (4.f * M_PI);
+    float light_pdf = envMapPDF(tex_offset, ray_dir, num_lights);
     float mis_weight = misPowerHeuristic(1, bounce_pdf, 1, light_pdf);
 
     return radiance * mis_weight;
@@ -569,7 +569,8 @@ vec3 indirectLighting(in Environment env, in vec3 ray_origin, in vec3 ray_dir,
         if (!shade_hit) {
             indirect_contrib += path_weight *
                 envMapMiss(env.baseTextureOffset, ray_dir,
-                           bounce_pdf, bounce_flags);
+                           bounce_pdf, bounce_flags,
+                           env.numLights + 1);
             break;
         }
 
