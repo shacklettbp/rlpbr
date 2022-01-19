@@ -978,6 +978,12 @@ static std::vector<InstanceProperties> gltfParseInstances(
                 if (materials[prim.materialIdx].baseTransmission > 0.f) {
                     is_transparent = true;
                 }
+                // FIXME: hack
+                is_transparent = false;
+                if (materials[prim.materialIdx].name == "FP_GLASS") {
+                    is_transparent = true;
+                    break;
+                }
             }
 
             instances.push_back({

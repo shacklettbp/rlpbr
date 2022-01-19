@@ -397,11 +397,17 @@ PathVertexState processPathVertex(inout Sampler rng, in Environment env,
 }
 
 vec3 envMapMiss(uint32_t tex_offset, vec3 ray_dir, float bounce_pdf,
-                uint32_t bounce_flags, uint32_t num_lights)
+                uint32_t bounce_flags, uint32_t num_lights,
+                bool mis_only)
 {
     vec3 radiance = evalEnvMap(tex_offset, ray_dir);
 
     if (bool(bounce_flags & BSDFFlagsDelta)) {
+#ifdef USE_MIS
+        if (mis_only) {
+            return vec3(0.f);
+        }
+#endif
         return radiance;
     }
 
@@ -437,7 +443,7 @@ PrimaryResult directLighting(in u32vec3 idx, in uint32_t linear_idx,
 
     rayQueryEXT primary_query;
     bool primary_hit = traceShadeRay(primary_query, env.tlasAddr,
-                                     ray_origin, ray_dir, 3);
+                                     ray_origin, ray_dir, 1);
     
     PrimaryResult result;
 
@@ -563,14 +569,15 @@ vec3 indirectLighting(in Environment env, in vec3 ray_origin, in vec3 ray_dir,
 
         rayQueryEXT bounce_query;
         bool shade_hit = traceShadeRay(bounce_query, env.tlasAddr,
-                                       ray_origin, ray_dir, 3);
+                                       ray_origin, ray_dir, 1);
 
         // Miss, hit env map
         if (!shade_hit) {
             indirect_contrib += path_weight *
                 envMapMiss(env.baseTextureOffset, ray_dir,
                            bounce_pdf, bounce_flags,
-                           env.numLights + 1);
+                           env.numLights + 1,
+                           path_depth == MAX_DEPTH);
             break;
         }
 
