@@ -301,12 +301,11 @@ float ggxG1(float cos_theta, float a2)
     float cos2 = cos_theta * cos_theta;
     float tan2 = max(1.f - cos2, 0.f) / cos2;
     float g1 = 2.f / (1.f + sqrt(1.f + a2 * tan2));
-    return cos_theta <= 0.f ? 0.f : g1;
+    return g1;
 }
 
-float ggxNDF(float alpha, float cos_theta)
+float ggxNDF(float a2, float cos_theta)
 {
-    float a2 = alpha * alpha;
     float d = ((cos_theta * a2 - cos_theta) * cos_theta + 1.f);
     return a2 / (d * d * M_PI);
 }
@@ -323,7 +322,7 @@ float ggxMasking(float a2, float out_cos, float in_cos)
               float alpha, out float pdf)                                 \
     {                                                                     \
         float a2 = alpha * alpha;                                         \
-        float D = ggxNDF(alpha, n_dot_h);                                 \
+        float D = ggxNDF(a2, n_dot_h);                                    \
         float G = ggxMasking(a2, wo_dot_n, wi_dot_n);                     \
                                                                           \
         float common_weight = 0.25f * D / wo_dot_n;                       \
@@ -603,7 +602,8 @@ float microfacetPDF(BSDFParams params, float wo_dot_n, float wi_dot_n,
 
     float pdf = 0.25f * D * G1 / wo_dot_n;
 
-    if (params.alpha == 0.f || min(wo_dot_n, wi_dot_n) < NEAR_ZERO) {
+    if (dir_dot_h <= 0.f || params.alpha == 0.f ||
+        min(wo_dot_n, wi_dot_n) < NEAR_ZERO) {
         pdf = 0.f;
     }
 
