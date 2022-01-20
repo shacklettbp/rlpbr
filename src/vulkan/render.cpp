@@ -200,7 +200,7 @@ static RenderState makeRenderState(const DeviceState &dev,
             shader_name = "pathtracer.comp";
             break;
         case RenderMode::Biased:
-            shader_name = "biased.comp";
+            shader_name = "basic.comp";
             break;
     }
 
