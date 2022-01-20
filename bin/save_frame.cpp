@@ -36,7 +36,7 @@ float toSRGB(float v)
 
 glm::vec3 tonemap(glm::vec3 v)
 {
-    v *= 0.8;
+    v *= 2.0;
 
     float A = 2.51f;
     float B = 0.03f;

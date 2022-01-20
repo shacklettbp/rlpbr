@@ -196,4 +196,13 @@ vec3 sampleSphereUniform(vec2 uv)
     return vec3(r * cos(phi), r * sin(phi), z);
 }
 
+// http://lolengine.net/blog/2013/09/21/picking-orthogonal-vector-combing-coconuts
+// Alternative: https://jcgt.org/published/0006/01/01/
+vec3 getOrthogonalVec(vec3 v)
+{
+    return abs(v.x) > abs(v.z) ?
+        vec3(-v.y, v.x, 0.0) :
+        vec3(0.0, -v.z, v.y);
+}
+
 #endif

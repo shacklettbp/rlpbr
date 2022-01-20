@@ -85,10 +85,10 @@ TangentFrame computeTangentFrame(Triangle hit_tri,
                                  vec2 uv,
                                  vec4 uv_derivs)
 {
-    vec3 n = normalize(interpolateNormal(hit_tri.a.normal,
-                                         hit_tri.b.normal,
-                                         hit_tri.c.normal,
-                                         barys));
+    vec3 n = interpolateNormal(hit_tri.a.normal,
+                               hit_tri.b.normal,
+                               hit_tri.c.normal,
+                               barys);
 
     vec4 combined = interpolateCombinedTangent(hit_tri.a.tangentAndSign,
                                                hit_tri.b.tangentAndSign,
@@ -96,7 +96,10 @@ TangentFrame computeTangentFrame(Triangle hit_tri,
                                                barys);
 
     vec3 t = combined.xyz;
-    float bitangent_sign = combined.w;
+
+    // Need to extend to 1 or -1 (or 0) since interpolation can produce
+    // something in between
+    float bitangent_sign = sign(combined.w);
 
     vec3 b = cross(n, t) * bitangent_sign;
 
@@ -114,8 +117,24 @@ TangentFrame computeTangentFrame(Triangle hit_tri,
 
     // Perturb normal
     n = normalize(t * perturb.x + b * perturb.y + n * perturb.z);
-    // Ensure perpendicular (if new normal is parallel to old tangent... boom)
-    t = normalize(t - n * dot(n, t));
+
+    // At this point, two things can have gone wrong (due to bad UVs or normal
+    // 1. bitangent_sign interpolated to 0 => 0 length bitangent
+    // 2. Perturbed normal is parallel to original tangent
+    // Just reinvent the tangent space in both these cases
+    // FIXME: perhaps we should always recreate the tangent space,
+    // that would avooid the branch and need to transform
+    // the normal and bitangent
+
+    float n_d_t = dot(n, t);
+
+    if (n_d_t > 0.9999f || bitangent_sign == 0.f) {
+        bitangent_sign = 1.f;
+        t = normalize(getOrthogonalVec(n));
+    } else {
+        // Make tangent perpendicular to perturbed normal
+        t = normalize(t - n * n_d_t);
+    }
     b = cross(n, t) * bitangent_sign;
 
     return TangentFrame(t, b, n);
