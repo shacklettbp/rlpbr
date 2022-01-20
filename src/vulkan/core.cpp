@@ -487,7 +487,7 @@ DeviceState InstanceState::makeDevice(
     requested_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
     requested_features.pNext = &vk11_features;
 
-    requested_features.features.samplerAnisotropy = false;
+    requested_features.features.samplerAnisotropy = true;
     requested_features.features.shaderInt16 = true;
     requested_features.features.shaderInt64 = true;
     requested_features.features.wideLines = true;

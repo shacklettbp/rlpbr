@@ -38,8 +38,8 @@ VkSampler makeImmutableSampler(const DeviceState &dev,
     sampler_info.addressModeV = address_mode;
     sampler_info.addressModeW = address_mode;
     sampler_info.mipLodBias = 0;
-    sampler_info.anisotropyEnable = VK_FALSE;
-    sampler_info.maxAnisotropy = 0;
+    sampler_info.anisotropyEnable = VK_TRUE;
+    sampler_info.maxAnisotropy = 16.0;
     sampler_info.compareEnable = VK_FALSE;
     sampler_info.compareOp = VK_COMPARE_OP_ALWAYS;
     sampler_info.minLod = 0;
