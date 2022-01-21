@@ -28,8 +28,8 @@ void computeCameraRay(in Camera camera, in u32vec3 idx, in vec2 jitter,
     float dir_len_sq = dot(ray_dir, ray_dir);
     float inv_dir_len = inversesqrt(dir_len_sq);
 
-    vec3 rhat = right * 2.f / float(RES_X);
-    vec3 uhat = up * 2.f / float(RES_Y);
+    vec3 rhat = right * 2.f / float(RES_X) * INV_SQRT_SPP;
+    vec3 uhat = up * 2.f / float(RES_Y) * INV_SQRT_SPP;
 
     float inv_dir_len_32 = inv_dir_len / dir_len_sq;
 

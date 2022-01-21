@@ -3,6 +3,7 @@
 #include "scene.hpp"
 
 #include <iostream>
+#include <sstream>
 
 using namespace std;
 
@@ -156,8 +157,14 @@ static RenderState makeRenderState(const DeviceState &dev,
         sampling_define = "UNIFORM_SAMPLING";
     }
 
+    float inv_sqrt_spp = 1.f / sqrtf(float(cfg.spp));
+    ostringstream float_conv;
+    float_conv.precision(9);
+    float_conv << fixed << inv_sqrt_spp;
+
     vector<string> shader_defines {
         string("SPP (") + to_string(cfg.spp) + "u)",
+        string("INV_SQRT_SPP (") + float_conv.str() + "f)",
         string("MAX_DEPTH (") + to_string(cfg.maxDepth) + "u)",
         string("RES_X (") + to_string(cfg.imgWidth) + "u)",
         string("RES_Y (") + to_string(cfg.imgHeight) + "u)",
