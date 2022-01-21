@@ -56,4 +56,9 @@ struct MeshInfo {
     uint32_t indexOffset;
 };
 
+struct TextureDerivatives {
+    vec2 dUVdX;
+    vec2 dUVdY;
+};
+
 #endif

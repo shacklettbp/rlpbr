@@ -36,8 +36,6 @@ float toSRGB(float v)
 
 glm::vec3 tonemap(glm::vec3 v)
 {
-    v *= 2.0;
-
     float A = 2.51f;
     float B = 0.03f;
     float C = 2.43f;
@@ -108,7 +106,8 @@ int main(int argc, char *argv[]) {
     }
 
     Renderer renderer({0, 1, batch_size, out_dim.x, out_dim.y, spp, depth,
-                       0, RenderMode::PathTracer, {}, 0.f, BackendSelect::Vulkan});
+                       0, RenderMode::PathTracer, RenderFlags::AuxiliaryOutputs,
+                       0.f, BackendSelect::Vulkan});
 
     auto loader = renderer.makeLoader();
     auto scene = loader.loadScene(argv[1]);
@@ -157,9 +156,17 @@ int main(int argc, char *argv[]) {
     glm::vec3 up(-0.187018, 0.961949, -0.199220);
 #endif
 
+    // 103997613_171030702
+    glm::vec3 eye(-7.150498, 1.390147, -5.932401);
+    glm::vec3 look(-7.072584, 1.256431, -4.944434);
+    glm::vec3 up(0.019160, 0.990987, 0.132613);
+
+    // 108736737_177263406
+#if 0
     glm::vec3 eye(0.724215, 1.477543, -10.388538);
     glm::vec3 look(0.090698, 1.285655, -9.638973);
     glm::vec3 up(-0.107137, 0.981188, 0.160626);
+#endif
 
 
     //glm::vec3 eye(7.1, 1.673785, -0.217743);

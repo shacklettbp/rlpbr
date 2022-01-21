@@ -120,13 +120,10 @@ layout (set = 1, binding = 1) uniform texture2D textures[];
 
 // This function needs to be defined before the include of 
 // materials.glsl
-vec4 fetchSceneTexture(uint32_t idx, vec2 uv, vec4 uv_derivs)
+vec4 fetchSceneTexture(uint32_t idx, vec2 uv, TextureDerivatives tex_derivs)
 {
-    //return textureGrad(sampler2D(textures[nonuniformEXT(idx)],
-    //    repeatSampler), uv, uv_derivs.xy, uv_derivs.zw);
-    //
-    return textureLod(sampler2D(textures[nonuniformEXT(idx)],
-        repeatSampler), uv, 0.f);
+    return textureGrad(sampler2D(textures[nonuniformEXT(idx)],
+        repeatSampler), uv, tex_derivs.dUVdX, tex_derivs.dUVdY);
 }
 
 u32vec4 fetchSceneMaterialParams(MatRef ref, uint32_t idx, uint32_t sub_idx)
@@ -458,7 +455,8 @@ PrimaryResult directLighting(in u32vec3 idx, in uint32_t linear_idx,
         return result;
     }
 
-    HitInfo hit = processHit(primary_query, env, ray_dir, ray_diff);
+    HitInfo hit = processHit(primary_query, env,
+                             ray_origin, ray_dir, ray_diff);
     result.rayDifferential = ray_diff;
 
     result.instanceID = getHitInstance(primary_query);
@@ -581,7 +579,8 @@ vec3 indirectLighting(in Environment env, in vec3 ray_origin, in vec3 ray_dir,
             break;
         }
 
-        HitInfo hit = processHit(bounce_query, env, ray_dir, ray_diff);
+        HitInfo hit = processHit(bounce_query, env,
+                                 ray_origin, ray_dir, ray_diff);
 
         PathVertexState bounce_state =
             processPathVertex(rng, env, hit, ray_dir, ray_origin, bounce_pdf,
@@ -593,7 +592,9 @@ vec3 indirectLighting(in Environment env, in vec3 ray_origin, in vec3 ray_dir,
         indirect_contrib += vert_contrib;
 
         ray_origin = bounce_state.bounceOrigin;
-        ray_dir = bounce_state.bounceDir;
+        // Normalize shouldn't be necessary but some of the BSDF
+        // sampling seems to deviate a bit from normal ~0.01
+        ray_dir = normalize(bounce_state.bounceDir);
         path_weight *= bounce_state.bounceWeight;
         bounce_pdf = bounce_state.bouncePDF;
         bounce_flags = bounce_state.bounceFlags;

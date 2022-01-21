@@ -83,7 +83,7 @@ TangentFrame computeTangentFrame(Triangle hit_tri,
                                  MaterialParams mat_params,
                                  uint32_t base_tex_idx,
                                  vec2 uv,
-                                 vec4 uv_derivs)
+                                 TextureDerivatives tex_derivs)
 {
     vec3 n = interpolateNormal(hit_tri.a.normal,
                                hit_tri.b.normal,
@@ -105,9 +105,8 @@ TangentFrame computeTangentFrame(Triangle hit_tri,
 
     vec3 perturb = vec3(0, 0, 1);
     if (bool(mat_params.flags & MaterialFlagsHasNormalMap)) {
-        vec2 xy = textureGrad(sampler2D(
-            textures[base_tex_idx + TextureConstantsNormalOffset],
-            repeatSampler), uv, uv_derivs.xy, uv_derivs.zw).xy;
+        vec2 xy = fetchSceneTexture(base_tex_idx + TextureConstantsNormalOffset,
+                                    uv, tex_derivs).xy;
 
         vec2 centered = xy * 2.0 - 1.0;
         float length2 = clamp(dot(centered, centered), 0.0, 1.0);
@@ -164,7 +163,7 @@ TangentFrame tangentFrameToWorld(mat4x3 o2w, mat4x3 w2o, TangentFrame frame,
 void getHitParams(in rayQueryEXT ray_query, out vec2 barys,
                   out uint32_t tri_idx, out uint32_t material_offset,
                   out uint32_t geo_idx, out uint32_t mesh_offset,
-                  out float hit_t, out mat4x3 o2w, out mat4x3 w2o)
+                  out mat4x3 o2w, out mat4x3 w2o)
 {
     barys = rayQueryGetIntersectionBarycentricsEXT(ray_query, true);
 
@@ -180,8 +179,6 @@ void getHitParams(in rayQueryEXT ray_query, out vec2 barys,
     mesh_offset = uint32_t(
         rayQueryGetIntersectionInstanceShaderBindingTableRecordOffsetEXT(
             ray_query, true));
-
-    hit_t = rayQueryGetIntersectionTEXT(ray_query, true);
 
     o2w = rayQueryGetIntersectionObjectToWorldEXT(ray_query, true);
     w2o = rayQueryGetIntersectionWorldToObjectEXT(ray_query, true);
@@ -256,8 +253,6 @@ float updateRayCone(in vec3 position, inout RayCone cone)
     return cone.pixelSpread * cone.totalDistance;
 }
 
-#endif
-
 void updateRayDifferential(inout RayDifferential ray_diff,
                            in vec3 d, in float t, in vec3 n)
 {
@@ -272,35 +267,15 @@ void updateRayDifferential(inout RayDifferential ray_diff,
     ray_diff.dOdY = dody + d * dtdy;
 }
 
-vec4 UVDerivsFromRayDifferential(RayDifferential ray_diff, vec3 d,
-                                 vec3 p0, vec3 p1, vec3 p2,
-                                 vec2 uv0, vec2 uv1, vec2 uv2,
-                                 float t)
-{
-#if 0
-    vec3 e1 = p1 - p0;
-    vec3 e2 = p2 - p0;
-
-    vec2 g1 = uv1 - uv0;
-    vec2 g2 = uv2 - uv0;
-
-    vec3 Nu = cross(e2, n);
-    vec3 Nv = cross(e1, n);
-
-    vec3 Lu = Nu / dot(Nu, e1);
-    vec3 Lv = Nv / dot(Nv, e2);
-
-    vec4 dbary = vec4(
-        dot(Lu, ray_diff.dOdX),
-        dot(Lv, ray_diff.dOdX),
-        dot(Lu, ray_diff.dOdY),
-        dot(Lv, ray_diff.dOdY));
-
-    return vec4(
-        dbary.x * g1 + dbary.y * g2,
-        dbary.z * g1 + dbary.w * g2);
 #endif
 
+TextureDerivatives rayDiffDerivsAndUpdate(
+    inout RayDifferential ray_diff,
+    vec3 d, float t,
+    vec3 geo_normal,
+    vec3 p0, vec3 p1, vec3 p2,
+    vec2 uv0, vec2 uv1, vec2 uv2)
+{
     vec3 e1 = p1 - p0;
     vec3 e2 = p2 - p0;
 
@@ -315,26 +290,34 @@ vec4 UVDerivsFromRayDifferential(RayDifferential ray_diff, vec3 d,
     vec3 q = ray_diff.dOdX + t * ray_diff.dDdX;
     vec3 r = ray_diff.dOdY + t * ray_diff.dDdY;
 
-    vec4 dbary = inv_k * vec4(
+    vec2 dBarydX = inv_k * vec2(
         dot(cu, q),
-        dot(cv, q),
+        dot(cv, q));
+
+    vec2 dBarydY = inv_k * vec2(
         dot(cu, r),
         dot(cv, r));
 
-    return vec4(
-        dbary.x * g1 + dbary.y * g2,
-        dbary.z * g1 + dbary.w * g2);
+    ray_diff.dOdX = dBarydX.x * e1 + dBarydX.y * e2;
+    ray_diff.dOdY = dBarydY.x * e1 + dBarydY.y * e2;
+
+    TextureDerivatives result;
+    result.dUVdX = dBarydX.x * g1 + dBarydX.y * g2;
+    result.dUVdY = dBarydY.x * g1 + dBarydY.y * g2;
+
+    return result;
 }
 
 HitInfo processHit(in rayQueryEXT ray_query, in Environment env,
-                   in vec3 outgoing_dir, inout RayDifferential ray_diff)
+                   in vec3 prev_origin,
+                   in vec3 outgoing_dir,
+                   inout RayDifferential ray_diff)
 {
     vec2 barys;
     uint32_t tri_idx, material_offset, geo_idx, mesh_offset;
-    float hit_t;
     mat4x3 o2w, w2o;
     getHitParams(ray_query, barys, tri_idx,
-                 material_offset, geo_idx, mesh_offset, hit_t, o2w, w2o);
+                 material_offset, geo_idx, mesh_offset, o2w, w2o);
 
     SceneAddresses scene_addrs = sceneAddrs[env.sceneID];
 
@@ -358,6 +341,8 @@ HitInfo processHit(in rayQueryEXT ray_query, in Environment env,
         world_geo_normal *= -1.f;
     }
 
+    float hit_t = distance(world_position, prev_origin);
+
 #if 0
     float cone_width = updateRayCone(world_position, ray_cone);
     vec4 uv_derivs = UVDerivsFromRayCone(outgoing_dir,
@@ -368,18 +353,11 @@ HitInfo processHit(in rayQueryEXT ray_query, in Environment env,
                                          hit_tri.c.uv);
 #endif
 
-    //updateRayDifferential(ray_diff, outgoing_dir, hit_t,
-    //                      world_geo_normal);
-
-    vec4 uv_derivs = UVDerivsFromRayDifferential(ray_diff,
-                                                 outgoing_dir,
-                                                 world_a,
-                                                 world_b,
-                                                 world_c,
-                                                 hit_tri.a.uv,
-                                                 hit_tri.b.uv,
-                                                 hit_tri.c.uv,
-                                                 hit_t / 10.f);
+    TextureDerivatives tex_derivs = rayDiffDerivsAndUpdate(
+        ray_diff, outgoing_dir,
+        hit_t, world_geo_normal,
+        world_a, world_b, world_c,
+        hit_tri.a.uv, hit_tri.b.uv, hit_tri.c.uv);
 
     vec2 uv = interpolateUV(hit_tri.a.uv, hit_tri.b.uv, hit_tri.c.uv,
                             barys);
@@ -395,13 +373,13 @@ HitInfo processHit(in rayQueryEXT ray_query, in Environment env,
 
     TangentFrame obj_tangent_frame =
         computeTangentFrame(hit_tri, barys, material_params,
-                            mat_texture_offset, uv, uv_derivs);
+                            mat_texture_offset, uv, tex_derivs);
 
     TangentFrame world_tangent_frame =
         tangentFrameToWorld(o2w, w2o, obj_tangent_frame, world_geo_normal);
 
     Material material = processMaterial(material_params,
-        mat_texture_offset, uv, uv_derivs);
+        mat_texture_offset, uv, tex_derivs);
 
     return HitInfo(world_position, world_geo_normal,
                    world_tri_area, world_tangent_frame, material);

@@ -60,7 +60,7 @@ struct EditorCam {
     glm::vec3 right;
 
     bool perspective = true;
-    float fov = 90.f;
+    float fov = 60.f;
     float orthoHeight = 5.f;
     glm::vec2 mousePrev {0.f, 0.f};
 };

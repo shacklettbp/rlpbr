@@ -1086,7 +1086,7 @@ Renderer::Renderer(uint32_t gpu_id, uint32_t img_width, uint32_t img_height)
       loader_(dev, alloc, transfer_wrapper_,
               render_transfer_wrapper_,
               scene_set_,
-              dev.gfxQF, 128)
+              dev.gfxQF, ~0u)
 {
     for (int i = 0; i < (int)frames_.size(); i++) {
         makeFrame(dev, alloc, fb_dims_, render_pass_,
@@ -1123,8 +1123,8 @@ void Renderer::startFrame()
 static glm::mat4 makePerspectiveMatrix(float tan_hfov, float aspect,
                                        float near, float far)
 {
-    return glm::mat4(1.f / tan_hfov, 0.f, 0.f, 0.f,
-                     0.f, -aspect / tan_hfov, 0.f, 0.f,
+    return glm::mat4(1.f / (aspect * tan_hfov), 0.f, 0.f, 0.f,
+                     0.f, -1.f / tan_hfov, 0.f, 0.f,
                      0.f, 0.f, far / (near - far), -1.f,
                      0.f, 0.f, far * near / (near - far), 0.f);
 }

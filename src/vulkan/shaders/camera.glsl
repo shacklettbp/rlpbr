@@ -26,20 +26,21 @@ void computeCameraRay(in Camera camera, in u32vec3 idx, in vec2 jitter,
     ray_dir = right * screen.x + up * screen.y + camera.view;
 
     float dir_len_sq = dot(ray_dir, ray_dir);
+    float inv_dir_len = inversesqrt(dir_len_sq);
 
     vec3 rhat = right * 2.f / float(RES_X);
-    vec3 uhat = -up * 2.f / float(RES_Y);
-    
-    float dir_len_32 = inversesqrt(dir_len_sq) / dir_len_sq;
+    vec3 uhat = up * 2.f / float(RES_Y);
+
+    float inv_dir_len_32 = inv_dir_len / dir_len_sq;
 
     differential.dOdX = vec3(0.f);
     differential.dOdY = vec3(0.f);
     differential.dDdX = (dir_len_sq * rhat - dot(ray_dir, rhat) * ray_dir) *
-        dir_len_32;
+        inv_dir_len_32;
     differential.dDdY = (dir_len_sq * uhat - dot(ray_dir, uhat) * ray_dir) *
-        dir_len_32;
+        inv_dir_len_32;
 
-    ray_dir = ray_dir * inversesqrt(dir_len_sq);
+    ray_dir = ray_dir * inv_dir_len;
 }
 
 vec2 getScreenSpacePosition(Camera camera, vec3 world_pos)

@@ -421,7 +421,7 @@ static optional<EditorEpisodes> loadEpisodes(const char *filename,
         });
     }
 
-    return move(data);
+    return data;
 }
 
 static void handleEpisodes(EditorScene &scene)

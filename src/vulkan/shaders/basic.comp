@@ -117,13 +117,10 @@ layout (set = 1, binding = 1) uniform texture2D textures[];
 
 // This function needs to be defined before the include of 
 // materials.glsl
-vec4 fetchSceneTexture(uint32_t idx, vec2 uv, vec4 uv_derivs)
+vec4 fetchSceneTexture(uint32_t idx, vec2 uv, TextureDerivatives tex_derivs)
 {
     return textureGrad(sampler2D(textures[nonuniformEXT(idx)],
-        repeatSampler), uv, uv_derivs.xy, uv_derivs.zw);
-    
-    //return textureLod(sampler2D(textures[nonuniformEXT(idx)],
-    //    repeatSampler), uv, 0.f);
+        repeatSampler), uv, tex_derivs.dUVdX, tex_derivs.dUVdY);
 }
 
 u32vec4 fetchSceneMaterialParams(MatRef ref, uint32_t idx, uint32_t sub_idx)
@@ -260,47 +257,6 @@ DirectResult directLighting(in u32vec3 idx, in uint32_t linear_idx,
 
     HitInfo hit = processHit(primary_query, env, ray_dir, ray_diff);
 
-    bool need_second = false;
-    if (((hit.material.roughness < 0.2f && hit.material.metallic > 0.8f) ||
-        hit.material.transparencyMask == 0.f ||
-        hit.material.transmission > 0.9f) &&
-        hit.material.emittance == vec3(0)) {
-        need_second = true;
-    }
-
-    vec3 secondary_ray_dir;
-    if (hit.material.transmission != 1.f) {
-        secondary_ray_dir = reflect(ray_dir, hit.tangentFrame.normal);
-    } else {
-        secondary_ray_dir = ray_dir;
-    }
-
-    vec3 secondary_ray_offset = dot(secondary_ray_dir, hit.geoNormal) > 0 ?
-        hit.geoNormal : - hit.geoNormal;
-
-    vec3 second_ray_origin =
-        offsetRayOrigin(hit.position, secondary_ray_offset);
-
-    rayQueryEXT secondary_query;
-    bool secondary_hit = traceShadeRay(secondary_query, env.tlasAddr,
-        second_ray_origin, secondary_ray_dir, 3);
-
-    if (need_second) {
-        if (!secondary_hit) {
-            result.radiance = evalEnvMap(env.baseTextureOffset, ray_dir);
-#ifdef AUXILIARY_OUTPUTS
-            result.auxNormal = vec3(0);
-            result.auxAlbedo = vec3(0);
-#endif
-            result.instanceID = 0xFFFF;
-            return result;
-        }
-
-        result.instanceID = getHitInstance(secondary_query);
-        hit = processHit(secondary_query, env, secondary_ray_dir, ray_diff);
-        ray_dir = secondary_ray_dir;
-    }
-
 #ifdef AUXILIARY_OUTPUTS
     vec3 view_normal = vec3(
         dot(normalize(cam.right), hit.tangentFrame.normal),
@@ -325,7 +281,7 @@ DirectResult directLighting(in u32vec3 idx, in uint32_t linear_idx,
         0.2 * hit.material.rho;
 
     vec3 to_light = normalize(vec3(0.399129, 0.638264, -0.473601));
-    vec3 light_irradiance = vec3(10.f);
+    vec3 light_irradiance = vec3(5.f);
 
     vec3 wi = normalize(worldToLocalIncoming(to_light, hit.tangentFrame));
 
