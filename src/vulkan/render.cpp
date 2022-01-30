@@ -1,4 +1,5 @@
 #include "render.hpp"
+#include <vulkan/vulkan_core.h>
 
 #include "scene.hpp"
 
@@ -102,6 +103,8 @@ static FramebufferConfig getFramebufferConfig(const RenderConfig &cfg)
     uint32_t albedo_bytes = 4 * sizeof(uint16_t) * pixels_per_batch;
     uint32_t reservoir_bytes = sizeof(Reservoir) * pixels_per_batch;
 
+    uint32_t illuminance_bytes = sizeof(float) * pixels_per_batch / WORKGROUP_SIZE;
+
     return FramebufferConfig {
         cfg.imgWidth,
         cfg.imgHeight,
@@ -116,6 +119,7 @@ static FramebufferConfig getFramebufferConfig(const RenderConfig &cfg)
         normal_bytes,
         albedo_bytes,
         reservoir_bytes,
+        illuminance_bytes,
     };
 }
 
@@ -192,6 +196,10 @@ static RenderState makeRenderState(const DeviceState &dev,
 
     if (cfg.flags & RenderFlags::AuxiliaryOutputs) {
          shader_defines.emplace_back("AUXILIARY_OUTPUTS");
+    }
+
+    if (cfg.flags & RenderFlags::Tonemap) {
+         shader_defines.emplace_back("TONEMAP");
     }
 
     if (cfg.clampThreshold > 0.f) {
@@ -311,15 +319,21 @@ static FramebufferState makeFramebuffer(const DeviceState &dev,
     vector<VkDeviceMemory> backings;
     vector<CudaImportedBuffer> exported;
 
+    uint32_t num_buffers = 1;
+    uint32_t num_exported_buffers = 1;
+
     if (cfg.auxiliaryOutputs) {
-        outputs.reserve(3);
-        backings.reserve(3);
-        exported.reserve(3);
-    } else {
-        outputs.reserve(1);
-        backings.reserve(1);
-        exported.reserve(1);
+        num_buffers += 2;
+        num_exported_buffers += 2;
     }
+
+    if (cfg.tonemap) {
+        num_buffers += 1;
+    }
+
+    outputs.reserve(num_buffers);
+    backings.reserve(num_buffers);
+    exported.reserve(num_exported_buffers);
 
     auto [main_buffer, main_mem] =
         alloc.makeDedicatedBuffer(fb_cfg.outputBytes);
@@ -345,6 +359,14 @@ static FramebufferState makeFramebuffer(const DeviceState &dev,
         backings.emplace_back(move(albedo_mem));
         exported.emplace_back(dev, cfg.gpuID, backings.back(),
                               fb_cfg.albedoBytes);
+    }
+
+    if (cfg.tonemap) {
+        auto [illum_buffer, illum_mem] =
+            alloc.makeDedicatedBuffer(fb_cfg.illuminanceBytes);
+
+        outputs.emplace_back(move(illum_buffer));
+        backings.emplace_back(move(illum_mem));
     }
 
     vector<LocalBuffer> reservoirs;
@@ -379,6 +401,7 @@ static PerBatchState makePerBatchState(const DeviceState &dev,
                                        FixedDescriptorPool &&rt_pool,
                                        const BSDFPrecomputed &precomp_tex,
                                        bool auxiliary_outputs,
+                                       bool tonemap,
                                        bool need_present)
 {
     array rt_sets {
@@ -541,6 +564,20 @@ static PerBatchState makePerBatchState(const DeviceState &dev,
             desc_updates.buffer(rt_sets[i], &normal_info, 14,
                                 VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
             desc_updates.buffer(rt_sets[i], &albedo_info, 15,
+                                VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
+        }
+    }
+
+    VkDescriptorBufferInfo illuminance_info;
+    if (tonemap) {
+        illuminance_info = {
+            fb.outputs.back().buffer,
+            0,
+            fb_cfg.illuminanceBytes,
+        };
+
+        for (int i = 0; i < (int)rt_sets.size(); i++) {
+            desc_updates.buffer(rt_sets[i], &illuminance_info, 16,
                                 VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
         }
     }
@@ -868,6 +905,7 @@ VulkanBackend::VulkanBackend(const RenderConfig &cfg,
           cfg.maxTextureResolution == 0 ? ~0u :
               cfg.maxTextureResolution,
           cfg.flags & RenderFlags::AuxiliaryOutputs,
+          cfg.flags & RenderFlags::Tonemap,
       }),
       inst(makeInstance(init_cfg)),
       dev(makeDevice(inst, cfg, init_cfg)),
@@ -936,7 +974,7 @@ RenderBatch::Handle VulkanBackend::makeRenderBatch()
             dev, fb_cfg_, fb, param_cfg_,
             render_input_buffer,
             FixedDescriptorPool(dev, render_state_.rt, 0, 2),
-            bsdf_precomp_, cfg_.auxiliaryOutputs,
+            bsdf_precomp_, cfg_.auxiliaryOutputs, cfg_.tonemap,
             present_.has_value());
 
     auto backend = new VulkanBatch {

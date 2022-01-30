@@ -50,9 +50,10 @@ struct ReGIRCell {
 #define MAX_MATERIALS (2048)
 #define MAX_LIGHTS (1000000)
 #define MAX_SCENES (16)
-#define WORKGROUP_SIZE (32)
-#define LOCAL_WORKGROUP_X (8)
-#define LOCAL_WORKGROUP_Y (4)
+#define WORKGROUP_SIZE (256)
+#define NUM_SUBGROUPS (32)
+#define LOCAL_WORKGROUP_X (16)
+#define LOCAL_WORKGROUP_Y (16)
 #define LOCAL_WORKGROUP_Z (1)
 
 #endif

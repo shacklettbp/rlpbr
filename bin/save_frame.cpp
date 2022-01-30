@@ -34,18 +34,32 @@ float toSRGB(float v)
     }
 }
 
-glm::vec3 tonemap(glm::vec3 v)
+glm::vec3 tonemap(glm::vec3 rgb)
 {
-    float A = 2.51f;
-    float B = 0.03f;
-    float C = 2.43f;
-    float D = 0.59f;
-    float E = 0.14f;
+    rgb *= 16;
 
-    v = clamp((v*(A*v+B))/(v*(C*v+D)+E), 0.f, 1.f);
-    return v;
-    
-    //return v * (1.f + (v / 0.15f)) / (1.f + v);
+    float A = 0.15;
+    float B = 0.50;
+    float C = 0.10;
+    float D = 0.20;
+    float E = 0.02;
+    float F = 0.30;
+    float W = 11.2;
+
+    auto UC2Tonemap = [&](float x) {
+        return ((x*(A*x+C*B)+D*E)/(x*(A*x+B)+D*F))-E/F;
+    };
+
+    glm::vec3 tonemapped;
+    for (int i = 0; i < 3; i++) {
+        tonemapped[i] = UC2Tonemap(rgb[i]);
+    }
+
+    glm::vec3 whitescale = glm::vec3(1.f) / UC2Tonemap(W);
+
+    tonemapped *= whitescale;
+
+    return tonemapped;
 }
 
 void saveFrame(string fprefix, const half *dev_ptr,
@@ -106,7 +120,8 @@ int main(int argc, char *argv[]) {
     }
 
     Renderer renderer({0, 1, batch_size, out_dim.x, out_dim.y, spp, depth,
-                       0, RenderMode::PathTracer, RenderFlags::AuxiliaryOutputs,
+                       0, RenderMode::PathTracer,
+                       RenderFlags::AuxiliaryOutputs | RenderFlags::Tonemap,
                        0.f, BackendSelect::Vulkan});
 
     auto loader = renderer.makeLoader();
@@ -165,6 +180,16 @@ int main(int argc, char *argv[]) {
     glm::vec3 eye(0.724215, 1.477543, -10.388538);
     glm::vec3 look(0.090698, 1.285655, -9.638973);
     glm::vec3 up(-0.107137, 0.981188, 0.160626);
+
+    //
+    //glm::vec3 eye(6.724499, 1.077063, -1.427392);
+    //glm::vec3 look(5.744876, 0.969615, -1.257675);
+    //glm::vec3 up(-0.106314, 0.994213, 0.015762);
+
+    //glm::vec3 eye(9.382598, 1.373124, -2.773645);
+    //glm::vec3 look(10.160658, 1.244055, -3.388437);
+    //glm::vec3 up(0.102615, 0.991638, -0.078316);
+
 
 
     //glm::vec3 eye(7.1, 1.673785, -0.217743);

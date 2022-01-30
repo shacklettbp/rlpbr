@@ -255,7 +255,7 @@ DirectResult directLighting(in u32vec3 idx, in uint32_t linear_idx,
 
     result.instanceID = getHitInstance(primary_query);
 
-    HitInfo hit = processHit(primary_query, env, ray_dir, ray_diff);
+    HitInfo hit = processHit(primary_query, env, ray_origin, ray_dir, ray_diff);
 
 #ifdef AUXILIARY_OUTPUTS
     vec3 view_normal = vec3(

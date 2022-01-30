@@ -50,6 +50,7 @@ struct FramebufferConfig {
     uint32_t normalBytes;
     uint32_t albedoBytes;
     uint32_t reservoirBytes;
+    uint32_t illuminanceBytes;
 };
 
 struct ParamBufferConfig {
@@ -145,6 +146,7 @@ public:
         uint32_t maxLoaders;
         uint32_t maxTextureResolution;
         bool auxiliaryOutputs;
+        bool tonemap;
     };
 
     VulkanBackend(const RenderConfig &cfg, bool validate);

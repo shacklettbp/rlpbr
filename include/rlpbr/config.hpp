@@ -17,7 +17,8 @@ enum class RenderMode : uint32_t {
 enum class RenderFlags : uint32_t {
     AuxiliaryOutputs = 1 << 0,
     ForceUniform = 1 << 1,
-    EnablePhysics = 1 << 2,
+    Tonemap = 1 << 2,
+    EnablePhysics = 1 << 4,
 };
 
 struct RenderConfig {

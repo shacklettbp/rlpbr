@@ -24,7 +24,7 @@
 #extension GL_EXT_debug_printf : enable
 #endif
 
-#define USE_MIS 1
+//#define USE_MIS 1
 //#define ENABLE_RIS 1
 
 // GLSL wants this for uint64_t -> accel struct conversion
@@ -111,12 +111,23 @@ layout (set = 0, binding = 15, scalar) writeonly buffer Albedo {
 
 #endif
 
+#ifdef TONEMAP
+
+layout (set = 0, binding = 16, scalar) writeonly buffer TonemapIlluminance {
+    float tonemapIlluminanceBuffer[];
+};
+
+#endif
+
 layout (set = 1, binding = 0) readonly uniform Addrs {
     SceneAddresses sceneAddrs[MAX_SCENES];
 };
 
 layout (set = 1, binding = 1) uniform texture2D textures[];
 
+#ifdef TONEMAP
+shared float illuminanceScratch[NUM_SUBGROUPS];
+#endif
 
 // This function needs to be defined before the include of 
 // materials.glsl
@@ -202,6 +213,35 @@ void setOutput(uint32_t base_offset, vec3 rgb, uint32_t instance_id)
     outputBuffer[nonuniformEXT(base_offset + 1)] = cd;
 }
 
+#ifdef TONEMAP
+void setIlluminance(float illuminance)
+{
+    // Not sure this is necessary but it seems like it should ensure
+    // that all threads in the subgroup are active after the barrier
+    barrier(); 
+
+    float subgroup_avg = subgroupAdd(illuminance) / subgroupAdd(1.f);
+
+    if (subgroupElect()) {
+        illuminanceScratch[gl_SubgroupID] = subgroup_avg;
+    }
+
+    barrier();
+
+    if (gl_SubgroupID == 0) {
+        float tmp = illuminanceScratch[gl_SubgroupInvocationID];
+
+        float full_avg = subgroupAdd(tmp) / NUM_SUBGROUPS;
+        
+        uint32_t idx = gl_GlobalInvocationID.z * RES_Y * RES_X +
+            gl_LocalInvocationID.x * (RES_X / LOCAL_WORKGROUP_X) +
+            gl_LocalInvocationID.y;
+
+        tonemapIlluminanceBuffer[idx] = full_avg;
+    }
+}
+#endif
+
 #ifdef AUXILIARY_OUTPUTS
 void setAuxiliaries(uint32_t base_offset, vec3 albedo, vec3 normal)
 {
@@ -276,7 +316,7 @@ ShadeResult shade(inout Sampler rng, in Material material,
 #endif
 
     vec3 nee = light_sample.pdf == 0.f ? vec3(0.f) :
-        bsdf_response * light_sample.irradiance * mis_weight / light_sample.pdf;
+        bsdf_response * light_sample.radiance * mis_weight / light_sample.pdf;
 
     // Compute bounce
     SampleResult bounce = sampleBSDF(rng, bsdf, wo);
@@ -421,8 +461,9 @@ vec3 envMapMiss(uint32_t tex_offset, vec3 ray_dir, float bounce_pdf,
 struct PrimaryResult {
     PathVertexState vertState;
     RayDifferential rayDifferential;
+    vec3 hitNormal;
+    float illuminance;
 #ifdef AUXILIARY_OUTPUTS
-    vec3 auxNormal;
     vec3 auxAlbedo;
 #endif
     uint32_t instanceID;
@@ -448,8 +489,10 @@ PrimaryResult directLighting(in u32vec3 idx, in uint32_t linear_idx,
         result.vertState.radiance = evalEnvMap(env.baseTextureOffset, ray_dir);
         result.vertState.bounceWeight = vec3(0);
         result.instanceID = 0xFFFF;
+        result.hitNormal = vec3(0);
+        // Not really correct, but what else would we use?
+        result.illuminance = rgbToLuminance(result.vertState.radiance);
 #ifdef AUXILIARY_OUTPUTS
-        result.auxNormal = vec3(0);
         result.auxAlbedo = vec3(0);
 #endif
         return result;
@@ -458,21 +501,12 @@ PrimaryResult directLighting(in u32vec3 idx, in uint32_t linear_idx,
     HitInfo hit = processHit(primary_query, env,
                              ray_origin, ray_dir, ray_diff);
     result.rayDifferential = ray_diff;
+    result.hitNormal = hit.tangentFrame.normal;
 
     result.instanceID = getHitInstance(primary_query);
 
 #ifdef AUXILIARY_OUTPUTS
-    vec3 view_normal = vec3(
-        dot(normalize(cam.right), hit.tangentFrame.normal),
-        dot(normalize(cam.up) * -1.f, hit.tangentFrame.normal),
-        dot(normalize(cam.view) * -1.f, hit.tangentFrame.normal));
-    
-    view_normal = normalize(view_normal);
-    
-    vec3 albedo = hit.material.rho;
-    
-    result.auxNormal = view_normal;
-    result.auxAlbedo = albedo;
+    result.auxAlbedo = hit.material.rho;
 #endif
 
     vec3 wo = normalize(worldToLocalOutgoing(-ray_dir, hit.tangentFrame));
@@ -502,8 +536,15 @@ PrimaryResult directLighting(in u32vec3 idx, in uint32_t linear_idx,
 #endif
 
     vec3 nee = light_info.lightSample.pdf == 0.f ? vec3(0.f) :
-        bsdf_response * light_info.lightSample.irradiance *
-            mis_weight / light_info.lightSample.pdf;
+        (bsdf_response * light_info.lightSample.radiance * 
+            mis_weight / light_info.lightSample.pdf);
+
+    // If bsdf_pdf is 0, that means that light can't actually contribute to this
+    // surface (delta reflection / transmission)
+    float illuminance =
+        (light_info.lightSample.pdf == 0.f || bsdf_pdf == 0.f) ? 0.f :
+            (rgbToLuminance(light_info.lightSample.radiance) * abs(wi.z) /
+             light_info.lightSample.pdf);
 
     // Compute bounce
     SampleResult bounce = sampleBSDF(rng, bsdf_params, wo);
@@ -525,9 +566,11 @@ PrimaryResult directLighting(in u32vec3 idx, in uint32_t linear_idx,
     // Start setup for next bounce
     if (occluded) {
         nee = vec3(0);
+        illuminance = 0.f;
     }
 
     result.vertState.radiance += nee;
+    result.illuminance = illuminance;
 
     if (pass_through) {
         result.vertState.radiance = vec3(0);
@@ -546,11 +589,11 @@ PrimaryResult directLighting(in u32vec3 idx, in uint32_t linear_idx,
 }
 
 vec3 indirectLighting(in Environment env, in vec3 ray_origin, in vec3 ray_dir,
-                      in vec3 path_weight, in float bounce_pdf,
-                      in uint32_t bounce_flags, inout RayDifferential ray_diff,
-                      inout Sampler rng)
+                      in float bounce_pdf, in uint32_t bounce_flags,
+                      inout RayDifferential ray_diff, inout Sampler rng)
 {
     vec3 indirect_contrib = vec3(0.f);
+    vec3 path_weight = vec3(1.f);
 
     for (int32_t path_depth = 1;
 #ifdef USE_MIS
@@ -630,7 +673,8 @@ void main()
     Environment env;
     unpackEnv(batch_idx, cam, prev_cam, env);
 
-    vec3 pixel_radiance = vec3(0);
+    vec3 pixel_avg = vec3(0);
+    float pixel_illuminance = 0;
     uint32_t instance_id = 0xFFFF;
 
 #ifdef AUXILIARY_OUTPUTS
@@ -645,40 +689,69 @@ void main()
         Sampler rng = makeSampler(idx.x, idx.y, sample_idx,
             push_const.baseFrameCounter + batch_idx);
 
-        vec3 sample_radiance;
-        vec3 ray_origin;
-        vec3 ray_dir;
-        vec3 path_weight;
-        float bounce_pdf;
+        vec3 primary_normal;
+        vec3 secondary_origin;
+        vec3 secondary_dir;
+        vec3 secondary_weight;
+        float secondary_pdf;
         uint32_t bounce_flags;
         RayDifferential ray_diff;
         {
             PrimaryResult primary_result =
                 directLighting(idx, linear_idx, cam, prev_cam, env, rng);
 
-            sample_radiance = primary_result.vertState.radiance;
+            pixel_avg += primary_result.vertState.radiance / SPP;
+            pixel_illuminance += primary_result.illuminance / SPP;
+
             ray_diff = primary_result.rayDifferential;
-            ray_origin = primary_result.vertState.bounceOrigin;
-            ray_dir = primary_result.vertState.bounceDir;
-            path_weight = primary_result.vertState.bounceWeight;
-            bounce_pdf = primary_result.vertState.bouncePDF;
+            primary_normal = primary_result.hitNormal;
+            secondary_origin = primary_result.vertState.bounceOrigin;
+            secondary_dir = primary_result.vertState.bounceDir;
+            secondary_weight = primary_result.vertState.bounceWeight;
+            secondary_pdf = primary_result.vertState.bouncePDF;
             bounce_flags = primary_result.vertState.bounceFlags;
             instance_id = primary_result.instanceID;
 
 #ifdef AUXILIARY_OUTPUTS
-            aux_normal += primary_result.auxNormal / SPP;
+            vec3 view_normal = vec3(
+                dot(normalize(cam.right), primary_result.hitNormal),
+                dot(normalize(cam.up) * -1.f, primary_result.hitNormal),
+                dot(normalize(cam.view) * -1.f, primary_result.hitNormal));
+            
+            view_normal = normalize(view_normal);
+    
+            aux_normal += view_normal / SPP;
             aux_albedo += primary_result.auxAlbedo / SPP;
 #endif
         }
 
-        sample_radiance += indirectLighting(env, ray_origin, ray_dir,
-                                            path_weight, bounce_pdf,
-                                            bounce_flags, ray_diff, rng);
+        if (secondary_weight.x == 0.f &&
+            secondary_weight.y == 0.f &&
+            secondary_weight.z == 0.f) {
+            continue;
+        }
 
-        pixel_radiance += sample_radiance / SPP;
+        float indirect_illuminance_weight =
+            ((bounce_flags & BSDFFlagsDelta) > 0) ? 1.f :
+                (secondary_pdf == 0.f ? 0.f :
+                    (abs(dot(primary_normal, secondary_dir)) / secondary_pdf));
+
+        vec3 indirect_contrib = indirectLighting(
+            env, secondary_origin, secondary_dir,
+            secondary_pdf, bounce_flags, ray_diff, rng) / SPP;
+
+        pixel_avg += secondary_weight * indirect_contrib;
+
+        float indirect_illuminance =
+            rgbToLuminance(indirect_contrib) * indirect_illuminance_weight;
+        pixel_illuminance += indirect_illuminance / SPP;
     }
 
-    setOutput(base_out_offset, pixel_radiance, instance_id);
+    setOutput(base_out_offset, pixel_avg, instance_id);
+
+#ifdef TONEMAP
+    setIlluminance(pixel_illuminance);
+#endif
 
 #ifdef AUXILIARY_OUTPUTS
     setAuxiliaries(base_aux_offset, aux_normal, aux_albedo);

@@ -187,17 +187,16 @@ BSDFParams buildBSDF(Material material, vec3 wo)
 #endif
         diffuse_prob + microfacet_prob +
         microfacet_ms_prob + transmission_prob;
-    if (prob_sum > 0.f) {
-        float inv_prob = 1.f / prob_sum;
-        diffuse_prob *= inv_prob;
-        microfacet_prob *= inv_prob;
-        microfacet_ms_prob *= inv_prob;
-        transmission_prob *= inv_prob;
+
+     float inv_prob = prob_sum > 0.f ? 1.f / prob_sum : 0.f;
+     diffuse_prob *= inv_prob;
+     microfacet_prob *= inv_prob;
+     microfacet_ms_prob *= inv_prob;
+     transmission_prob *= inv_prob;
 
 #ifdef ADVANCED_MATERIAL
-        clearcoat_prob *= inv_prob;
+    clearcoat_prob *= inv_prob;
 #endif
-    }
 
     BSDFParams bsdf = {
         base_dielectric * opaque_weight,

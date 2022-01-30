@@ -29,7 +29,7 @@ struct PortalLight {
 
 struct LightSample {
     vec3 toLight;
-    vec3 irradiance;
+    vec3 radiance;
     float pdf;
 };
 
@@ -41,7 +41,7 @@ struct LightInfo {
 
 struct DeltaLightInfo {
     vec3 position;
-    vec3 irradiance;
+    vec3 radiance;
 };
 
 SphereLight unpackSphereLight(VertRef vert_addr, vec4 data)
@@ -192,11 +192,11 @@ LightSample sampleEnvMap(uint32_t map_idx,
     float imp_pdf = textureLod(sampler2D(textures[map_idx + 1], clampSampler),
                            uv, 0).r;
 
-    vec3 irradiance = evalEnvMap(map_idx, dir);
+    vec3 radiance = evalEnvMap(map_idx, dir);
 
     LightSample light_sample;
     light_sample.toLight = dir;
-    light_sample.irradiance = irradiance;
+    light_sample.radiance = radiance;
     light_sample.pdf = imp_pdf / (4.f * M_PI * inv_selection_pdf);
 
     return light_sample;
@@ -240,7 +240,7 @@ LightSample samplePortal(
     float len2 = dot(to_light, to_light);
     vec3 dir = to_light * inversesqrt(len2);
 
-    vec3 irradiance = evalEnvMap(map_idx, dir);
+    vec3 radiance = evalEnvMap(map_idx, dir);
 
     // FIXME: redo this code to be faster
     vec3 side_a = light.corners[3] - light.corners[0];
@@ -256,7 +256,7 @@ LightSample samplePortal(
 
     LightSample light_sample;
     light_sample.toLight = dir;
-    light_sample.irradiance = irradiance;
+    light_sample.radiance = radiance;
     light_sample.pdf = 1.f / (inv_pdf * inv_selection_pdf);
 
     return light_sample;
@@ -324,11 +324,11 @@ void sampleSphereLight(
 
     if (dist_to_light > 0.f) {
         light_sample.toLight = to_light / dist_to_light;
-        light_sample.irradiance = emittance;
+        light_sample.radiance = emittance;
         light_sample.pdf = 1.f / (inv_pdf * inv_selection_pdf);
     } else {
         light_sample.toLight = vec3(0.f);
-        light_sample.irradiance = vec3(0.f);
+        light_sample.radiance = vec3(0.f);
         light_sample.pdf = 0.f;
     }
 }
@@ -376,11 +376,11 @@ void sampleTriangleLight(in TriangleLight tri_light,
 
     if (dist_to_light > 0.f && cos_theta > 0.f) {
         light_sample.toLight = to_light;
-        light_sample.irradiance = emittance;
+        light_sample.radiance = emittance;
         light_sample.pdf = pdf;
     } else {
         light_sample.toLight = vec3(0.f);
-        light_sample.irradiance = vec3(0.f);
+        light_sample.radiance = vec3(0.f);
         light_sample.pdf = 0.f;
     }
 }
@@ -487,7 +487,7 @@ LightInfo sampleLights(inout Sampler rng, in Environment env,
 
     LightInfo info;
     info.lightSample.toLight = selected_dir;
-    info.lightSample.irradiance = emittance;
+    info.lightSample.radiance = emittance;
     info.lightSample.pdf = pdf;
     info.shadowRayOrigin = selected_origin;
 
@@ -600,7 +600,7 @@ DeltaLightInfo getLight(in Environment env, int idx)
 
     DeltaLightInfo info;
     info.position = position;
-    info.irradiance = emittance / 8.f;
+    info.radiance = emittance / 8.f;
 
     return info;
 }
