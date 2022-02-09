@@ -256,6 +256,13 @@ DirectResult directLighting(in u32vec3 idx, in uint32_t linear_idx,
     result.instanceID = getHitInstance(primary_query);
 
     HitInfo hit = processHit(primary_query, env, ray_origin, ray_dir, ray_diff);
+    hit.material.roughness = clamp(
+        hit.material.roughness + env.roughnessOffset,
+        0.f, 1.f);
+
+    if (ISTHREAD0) {
+        debugPrintfEXT("%f\n", env.roughnessOffset);
+    }
 
 #ifdef AUXILIARY_OUTPUTS
     vec3 view_normal = vec3(
@@ -280,7 +287,8 @@ DirectResult directLighting(in u32vec3 idx, in uint32_t linear_idx,
     result.radiance = hit.material.emittance +
         0.2 * hit.material.rho;
 
-    vec3 to_light = normalize(vec3(0.399129, 0.638264, -0.473601));
+    //vec3 to_light = normalize(vec3(0.399129, 0.638264, -0.473601));
+    vec3 to_light = env.lightDir;
     vec3 light_irradiance = vec3(5.f);
 
     vec3 wi = normalize(worldToLocalIncoming(to_light, hit.tangentFrame));

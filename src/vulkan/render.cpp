@@ -934,6 +934,8 @@ VulkanBackend::VulkanBackend(const RenderConfig &cfg,
     if (init_cfg.needPresent) {
         present_->forceTransition(dev, compute_queues_[0], dev.computeQF);
     }
+
+    srand(time(nullptr));
 }
 
 LoaderImpl VulkanBackend::makeLoader()
@@ -1116,6 +1118,11 @@ void VulkanBackend::render(RenderBatch &batch)
 
         packed_env.tlasAddr = env_backend.tlas.tlasStorageDevAddr;
         packed_env.reservoirGridAddr = env_backend.reservoirGrid.devAddr;
+        packed_env.domainRand.x = env_backend.domainRandomization.lightDir.x;
+        packed_env.domainRand.y = env_backend.domainRandomization.lightDir.y;
+        packed_env.domainRand.z = env_backend.domainRandomization.lightDir.z;
+        packed_env.domainRand.w =
+            env_backend.domainRandomization.roughnessOffset;
     }
 
     shared_scene_state_.lock.lock();

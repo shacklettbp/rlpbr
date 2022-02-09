@@ -45,6 +45,9 @@ void unpackEnv(in uint32_t batch_idx,
     const uint32_t textures_per_scene = 2 + MAX_MATERIALS *
         TextureConstantsTexturesPerMaterial;
     env.baseTextureOffset = env.sceneID * textures_per_scene;
+
+    env.lightDir = packed.domainRand.xyz;
+    env.roughnessOffset = packed.domainRand.w;
 }
 
 MeshInfo unpackMeshInfo(MeshRef mesh_ref, uint32_t mesh_idx)
