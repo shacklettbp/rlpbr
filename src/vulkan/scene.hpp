@@ -73,6 +73,11 @@ struct ReservoirGrid {
     LocalBuffer grid;
 };
 
+struct DomainRandomization {
+    glm::vec3 lightDir;
+    float roughnessOffset;
+};
+
 struct VulkanEnvironment : public EnvironmentBackend {
     VulkanEnvironment(const DeviceState &dev, MemoryAllocator &alloc,
                       const VulkanScene &scene, const Camera &cam);
@@ -90,6 +95,8 @@ struct VulkanEnvironment : public EnvironmentBackend {
 
     ReservoirGrid reservoirGrid;
     Camera prevCam;
+
+    DomainRandomization domainRandomization;
 };
 
 struct TextureData {

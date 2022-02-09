@@ -73,6 +73,18 @@ static ReservoirGrid makeReservoirGrid(
     };
 }
 
+DomainRandomization randomizeDomain()
+{
+    glm::vec3 dir (float(rand()) / float(RAND_MAX), 1, float(rand()) / float(RAND_MAX));
+
+    float roughness_off = 0.5f * (float(rand() / float(RAND_MAX)) - 0.5f);
+
+    return DomainRandomization {
+        glm::normalize(dir),
+        roughness_off,
+    };
+}
+
 VulkanEnvironment::VulkanEnvironment(const DeviceState &d,
                                      MemoryAllocator &alloc,
                                      const VulkanScene &scene,
@@ -82,7 +94,8 @@ VulkanEnvironment::VulkanEnvironment(const DeviceState &d,
       dev(d),
       tlas(),
       reservoirGrid(makeReservoirGrid(dev, alloc, scene)),
-      prevCam(cam)
+      prevCam(cam),
+      domainRandomization(randomizeDomain())
 {
     for (const LightProperties &light : scene.envInit.lights) {
         PackedLight packed;

@@ -21,6 +21,7 @@ struct PackedEnv {
     u32vec4 data;
     uint64_t tlasAddr;
     uint64_t reservoirGridAddr;
+    vec4 domainRand;
 };
 
 struct RTPushConstant {
