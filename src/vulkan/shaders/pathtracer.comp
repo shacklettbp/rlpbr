@@ -232,10 +232,15 @@ void setIlluminance(float illuminance)
         float tmp = illuminanceScratch[gl_SubgroupInvocationID];
 
         float full_avg = subgroupAdd(tmp) / NUM_SUBGROUPS;
+
+        u32vec2 illuminance_res = u32vec2(
+            RES_X / LOCAL_WORKGROUP_X,
+            RES_Y / LOCAL_WORKGROUP_Y);
         
-        uint32_t idx = gl_GlobalInvocationID.z * RES_Y * RES_X +
-            gl_LocalInvocationID.x * (RES_X / LOCAL_WORKGROUP_X) +
-            gl_LocalInvocationID.y;
+        uint32_t idx = gl_GlobalInvocationID.z *
+            illuminance_res.x * illuminance_res.y +
+                gl_GlobalInvocationID.y * illuminance_res.x +
+                gl_GlobalInvocationID.x;
 
         tonemapIlluminanceBuffer[idx] = full_avg;
     }
