@@ -19,8 +19,7 @@ Examples
 --------
 
 **Path Tracing Mode**:
-![Path tracing example 1](data/example1.png)
-![Path tracing example 2](data/example2.png)
+![Path tracing example 1](data/example1.png) ![Path tracing example 2](data/example2.png)
 
 
 Integration
