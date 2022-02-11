@@ -20,8 +20,8 @@ Examples
 
 **Path Tracing Mode**:
 <p align="middle">
-  <img src="data/example1.png" width="40%" />
-  <img src="data/example2.png" width="40%" /> 
+  <img src="data/example1.png" width="49%" />
+  <img src="data/example2.png" width="49%" /> 
 </p>
 
 
