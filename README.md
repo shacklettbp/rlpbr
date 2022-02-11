@@ -18,10 +18,16 @@ This project is a work in progress high-performance ray tracing based renderer f
 Examples
 --------
 
-**Path Tracing Mode**:
+**Path Tracer**:
 <p align="middle">
   <img src="data/example1.png" width="49%" />
   <img src="data/example2.png" width="49%" /> 
+</p>
+
+**Direct Lighting Only**:
+<p align="middle">
+  <img src="data/example3.png" width="49%" />
+  <img src="data/example4.png" width="49%" /> 
 </p>
 
 
