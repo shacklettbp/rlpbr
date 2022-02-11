@@ -14,6 +14,15 @@ This project is a work in progress high-performance ray tracing based renderer f
 
  RLpbr is an evolution of the renderer described in _Large Batch Simulation for Deep Reinforcement Learning_ (ICLR 2021): [github.com/shacklettbp/bps3D](https://github.com/shacklettbp/bps3D). While the project's main focus is on enabling physically based dynamic lighting in interactive environments, RLpbr also can be used as a replacement for bps3D in scanned 3D environments like Matterport3D and Gibson. Due to the ray tracing acceleration hardware on modern GPUs, performance can be up to an order of magnitude faster than the already state of the art performance available from bps3D.
 
+
+Examples
+--------
+
+**Path Tracing Mode**:
+![Path tracing example 1](data/example1.png)
+![Path tracing example 2](data/example2.png)
+
+
 Integration
 -----------
 
