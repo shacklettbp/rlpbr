@@ -229,6 +229,8 @@ loadTextureFromDisk(const string &tex_path, uint32_t texel_bytes,
     vector<pair<uint32_t, uint32_t>> png_pos;
     png_pos.reserve(total_num_levels);
 
+    uint32_t level_alignment = max(texel_bytes, 4u);
+
     uint32_t num_skip_levels = 0;
     for (int i = 0; i < (int)total_num_levels; i++) {
         uint32_t level_x = read_uint();
@@ -242,6 +244,9 @@ loadTextureFromDisk(const string &tex_path, uint32_t texel_bytes,
             num_skip_levels++;
             continue;
         }
+
+        num_decompressed_bytes = alignOffset(num_decompressed_bytes,
+                                             level_alignment);
 
         if (x == 0 && y == 0) {
             x = level_x;
@@ -271,7 +276,7 @@ loadTextureFromDisk(const string &tex_path, uint32_t texel_bytes,
             compressed_data + offset, num_bytes,
             &lvl_x, &lvl_y, &tmp_n, 4);
 
-        cur_offset = alignOffset(cur_offset, texel_bytes);
+        cur_offset = alignOffset(cur_offset, level_alignment);
 
         for (int pix_idx = 0; pix_idx < int(lvl_x * lvl_y);
              pix_idx++) {
@@ -1065,6 +1070,7 @@ shared_ptr<Scene> VulkanLoader::loadScene(SceneLoadData &&load_info)
             uint32_t num_levels = gpu_texture.mipLevels;
             uint32_t texel_bytes = staged_textures->textureTexelBytes[i];
             copy_infos.resize(num_levels);
+            uint32_t level_alignment = max(texel_bytes, 4u);
 
             size_t cur_lvl_offset = staged_textures->stageOffsets[i];
 
@@ -1073,8 +1079,8 @@ shared_ptr<Scene> VulkanLoader::loadScene(SceneLoadData &&load_info)
                 uint32_t level_width = max(1U, base_width / level_div);
                 uint32_t level_height = max(1U, base_height / level_div);
 
-
-                cur_lvl_offset = alignOffset(cur_lvl_offset, texel_bytes);
+                cur_lvl_offset = alignOffset(cur_lvl_offset,
+                                             level_alignment);
 
                 // Set level copy
                 VkBufferImageCopy copy_info {};

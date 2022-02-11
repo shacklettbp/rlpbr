@@ -5,6 +5,7 @@
 
 #include <iostream>
 #include <sstream>
+#include <cmath>
 
 using namespace std;
 
@@ -235,10 +236,60 @@ static RenderState makeRenderState(const DeviceState &dev,
         shader_defines,
         STRINGIFY(SHADER_DIR));
 
+    // Give 9 digits of precision for lossless conversion
+    auto floatToString = [](float v) {
+        ostringstream strm;
+        strm.precision(9);
+        strm << fixed << v;
+
+        return strm.str();
+    };
+    
+    // 22 is probably overkill but makes for 32 stops
+    float min_log_luminance = -10.f;
+    float max_log_luminance = 22.f;
+
+    float log_luminance_range = max_log_luminance - min_log_luminance;
+    float inv_log_luminance_range = 1.f / log_luminance_range;
+
+    int num_exposure_bins = 128;
+
+    float log_diff_per_bin = log_luminance_range / num_exposure_bins;
+
+    float bin_zero_threshold = 
+        exp2(min_log_luminance + 0.5f * log_diff_per_bin);
+
+    float exposure_bias = 0.f;
+
+    vector<string> exposure_defines {
+        string("NUM_BINS (") + to_string(num_exposure_bins) + ")",
+        string("LOG_LUMINANCE_RANGE (") +
+            floatToString(log_luminance_range) + "f)",
+        string("INV_LOG_LUMINANCE_RANGE (") +
+            floatToString(inv_log_luminance_range) + "f)",
+        string("MIN_LOG_LUMINANCE (") +
+            floatToString(min_log_luminance) + "f)",
+        string("MAX_LOG_LUMINANCE (") +
+            floatToString(max_log_luminance) + "f)",
+        string("EXPOSURE_BIAS (") +
+            floatToString(exposure_bias) + "f)",
+        string("BIN_ZERO_THRESHOLD (") +
+            floatToString(bin_zero_threshold) + "f)",
+        string("RES_X (") + to_string(cfg.imgWidth) + "u)",
+        string("RES_Y (") + to_string(cfg.imgHeight) + "u)",
+    };
+
+    ShaderPipeline exposure(dev,
+        { "exposure_histogram.comp" },
+        {},
+        exposure_defines,
+        STRINGIFY(SHADER_DIR));
+
     return RenderState {
         repeat_sampler,
         clamp_sampler,
         move(shader),
+        move(exposure),
     };
 }
 

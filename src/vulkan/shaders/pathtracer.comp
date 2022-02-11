@@ -126,7 +126,7 @@ layout (set = 1, binding = 0) readonly uniform Addrs {
 layout (set = 1, binding = 1) uniform texture2D textures[];
 
 #ifdef TONEMAP
-shared float illuminanceScratch[NUM_SUBGROUPS];
+shared float illuminanceScratch[gl_SubgroupSize];
 #endif
 
 // This function needs to be defined before the include of 
@@ -231,7 +231,7 @@ void setIlluminance(float illuminance)
     if (gl_SubgroupID == 0) {
         float tmp = illuminanceScratch[gl_SubgroupInvocationID];
 
-        float full_avg = subgroupAdd(tmp) / NUM_SUBGROUPS;
+        float full_avg = subgroupAdd(tmp) / float(gl_SubgroupSize);
 
         u32vec2 illuminance_res = u32vec2(
             RES_X / LOCAL_WORKGROUP_X,

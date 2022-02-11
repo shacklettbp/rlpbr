@@ -83,6 +83,7 @@ struct RenderState {
     VkSampler clampSampler;
 
     ShaderPipeline rt;
+    ShaderPipeline exposure;
 };
 
 struct RTPipelineState {

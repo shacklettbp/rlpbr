@@ -335,6 +335,7 @@ DeviceState InstanceState::makeDevice(
         VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME,
         VK_EXT_ROBUSTNESS_2_EXTENSION_NAME,
         VK_EXT_LINE_RASTERIZATION_EXTENSION_NAME,
+        VK_EXT_SHADER_ATOMIC_FLOAT_EXTENSION_NAME,
     };
 
     bool need_present = present_check != nullptr;
@@ -462,10 +463,17 @@ DeviceState InstanceState::makeDevice(
     line_features.pNext = &robustness_features;
     line_features.smoothLines = true;
 
+    VkPhysicalDeviceShaderAtomicFloatFeaturesEXT atomic_float_features {};
+    atomic_float_features.sType =
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_ATOMIC_FLOAT_2_FEATURES_EXT;
+    atomic_float_features.pNext = &line_features;
+    atomic_float_features.shaderSharedFloat32Atomics = true;
+    atomic_float_features.shaderSharedFloat32AtomicAdd = true;
+
     VkPhysicalDeviceVulkan12Features vk12_features {};
     vk12_features.sType =
         VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
-    vk12_features.pNext = &line_features;
+    vk12_features.pNext = &atomic_float_features;
     vk12_features.bufferDeviceAddress = true;
     vk12_features.descriptorIndexing = true;
     vk12_features.descriptorBindingPartiallyBound = true;
