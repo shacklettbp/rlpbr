@@ -40,10 +40,7 @@ uint32_t divideRoundUp(uint32_t a, uint32_t b)
 
 float computeBin(float luminance)
 {
-    // BIN_ZERO_THRESHOLD is chosen so 
-    // log(BIN_ZERO_THRESHOLD - epsilon) == MIN_LOG_LUMINANCE
-    // This stops bin 0 from being slightly overweighted
-    float log_luminance = (luminance < BIN_ZERO_THRESHOLD) ?
+    float log_luminance = (luminance < MIN_LUMINANCE) ?
         MIN_LOG_LUMINANCE : log2(luminance);
 
     float remapped = (log_luminance - MIN_LOG_LUMINANCE) * INV_LOG_LUMINANCE_RANGE;
@@ -52,7 +49,7 @@ float computeBin(float luminance)
 
 float inverseBinIdx(int idx)
 {
-    float remapped = (float(idx) + 0.5f) / float(NUM_BINS);
+    float remapped = float(idx) / float(NUM_BINS);
 
     return remapped * LOG_LUMINANCE_RANGE + MIN_LOG_LUMINANCE;
 }

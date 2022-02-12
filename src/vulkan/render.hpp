@@ -84,18 +84,21 @@ struct RenderState {
 
     ShaderPipeline rt;
     ShaderPipeline exposure;
+    ShaderPipeline tonemap;
 };
 
-struct RTPipelineState {
+struct PipelineState {
     VkPipelineLayout layout;
     VkPipeline hdl;
 };
 
-struct PipelineState {
+struct RenderPipelines {
     // Not saved (no caching)
     VkPipelineCache pipelineCache;
 
-    RTPipelineState rtState;
+    PipelineState rt;
+    PipelineState exposure;
+    PipelineState tonemap;
 };
 
 struct PerBatchState {
@@ -111,6 +114,10 @@ struct PerBatchState {
 
     FixedDescriptorPool rtPool;
     std::array<VkDescriptorSet, 2> rtSets;
+    FixedDescriptorPool exposurePool;
+    VkDescriptorSet exposureSet;
+    FixedDescriptorPool tonemapPool;
+    VkDescriptorSet tonemapSet;
 
     InstanceTransform *transformPtr;
     uint32_t *materialPtr;
@@ -179,7 +186,7 @@ private:
     const FramebufferConfig fb_cfg_;
     const ParamBufferConfig param_cfg_;
     RenderState render_state_;
-    PipelineState pipeline_;
+    RenderPipelines pipelines_;
 
     DynArray<QueueState> transfer_queues_;
     DynArray<QueueState> graphics_queues_;

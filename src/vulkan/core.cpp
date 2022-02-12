@@ -465,7 +465,7 @@ DeviceState InstanceState::makeDevice(
 
     VkPhysicalDeviceShaderAtomicFloatFeaturesEXT atomic_float_features {};
     atomic_float_features.sType =
-        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_ATOMIC_FLOAT_2_FEATURES_EXT;
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_ATOMIC_FLOAT_FEATURES_EXT;
     atomic_float_features.pNext = &line_features;
     atomic_float_features.shaderSharedFloat32Atomics = true;
     atomic_float_features.shaderSharedFloat32AtomicAdd = true;

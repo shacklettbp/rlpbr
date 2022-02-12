@@ -248,17 +248,12 @@ static RenderState makeRenderState(const DeviceState &dev,
     // 22 is probably overkill but makes for 32 stops
     float min_log_luminance = -10.f;
     float max_log_luminance = 22.f;
+    float min_luminance = exp2(min_log_luminance);
 
     float log_luminance_range = max_log_luminance - min_log_luminance;
     float inv_log_luminance_range = 1.f / log_luminance_range;
 
     int num_exposure_bins = 128;
-
-    float log_diff_per_bin = log_luminance_range / num_exposure_bins;
-
-    float bin_zero_threshold = 
-        exp2(min_log_luminance + 0.5f * log_diff_per_bin);
-
     float exposure_bias = 0.f;
 
     vector<string> exposure_defines {
@@ -273,8 +268,8 @@ static RenderState makeRenderState(const DeviceState &dev,
             floatToString(max_log_luminance) + "f)",
         string("EXPOSURE_BIAS (") +
             floatToString(exposure_bias) + "f)",
-        string("BIN_ZERO_THRESHOLD (") +
-            floatToString(bin_zero_threshold) + "f)",
+        string("MIN_LUMINANCE (") +
+            floatToString(min_luminance) + "f)",
         string("RES_X (") + to_string(cfg.imgWidth) + "u)",
         string("RES_Y (") + to_string(cfg.imgHeight) + "u)",
     };
@@ -285,16 +280,28 @@ static RenderState makeRenderState(const DeviceState &dev,
         exposure_defines,
         STRINGIFY(SHADER_DIR));
 
+    vector<string> tonemap_defines {
+        string("RES_X (") + to_string(cfg.imgWidth) + "u)",
+        string("RES_Y (") + to_string(cfg.imgHeight) + "u)",
+    };
+
+    ShaderPipeline tonemap(dev,
+        { "tonemap.comp" },
+        {},
+        tonemap_defines,
+        STRINGIFY(SHADER_DIR));
+
     return RenderState {
         repeat_sampler,
         clamp_sampler,
         move(shader),
         move(exposure),
+        move(tonemap),
     };
 }
 
-static PipelineState makePipeline(const DeviceState &dev,
-                                  const RenderState &render_state)
+static RenderPipelines makePipelines(const DeviceState &dev,
+                                     const RenderState &render_state)
 {
     // Pipeline cache (unsaved)
     VkPipelineCacheCreateInfo pcache_info {};
@@ -330,11 +337,44 @@ static PipelineState makePipeline(const DeviceState &dev,
     REQ_VK(dev.dt.createPipelineLayout(dev.hdl, &pt_layout_info, nullptr,
                                        &pt_layout));
 
-    VkComputePipelineCreateInfo pt_compute_info;
-    pt_compute_info.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
-    pt_compute_info.pNext = nullptr;
-    pt_compute_info.flags = 0;
-    pt_compute_info.stage = {
+    VkDescriptorSetLayout exposure_set_layout =
+        render_state.exposure.getLayout(0);
+
+    VkPipelineLayoutCreateInfo exposure_layout_info;
+    exposure_layout_info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    exposure_layout_info.pNext = nullptr;
+    exposure_layout_info.flags = 0;
+    exposure_layout_info.setLayoutCount = 1;
+    exposure_layout_info.pSetLayouts = &exposure_set_layout;
+    exposure_layout_info.pushConstantRangeCount = 0;
+    exposure_layout_info.pPushConstantRanges = nullptr;
+
+    VkPipelineLayout exposure_layout;
+    REQ_VK(dev.dt.createPipelineLayout(dev.hdl, &exposure_layout_info, nullptr,
+                                       &exposure_layout));
+
+    VkDescriptorSetLayout tonemap_set_layout =
+        render_state.tonemap.getLayout(0);
+
+    VkPipelineLayoutCreateInfo tonemap_layout_info;
+    tonemap_layout_info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    tonemap_layout_info.pNext = nullptr;
+    tonemap_layout_info.flags = 0;
+    tonemap_layout_info.setLayoutCount = 1;
+    tonemap_layout_info.pSetLayouts = &tonemap_set_layout;
+    tonemap_layout_info.pushConstantRangeCount = 0;
+    tonemap_layout_info.pPushConstantRanges = nullptr;
+
+    VkPipelineLayout tonemap_layout;
+    REQ_VK(dev.dt.createPipelineLayout(dev.hdl, &tonemap_layout_info, nullptr,
+                                       &tonemap_layout));
+
+    array<VkComputePipelineCreateInfo, 3> compute_infos;
+
+    compute_infos[0].sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+    compute_infos[0].pNext = nullptr;
+    compute_infos[0].flags = 0;
+    compute_infos[0].stage = {
         VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
         nullptr,
         0,
@@ -343,20 +383,61 @@ static PipelineState makePipeline(const DeviceState &dev,
         "main",
         nullptr,
     };
-    pt_compute_info.layout = pt_layout;
-    pt_compute_info.basePipelineHandle = VK_NULL_HANDLE;
-    pt_compute_info.basePipelineIndex = -1;
+    compute_infos[0].layout = pt_layout;
+    compute_infos[0].basePipelineHandle = VK_NULL_HANDLE;
+    compute_infos[0].basePipelineIndex = -1;
 
-    VkPipeline pt_pipeline;
-    REQ_VK(dev.dt.createComputePipelines(dev.hdl, pipeline_cache, 1,
-                                         &pt_compute_info, nullptr,
-                                         &pt_pipeline));
+    compute_infos[1].sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+    compute_infos[1].pNext = nullptr;
+    compute_infos[1].flags = 0;
+    compute_infos[1].stage = {
+        VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+        nullptr,
+        0,
+        VK_SHADER_STAGE_COMPUTE_BIT,
+        render_state.exposure.getShader(0),
+        "main",
+        nullptr,
+    };
+    compute_infos[1].layout = exposure_layout;
+    compute_infos[1].basePipelineHandle = VK_NULL_HANDLE;
+    compute_infos[1].basePipelineIndex = -1;
 
-    return PipelineState {
+    compute_infos[2].sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+    compute_infos[2].pNext = nullptr;
+    compute_infos[2].flags = 0;
+    compute_infos[2].stage = {
+        VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+        nullptr,
+        0,
+        VK_SHADER_STAGE_COMPUTE_BIT,
+        render_state.tonemap.getShader(0),
+        "main",
+        nullptr,
+    };
+    compute_infos[2].layout = tonemap_layout;
+    compute_infos[2].basePipelineHandle = VK_NULL_HANDLE;
+    compute_infos[2].basePipelineIndex = -1;
+
+    array<VkPipeline, compute_infos.size()> pipelines;
+    REQ_VK(dev.dt.createComputePipelines(dev.hdl, pipeline_cache,
+                                         compute_infos.size(),
+                                         compute_infos.data(), nullptr,
+                                         pipelines.data()));
+
+    return RenderPipelines {
         pipeline_cache,
-        RTPipelineState {
+        PipelineState {
             pt_layout,
-            pt_pipeline,
+            pipelines[0],
+        },
+        PipelineState {
+            exposure_layout,
+            pipelines[1],
+        },
+        PipelineState {
+            tonemap_layout,
+            pipelines[2],
         },
     };
 }
@@ -450,6 +531,8 @@ static PerBatchState makePerBatchState(const DeviceState &dev,
                                        const ParamBufferConfig &param_cfg,
                                        HostBuffer &param_buffer,
                                        FixedDescriptorPool &&rt_pool,
+                                       FixedDescriptorPool &&exposure_pool,
+                                       FixedDescriptorPool &&tonemap_pool,
                                        const BSDFPrecomputed &precomp_tex,
                                        bool auxiliary_outputs,
                                        bool tonemap,
@@ -459,6 +542,9 @@ static PerBatchState makePerBatchState(const DeviceState &dev,
         rt_pool.makeSet(),
         rt_pool.makeSet(),
     };
+
+    VkDescriptorSet exposure_set = exposure_pool.makeSet();
+    VkDescriptorSet tonemap_set = tonemap_pool.makeSet();
 
     VkCommandPool cmd_pool = makeCmdPool(dev, dev.computeQF);
     VkCommandBuffer render_cmd = makeCmdBuffer(dev, cmd_pool);
@@ -619,19 +705,27 @@ static PerBatchState makePerBatchState(const DeviceState &dev,
         }
     }
 
-    VkDescriptorBufferInfo illuminance_info;
-    if (tonemap) {
-        illuminance_info = {
-            fb.outputs.back().buffer,
-            0,
-            fb_cfg.illuminanceBytes,
-        };
+    VkDescriptorBufferInfo illuminance_info {
+        fb.outputs.back().buffer,
+        0,
+        fb_cfg.illuminanceBytes,
+    };
 
+    if (tonemap) {
         for (int i = 0; i < (int)rt_sets.size(); i++) {
             desc_updates.buffer(rt_sets[i], &illuminance_info, 16,
                                 VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
         }
     }
+
+    desc_updates.buffer(exposure_set, &illuminance_info, 0,
+                        VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
+
+    desc_updates.buffer(tonemap_set, &illuminance_info, 0,
+                        VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
+
+    desc_updates.buffer(tonemap_set, &out_info, 1,
+                        VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
 
     desc_updates.update(dev);
 
@@ -646,6 +740,10 @@ static PerBatchState makePerBatchState(const DeviceState &dev,
         albedo_buffer,
         move(rt_pool),
         move(rt_sets),
+        move(exposure_pool),
+        exposure_set,
+        move(tonemap_pool),
+        tonemap_set,
         transform_ptr,
         material_ptr,
         light_ptr,
@@ -964,7 +1062,7 @@ VulkanBackend::VulkanBackend(const RenderConfig &cfg,
       fb_cfg_(getFramebufferConfig(cfg)),
       param_cfg_(getParamBufferConfig(cfg.batchSize, alloc)),
       render_state_(makeRenderState(dev, cfg, init_cfg)),
-      pipeline_(makePipeline(dev, render_state_)),
+      pipelines_(makePipelines(dev, render_state_)),
       transfer_queues_(initTransferQueues(cfg, dev)),
       graphics_queues_(initGraphicsQueues(dev)),
       compute_queues_(initComputeQueues(dev)),
@@ -1025,6 +1123,8 @@ RenderBatch::Handle VulkanBackend::makeRenderBatch()
             dev, fb_cfg_, fb, param_cfg_,
             render_input_buffer,
             FixedDescriptorPool(dev, render_state_.rt, 0, 2),
+            FixedDescriptorPool(dev, render_state_.exposure, 0, 1),
+            FixedDescriptorPool(dev, render_state_.tonemap, 0, 1),
             bsdf_precomp_, cfg_.auxiliaryOutputs, cfg_.tonemap,
             present_.has_value());
 
@@ -1076,20 +1176,20 @@ void VulkanBackend::render(RenderBatch &batch)
     REQ_VK(dev.dt.beginCommandBuffer(render_cmd, &begin_info));
 
     dev.dt.cmdBindPipeline(render_cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
-                           pipeline_.rtState.hdl);
+                           pipelines_.rt.hdl);
 
     RTPushConstant push_const {
         frame_counter_,
     };
 
-    dev.dt.cmdPushConstants(render_cmd, pipeline_.rtState.layout,
+    dev.dt.cmdPushConstants(render_cmd, pipelines_.rt.layout,
                             VK_SHADER_STAGE_COMPUTE_BIT,
                             0,
                             sizeof(RTPushConstant),
                             &push_const);
 
     dev.dt.cmdBindDescriptorSets(render_cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
-                                 pipeline_.rtState.layout, 0, 1,
+                                 pipelines_.rt.layout, 0, 1,
                                  &batch_state.rtSets[batch_backend.curBuffer],
                                  0, nullptr);
 
@@ -1171,9 +1271,54 @@ void VulkanBackend::render(RenderBatch &batch)
 
     shared_scene_state_.lock.lock();
     dev.dt.cmdBindDescriptorSets(render_cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
-                                 pipeline_.rtState.layout, 1, 1,
+                                 pipelines_.rt.layout, 1, 1,
                                  &shared_scene_state_.descSet, 0, nullptr);
     shared_scene_state_.lock.unlock();
+
+    dev.dt.cmdDispatch(
+        render_cmd,
+        launch_size_.x,
+        launch_size_.y,
+        launch_size_.z);
+
+    VkMemoryBarrier comp_barrier;
+    comp_barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+    comp_barrier.pNext = nullptr;
+    comp_barrier.srcAccessMask =
+        VK_ACCESS_SHADER_WRITE_BIT;
+    comp_barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+
+    dev.dt.cmdPipelineBarrier(render_cmd,
+        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1,
+        &comp_barrier, 0, nullptr, 0, nullptr);
+
+    dev.dt.cmdBindPipeline(render_cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
+                           pipelines_.exposure.hdl);
+
+    dev.dt.cmdBindDescriptorSets(render_cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
+                                 pipelines_.exposure.layout, 0, 1,
+                                 &batch_state.exposureSet,
+                                 0, nullptr);
+
+    dev.dt.cmdDispatch(
+        render_cmd,
+        1,
+        1,
+        cfg_.batchSize);
+
+    dev.dt.cmdPipelineBarrier(render_cmd,
+        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1,
+        &comp_barrier, 0, nullptr, 0, nullptr);
+
+    dev.dt.cmdBindPipeline(render_cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
+                           pipelines_.tonemap.hdl);
+
+    dev.dt.cmdBindDescriptorSets(render_cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
+                                 pipelines_.tonemap.layout, 0, 1,
+                                 &batch_state.tonemapSet,
+                                 0, nullptr);
 
     dev.dt.cmdDispatch(
         render_cmd,
