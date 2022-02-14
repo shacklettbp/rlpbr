@@ -56,6 +56,29 @@ void setOutput(uint32_t base_offset, vec3 rgb, uint32_t instance_id)
     outputBuffer[nonuniformEXT(base_offset + 1)] = cd;
 }
 
+vec3 UC2Tonemap(vec3 v)
+{
+    const float A = 0.15;
+    const float B = 0.50;
+    const float C = 0.10;
+    const float D = 0.20;
+    const float E = 0.02;
+    const float F = 0.30;
+    const float W = 11.2;
+
+    vec3 tonemapped = ((v * (A * v + C * B) + D * E) /
+                       (v * (A * v + B) + D * F)) - E / F;
+
+    const float tonemap_W = ((W * (A * W + C * B) + D * E) /
+                             (W * (A * W + B) + D * F)) - E / F;
+
+    const float whitescale = 1.f / tonemap_W;
+
+    tonemapped *= whitescale;
+
+    return tonemapped;
+}
+
 layout (local_size_x = LOCAL_WORKGROUP_X,
         local_size_y = LOCAL_WORKGROUP_Y,
         local_size_z = LOCAL_WORKGROUP_Z) in;
@@ -68,7 +91,7 @@ void main()
         return;
     }
 
-    float exposure = illuminanceBuffer[0];
+    float exposure = illuminanceBuffer[batch_idx];
 
     uint32_t idx = 2 * (
         batch_idx * RES_Y * RES_X + xy_idx.y * RES_X + xy_idx.x);
@@ -78,5 +101,7 @@ void main()
 
     vec3 exposed = untonemapped * exposure;
 
-    setOutput(idx, exposed, instance_id);
+    vec3 tonemapped = UC2Tonemap(exposed);
+
+    setOutput(idx, tonemapped, instance_id);
 }

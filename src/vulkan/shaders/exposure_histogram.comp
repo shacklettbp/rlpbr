@@ -33,23 +33,18 @@ layout (set = 0, binding = 0, scalar) buffer TonemapIlluminance {
 
 shared float histogramBins[NUM_BINS];
 
-uint32_t divideRoundUp(uint32_t a, uint32_t b)
-{
-    return (a + (b - 1)) / b;
-}
-
 float computeBin(float luminance)
 {
     float log_luminance = (luminance < MIN_LUMINANCE) ?
         MIN_LOG_LUMINANCE : log2(luminance);
 
     float remapped = (log_luminance - MIN_LOG_LUMINANCE) * INV_LOG_LUMINANCE_RANGE;
-    return remapped * float(NUM_BINS);
+    return remapped * float(NUM_BINS - 1);
 }
 
 float inverseBinIdx(int idx)
 {
-    float remapped = float(idx) / float(NUM_BINS);
+    float remapped = float(idx) / float(NUM_BINS - 1);
 
     return remapped * LOG_LUMINANCE_RANGE + MIN_LOG_LUMINANCE;
 }
@@ -61,42 +56,38 @@ layout (local_size_x = LOCAL_WORKGROUP_X,
 void main()
 {
     uint32_t batch_idx = gl_GlobalInvocationID.z;
-    u32vec2 xy_idx = gl_LocalInvocationID.xy;
+    const u32vec2 xy_idx = gl_LocalInvocationID.xy;
 
     if (gl_LocalInvocationIndex < NUM_BINS) {
         histogramBins[gl_LocalInvocationIndex] = 0.f;
     }
 
-    u32vec2 illuminance_res = u32vec2(
-        RES_X / LOCAL_WORKGROUP_X,
-        RES_Y / LOCAL_WORKGROUP_Y);
+    const float normalize_factor =
+        1.f / float(EXPOSURE_RES_X * EXPOSURE_RES_Y);
 
-    u32vec2 elems_per_thread = u32vec2(
-            divideRoundUp(illuminance_res.x, LOCAL_WORKGROUP_X),
-            divideRoundUp(illuminance_res.y, LOCAL_WORKGROUP_Y));
+    for (int y = 0; y < int(THREAD_ELEMS_Y); y++) {
+        for (int x = 0; x < int(THREAD_ELEMS_X); x++) {
+            uint32_t y_idx = xy_idx.y * THREAD_ELEMS_Y + y;
+            uint32_t x_idx = xy_idx.x * THREAD_ELEMS_X + x;
 
-    if (xy_idx.x * elems_per_thread.x >= illuminance_res.x ||
-        xy_idx.y * elems_per_thread.y >= illuminance_res.y) {
-        return;
-    }
+            bool oob = y_idx >= EXPOSURE_RES_Y || x_idx >= EXPOSURE_RES_X;
 
-    for (int y = 0; y < elems_per_thread.y; y++) {
-        for (int x = 0; x < elems_per_thread.x; x++) {
-            uint32_t y_idx = xy_idx.y * elems_per_thread.y + y;
-            uint32_t x_idx = xy_idx.x * elems_per_thread.x + x;
+            uint32_t idx = batch_idx * EXPOSURE_RES_X * EXPOSURE_RES_Y +
+                y_idx * EXPOSURE_RES_X + x_idx;
 
-            uint32_t idx = batch_idx * illuminance_res.x * illuminance_res.y +
-                y_idx * illuminance_res.x + x_idx;
-
-            float illuminance = illuminanceBuffer[idx];
+            float illuminance = oob ? 0 : illuminanceBuffer[idx];
 
             float bin = computeBin(illuminance);
             int low_bin = clamp(int(bin), 0, NUM_BINS - 1);
             int high_bin = min(low_bin + 1, NUM_BINS - 1);
             float high_weight = fract(bin);
 
-            atomicAdd(histogramBins[low_bin], 1.f - high_weight);
-            atomicAdd(histogramBins[high_bin], high_weight);
+            if (!oob) {
+                atomicAdd(histogramBins[low_bin],
+                          normalize_factor * (1.f - high_weight));
+                atomicAdd(histogramBins[high_bin],
+                          normalize_factor * high_weight);
+            }
         }
     }
 
@@ -106,16 +97,16 @@ void main()
         return;
     }
 
-    const float low_drop_threshold = 0.5;
-    const float high_drop_threshold = 0.1;
+    const float low_drop_threshold = 0.6;
+    const float high_drop_threshold = 0.2;
 
     // Compute sum. Note that in the current code, this is just equal to
     // the resolution, but may implement center bias later
     float full_sum = 0.0;
 
-    const int bins_per_thread = NUM_BINS / int(gl_SubgroupSize);
+    const int bins_per_thread = NUM_BINS / SUBGROUP_SIZE;
     for (int i = 0; i < bins_per_thread; i++) {
-        int cur_idx = int(gl_SubgroupInvocationID) + int(gl_SubgroupSize) * i;
+        int cur_idx = int(gl_SubgroupInvocationID) + SUBGROUP_SIZE * i;
         float count = histogramBins[cur_idx];
 
         float cur_sum = subgroupAdd(count);
@@ -125,38 +116,43 @@ void main()
     float low_drop = full_sum * low_drop_threshold;
     float remaining_count = full_sum * (1.0 - high_drop_threshold);
 
-    float filtered_sum = 0;
+    float filtered_log_lum = 0;
     for (int i = 0; i < bins_per_thread; i++) {
-        int cur_idx = int(gl_SubgroupInvocationID) + int(gl_SubgroupSize) * i;
-        float count = histogramBins[cur_idx];
+        int cur_idx = int(gl_SubgroupInvocationID) + SUBGROUP_SIZE * i;
+        float bin_count = histogramBins[cur_idx];
 
-        float lower_count = subgroupExclusiveAdd(count);
-        float iter_count = subgroupBroadcast(lower_count + count,
-                                             gl_SubgroupSize - 1);
+        float prior_count = subgroupExclusiveAdd(bin_count);
+        float iter_count = subgroupBroadcast(prior_count + bin_count,
+                                             SUBGROUP_SIZE - 1);
 
-        float low_drop_amount = max(low_drop - lower_count, 0.f);
-        count -= low_drop_amount;
+        bin_count = max(min(bin_count, remaining_count - prior_count),
+                        0.f);
 
-        count = max(min(count, remaining_count - lower_count), 0.f);
+        float low_drop_amount = max(low_drop - prior_count, 0.f);
+        
+        bin_count = max(bin_count - low_drop_amount, 0.f);
 
         low_drop -= iter_count;
         remaining_count -= iter_count;
 
         float bucket_log_lum = inverseBinIdx(cur_idx);
 
-        filtered_sum += subgroupAdd(bucket_log_lum * count);
+        filtered_log_lum += subgroupAdd(bucket_log_lum * bin_count);
     }
 
     float filtered_count = 
         full_sum * (1.f - high_drop_threshold - low_drop_threshold);
 
     if (subgroupElect()) {
-        float log_avg = filtered_sum / max(filtered_count, 1e-6f);
+        float log_avg = filtered_log_lum / max(filtered_count, 1e-6f);
         log_avg = clamp(log_avg, MIN_LOG_LUMINANCE, MAX_LOG_LUMINANCE);
 
         float avg_luminance = exp2(log_avg);
         float exposure = 0.18f / (avg_luminance - EXPOSURE_BIAS);
 
-        illuminanceBuffer[0] = exposure;
+        illuminanceBuffer[batch_idx] = exposure;
+
+        debugPrintfEXT("%f %f %f %f\n", exposure, filtered_count, full_sum,
+                       filtered_log_lum / filtered_count);
     }
 }

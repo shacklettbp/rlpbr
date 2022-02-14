@@ -42,6 +42,8 @@ constexpr uint32_t compute_workgroup_size = WORKGROUP_SIZE;
 constexpr uint32_t localWorkgroupX = LOCAL_WORKGROUP_X;
 constexpr uint32_t localWorkgroupY = LOCAL_WORKGROUP_Y;
 constexpr uint32_t localWorkgroupZ = LOCAL_WORKGROUP_Z;
+constexpr uint32_t numSubgroups = NUM_SUBGROUPS;
+constexpr uint32_t subgroupSize = SUBGROUP_SIZE;
 
 }
 

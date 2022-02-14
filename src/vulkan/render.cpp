@@ -104,7 +104,14 @@ static FramebufferConfig getFramebufferConfig(const RenderConfig &cfg)
     uint32_t albedo_bytes = 4 * sizeof(uint16_t) * pixels_per_batch;
     uint32_t reservoir_bytes = sizeof(Reservoir) * pixels_per_batch;
 
-    uint32_t illuminance_bytes = sizeof(float) * pixels_per_batch / WORKGROUP_SIZE;
+    // FIXME: dedup this with the EXPOSURE_RES_X code
+    uint32_t illuminance_width =
+        divideRoundUp(cfg.imgWidth, VulkanConfig::localWorkgroupX);
+    uint32_t illuminance_height =
+        divideRoundUp(cfg.imgWidth, VulkanConfig::localWorkgroupY);
+
+    uint32_t illuminance_bytes =
+        sizeof(float) * illuminance_width * illuminance_height * batch_size;
 
     return FramebufferConfig {
         cfg.imgWidth,
@@ -167,74 +174,63 @@ static RenderState makeRenderState(const DeviceState &dev,
     float_conv.precision(9);
     float_conv << fixed << inv_sqrt_spp;
 
-    vector<string> shader_defines {
+    uint32_t num_workgroups_x = divideRoundUp(cfg.imgWidth,
+                                              VulkanConfig::localWorkgroupX);
+
+    uint32_t num_workgroups_y = divideRoundUp(cfg.imgHeight,
+                                              VulkanConfig::localWorkgroupY);
+
+    uint32_t exposure_res_x = num_workgroups_x;
+    uint32_t exposure_res_y = num_workgroups_y;
+    
+    vector<string> rt_defines {
         string("SPP (") + to_string(cfg.spp) + "u)",
         string("INV_SQRT_SPP (") + float_conv.str() + "f)",
         string("MAX_DEPTH (") + to_string(cfg.maxDepth) + "u)",
         string("RES_X (") + to_string(cfg.imgWidth) + "u)",
         string("RES_Y (") + to_string(cfg.imgHeight) + "u)",
+        string("EXPOSURE_RES_X (") + to_string(exposure_res_x) + "u)",
+        string("EXPOSURE_RES_Y (") + to_string(exposure_res_y) + "u)",
         string("BATCH_SIZE (") + to_string(cfg.batchSize) + "u)",
         sampling_define,
         string("ZSOBOL_NUM_BASE4 (") + to_string(num_index_digits_base4) + "u)",
         string("ZSOBOL_INDEX_SHIFT (") + to_string(index_shift) + "u)",
     };
 
-    if (init_cfg.validate) {
-        shader_defines.push_back("VALIDATE");
-    }
-
     if (is_odd_power2) {
-        shader_defines.push_back("ZSOBOL_ODD_POWER");
+        rt_defines.push_back("ZSOBOL_ODD_POWER");
     }
 
     if (cfg.spp == 1) {
-        shader_defines.push_back("ONE_SAMPLE");
+        rt_defines.push_back("ONE_SAMPLE");
     }
 
     if (cfg.maxDepth == 1) {
-        shader_defines.push_back("PRIMARY_ONLY");
+        rt_defines.push_back("PRIMARY_ONLY");
     }
 
     if (cfg.flags & RenderFlags::AuxiliaryOutputs) {
-         shader_defines.emplace_back("AUXILIARY_OUTPUTS");
+         rt_defines.emplace_back("AUXILIARY_OUTPUTS");
     }
 
     if (cfg.flags & RenderFlags::Tonemap) {
-         shader_defines.emplace_back("TONEMAP");
+         rt_defines.emplace_back("TONEMAP");
     }
 
     if (cfg.clampThreshold > 0.f) {
-        shader_defines.emplace_back(string("-DINDIRECT_CLAMP (") +
+        rt_defines.emplace_back(string("-DINDIRECT_CLAMP (") +
             to_string(cfg.clampThreshold) + "f)");
     }
 
-    ShaderPipeline::initCompiler();
-
-    const char *shader_name;
+    const char *rt_name;
     switch (cfg.mode) {
         case RenderMode::PathTracer:
-            shader_name = "pathtracer.comp";
+            rt_name = "pathtracer.comp";
             break;
         case RenderMode::Biased:
-            shader_name = "basic.comp";
+            rt_name = "basic.comp";
             break;
     }
-
-    ShaderPipeline shader(dev,
-        { shader_name },
-        {
-            {0, 4, repeat_sampler, 1, 0},
-            {0, 5, clamp_sampler, 1, 0},
-            {
-                1, 1, VK_NULL_HANDLE,
-                VulkanConfig::max_scenes * (1 + VulkanConfig::max_materials *
-                    VulkanConfig::textures_per_material),
-                VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT |
-                VK_DESCRIPTOR_BINDING_UPDATE_UNUSED_WHILE_PENDING_BIT,
-            },
-        },
-        shader_defines,
-        STRINGIFY(SHADER_DIR));
 
     // Give 9 digits of precision for lossless conversion
     auto floatToString = [](float v) {
@@ -256,6 +252,11 @@ static RenderState makeRenderState(const DeviceState &dev,
     int num_exposure_bins = 128;
     float exposure_bias = 0.f;
 
+    uint32_t thread_elems_x = divideRoundUp(exposure_res_x,
+                                            VulkanConfig::localWorkgroupX);
+    uint32_t thread_elems_y = divideRoundUp(exposure_res_y,
+                                            VulkanConfig::localWorkgroupY);
+
     vector<string> exposure_defines {
         string("NUM_BINS (") + to_string(num_exposure_bins) + ")",
         string("LOG_LUMINANCE_RANGE (") +
@@ -270,20 +271,46 @@ static RenderState makeRenderState(const DeviceState &dev,
             floatToString(exposure_bias) + "f)",
         string("MIN_LUMINANCE (") +
             floatToString(min_luminance) + "f)",
+        string("EXPOSURE_RES_X (") + to_string(exposure_res_x) + "u)",
+        string("EXPOSURE_RES_Y (") + to_string(exposure_res_y) + "u)",
+        string("THREAD_ELEMS_X (") + to_string(thread_elems_x) + "u)",
+        string("THREAD_ELEMS_Y (") + to_string(thread_elems_y) + "u)",
+    };
+
+    vector<string> tonemap_defines {
         string("RES_X (") + to_string(cfg.imgWidth) + "u)",
         string("RES_Y (") + to_string(cfg.imgHeight) + "u)",
     };
+
+    if (init_cfg.validate) {
+        rt_defines.push_back("VALIDATE");
+        exposure_defines.push_back("VALIDATE");
+        tonemap_defines.push_back("VALIDATE");
+    }
+
+    ShaderPipeline::initCompiler();
+
+    ShaderPipeline rt(dev,
+        { rt_name },
+        {
+            {0, 4, repeat_sampler, 1, 0},
+            {0, 5, clamp_sampler, 1, 0},
+            {
+                1, 1, VK_NULL_HANDLE,
+                VulkanConfig::max_scenes * (1 + VulkanConfig::max_materials *
+                    VulkanConfig::textures_per_material),
+                VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT |
+                VK_DESCRIPTOR_BINDING_UPDATE_UNUSED_WHILE_PENDING_BIT,
+            },
+        },
+        rt_defines,
+        STRINGIFY(SHADER_DIR));
 
     ShaderPipeline exposure(dev,
         { "exposure_histogram.comp" },
         {},
         exposure_defines,
         STRINGIFY(SHADER_DIR));
-
-    vector<string> tonemap_defines {
-        string("RES_X (") + to_string(cfg.imgWidth) + "u)",
-        string("RES_Y (") + to_string(cfg.imgHeight) + "u)",
-    };
 
     ShaderPipeline tonemap(dev,
         { "tonemap.comp" },
@@ -294,7 +321,7 @@ static RenderState makeRenderState(const DeviceState &dev,
     return RenderState {
         repeat_sampler,
         clamp_sampler,
-        move(shader),
+        move(rt),
         move(exposure),
         move(tonemap),
     };
@@ -371,13 +398,19 @@ static RenderPipelines makePipelines(const DeviceState &dev,
 
     array<VkComputePipelineCreateInfo, 3> compute_infos;
 
+    VkPipelineShaderStageRequiredSubgroupSizeCreateInfoEXT subgroup_size;
+    subgroup_size.sType =
+        VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_REQUIRED_SUBGROUP_SIZE_CREATE_INFO_EXT;
+    subgroup_size.pNext = nullptr;
+    subgroup_size.requiredSubgroupSize = VulkanConfig::subgroupSize;
+
     compute_infos[0].sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
     compute_infos[0].pNext = nullptr;
     compute_infos[0].flags = 0;
     compute_infos[0].stage = {
         VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
-        nullptr,
-        0,
+        &subgroup_size,
+        VK_PIPELINE_SHADER_STAGE_CREATE_REQUIRE_FULL_SUBGROUPS_BIT_EXT,
         VK_SHADER_STAGE_COMPUTE_BIT,
         render_state.rt.getShader(0),
         "main",
@@ -392,8 +425,8 @@ static RenderPipelines makePipelines(const DeviceState &dev,
     compute_infos[1].flags = 0;
     compute_infos[1].stage = {
         VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
-        nullptr,
-        0,
+        &subgroup_size,
+        VK_PIPELINE_SHADER_STAGE_CREATE_REQUIRE_FULL_SUBGROUPS_BIT_EXT,
         VK_SHADER_STAGE_COMPUTE_BIT,
         render_state.exposure.getShader(0),
         "main",
@@ -408,8 +441,8 @@ static RenderPipelines makePipelines(const DeviceState &dev,
     compute_infos[2].flags = 0;
     compute_infos[2].stage = {
         VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
-        nullptr,
-        0,
+        &subgroup_size,
+        VK_PIPELINE_SHADER_STAGE_CREATE_REQUIRE_FULL_SUBGROUPS_BIT_EXT,
         VK_SHADER_STAGE_COMPUTE_BIT,
         render_state.tonemap.getShader(0),
         "main",

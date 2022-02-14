@@ -125,11 +125,6 @@ layout (set = 1, binding = 0) readonly uniform Addrs {
 
 layout (set = 1, binding = 1) uniform texture2D textures[];
 
-#ifdef TONEMAP
-shared float illuminanceScratch[gl_SubgroupSize];
-#endif
-
-// This function needs to be defined before the include of 
 // materials.glsl
 vec4 fetchSceneTexture(uint32_t idx, vec2 uv, TextureDerivatives tex_derivs)
 {
@@ -153,6 +148,10 @@ u32vec4 fetchSceneMaterialParams(MatRef ref, uint32_t idx, uint32_t sub_idx)
 #include "geometry.glsl"
 #include "lighting.glsl"
 #include "camera.glsl"
+
+#ifdef TONEMAP
+#include "exposure_common.glsl"
+#endif
 
 // Support functions
 
@@ -212,40 +211,6 @@ void setOutput(uint32_t base_offset, vec3 rgb, uint32_t instance_id)
     outputBuffer[nonuniformEXT(base_offset)] = ab;
     outputBuffer[nonuniformEXT(base_offset + 1)] = cd;
 }
-
-#ifdef TONEMAP
-void setIlluminance(float illuminance)
-{
-    // Not sure this is necessary but it seems like it should ensure
-    // that all threads in the subgroup are active after the barrier
-    barrier(); 
-
-    float subgroup_avg = subgroupAdd(illuminance) / subgroupAdd(1.f);
-
-    if (subgroupElect()) {
-        illuminanceScratch[gl_SubgroupID] = subgroup_avg;
-    }
-
-    barrier();
-
-    if (gl_SubgroupID == 0) {
-        float tmp = illuminanceScratch[gl_SubgroupInvocationID];
-
-        float full_avg = subgroupAdd(tmp) / float(gl_SubgroupSize);
-
-        u32vec2 illuminance_res = u32vec2(
-            RES_X / LOCAL_WORKGROUP_X,
-            RES_Y / LOCAL_WORKGROUP_Y);
-        
-        uint32_t idx = gl_GlobalInvocationID.z *
-            illuminance_res.x * illuminance_res.y +
-                gl_GlobalInvocationID.y * illuminance_res.x +
-                gl_GlobalInvocationID.x;
-
-        tonemapIlluminanceBuffer[idx] = full_avg;
-    }
-}
-#endif
 
 #ifdef AUXILIARY_OUTPUTS
 void setAuxiliaries(uint32_t base_offset, vec3 albedo, vec3 normal)
@@ -755,7 +720,8 @@ void main()
     setOutput(base_out_offset, pixel_avg, instance_id);
 
 #ifdef TONEMAP
-    setIlluminance(pixel_illuminance);
+    //setIlluminance(pixel_illuminance);
+    setExposureIlluminance(rgbToLuminance(pixel_avg));
 #endif
 
 #ifdef AUXILIARY_OUTPUTS
