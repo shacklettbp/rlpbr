@@ -211,6 +211,8 @@ int main(int argc, char *argv[]) {
         glfwSetInputMode(window, GLFW_RAW_MOUSE_MOTION, GLFW_TRUE);
     }
 
+    glEnable(GL_FRAMEBUFFER_SRGB);
+
     renderer.render(batch);
     renderer.waitForBatch(batch);
 

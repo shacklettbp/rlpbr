@@ -296,7 +296,7 @@ DirectResult directLighting(in u32vec3 idx, in Camera cam, in Camera prev_cam,
     vec3 illuminance = hit.material.emittance + ambient;
 
     vec3 to_light = normalize(vec3(0.399129, 0.638264, -0.473601));
-    vec3 light_irradiance = vec3(1.f);
+    vec3 light_irradiance = vec3(5.f);
 
     vec3 wi = normalize(worldToLocalIncoming(to_light, hit.tangentFrame));
 
@@ -310,7 +310,7 @@ DirectResult directLighting(in u32vec3 idx, in Camera cam, in Camera prev_cam,
     result.radiance += nee;
 
     illuminance += light_illuminance;
-    result.illuminance = rgbToLuminance(illuminance);
+    result.illuminance = 0.18 * rgbToLuminance(illuminance);
 
     return result;
 }
@@ -348,11 +348,6 @@ void main()
     DirectResult result =
         directLighting(idx, cam, prev_cam, env, rng);
 
-
-    if (ISTHREAD0) {
-        debugPrintfEXT("%f\n", rgbToLuminance(result.radiance));
-    }
-
     if (!oob) {
         setOutput(base_out_offset, result.radiance, result.instanceID);
 
@@ -362,7 +357,7 @@ void main()
     }
 
 #ifdef TONEMAP
-    setExposureIlluminance(rgbToLuminance(result.radiance), oob);
+    setExposureIlluminance(result.illuminance, oob);
 #endif
 
 #if 0

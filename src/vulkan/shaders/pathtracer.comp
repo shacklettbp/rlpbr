@@ -625,9 +625,9 @@ void main()
 {
     u32vec3 idx = gl_GlobalInvocationID.xyz;
 
-    if (idx.x >= RES_X || idx.y >= RES_Y || idx.z >= BATCH_SIZE) {
-        return;
-    }
+    bool oob = idx.x >= RES_X || idx.y >= RES_Y;
+    idx.x = min(idx.x, RES_X - 1);
+    idx.y = min(idx.y, RES_Y - 1);
 
     // Lookup our location within the launch grid
     uint32_t batch_idx = idx.z;
@@ -717,14 +717,17 @@ void main()
         pixel_illuminance += indirect_illuminance / SPP;
     }
 
-    setOutput(base_out_offset, pixel_avg, instance_id);
+    if (!oob) {
+        setOutput(base_out_offset, pixel_avg, instance_id);
+
+#ifdef AUXILIARY_OUTPUTS
+        setAuxiliaries(base_aux_offset, aux_normal, aux_albedo);
+#endif
+    }
 
 #ifdef TONEMAP
     //setIlluminance(pixel_illuminance);
-    setExposureIlluminance(rgbToLuminance(pixel_avg));
+    setExposureIlluminance(rgbToLuminance(pixel_avg), oob);
 #endif
 
-#ifdef AUXILIARY_OUTPUTS
-    setAuxiliaries(base_aux_offset, aux_normal, aux_albedo);
-#endif
 }

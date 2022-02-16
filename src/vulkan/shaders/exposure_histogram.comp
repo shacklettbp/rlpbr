@@ -49,6 +49,11 @@ float inverseBinIdx(int idx)
     return remapped * LOG_LUMINANCE_RANGE + MIN_LOG_LUMINANCE;
 }
 
+float exposureCompensation(float orig)
+{
+    return 0.f;
+}
+
 // https://knarkowicz.wordpress.com/2016/01/09/automatic-exposure/
 layout (local_size_x = LOCAL_WORKGROUP_X,
         local_size_y = LOCAL_WORKGROUP_Y,
@@ -97,25 +102,13 @@ void main()
         return;
     }
 
-    const float low_drop_threshold = 0.6;
-    const float high_drop_threshold = 0.2;
-
-    // Compute sum. Note that in the current code, this is just equal to
-    // the resolution, but may implement center bias later
-    float full_sum = 0.0;
+    const float low_drop_threshold = 0.5;
+    const float high_drop_threshold = 0.05;
+    const float cutoff_threshold = (1.0 - high_drop_threshold);
 
     const int bins_per_thread = NUM_BINS / SUBGROUP_SIZE;
-    for (int i = 0; i < bins_per_thread; i++) {
-        int cur_idx = int(gl_SubgroupInvocationID) + SUBGROUP_SIZE * i;
-        float count = histogramBins[cur_idx];
 
-        float cur_sum = subgroupAdd(count);
-        full_sum += cur_sum;
-    }
-
-    float low_drop = full_sum * low_drop_threshold;
-    float remaining_count = full_sum * (1.0 - high_drop_threshold);
-
+    float cur_sum = 0;
     float filtered_log_lum = 0;
     for (int i = 0; i < bins_per_thread; i++) {
         int cur_idx = int(gl_SubgroupInvocationID) + SUBGROUP_SIZE * i;
@@ -125,34 +118,35 @@ void main()
         float iter_count = subgroupBroadcast(prior_count + bin_count,
                                              SUBGROUP_SIZE - 1);
 
-        bin_count = max(min(bin_count, remaining_count - prior_count),
-                        0.f);
+        bin_count = max(
+            min(bin_count, cutoff_threshold - cur_sum - prior_count),
+            0.f);
 
-        float low_drop_amount = max(low_drop - prior_count, 0.f);
+        float low_drop_amount =
+            max(low_drop_threshold - cur_sum - prior_count, 0.f);
         
         bin_count = max(bin_count - low_drop_amount, 0.f);
 
-        low_drop -= iter_count;
-        remaining_count -= iter_count;
+        cur_sum += iter_count;
 
         float bucket_log_lum = inverseBinIdx(cur_idx);
 
         filtered_log_lum += subgroupAdd(bucket_log_lum * bin_count);
     }
 
-    float filtered_count = 
-        full_sum * (1.f - high_drop_threshold - low_drop_threshold);
+    const float filtered_count =
+        (1.f - high_drop_threshold - low_drop_threshold);
 
     if (subgroupElect()) {
-        float log_avg = filtered_log_lum / max(filtered_count, 1e-6f);
+        float log_avg = filtered_log_lum / filtered_count;
+        
+        float log_ec = exposureCompensation(log_avg);
+
         log_avg = clamp(log_avg, MIN_LOG_LUMINANCE, MAX_LOG_LUMINANCE);
 
         float avg_luminance = exp2(log_avg);
-        float exposure = 0.18f / (avg_luminance - EXPOSURE_BIAS);
+        float exposure = 0.18 / (avg_luminance);
 
         illuminanceBuffer[batch_idx] = exposure;
-
-        debugPrintfEXT("%f %f %f %f\n", exposure, filtered_count, full_sum,
-                       filtered_log_lum / filtered_count);
     }
 }

@@ -34,34 +34,6 @@ float toSRGB(float v)
     }
 }
 
-glm::vec3 tonemap(glm::vec3 rgb)
-{
-    rgb *= 32;
-
-    float A = 0.15;
-    float B = 0.50;
-    float C = 0.10;
-    float D = 0.20;
-    float E = 0.02;
-    float F = 0.30;
-    float W = 11.2;
-
-    auto UC2Tonemap = [&](float x) {
-        return ((x*(A*x+C*B)+D*E)/(x*(A*x+B)+D*F))-E/F;
-    };
-
-    glm::vec3 tonemapped;
-    for (int i = 0; i < 3; i++) {
-        tonemapped[i] = UC2Tonemap(rgb[i]);
-    }
-
-    glm::vec3 whitescale = glm::vec3(1.f) / UC2Tonemap(W);
-
-    tonemapped *= whitescale;
-
-    return tonemapped;
-}
-
 void saveFrame(string fprefix, const half *dev_ptr,
                uint32_t width, uint32_t height, uint32_t num_channels)
 {
@@ -83,9 +55,8 @@ void saveFrame(string fprefix, const half *dev_ptr,
 
         assert(rgb.r >= 0 && rgb.g >= 0 && rgb.b >= 0);
 
-        glm::vec3 tonemapped = tonemap(rgb);
         for (int j = 0; j < 3; j++) {
-            float v = toSRGB(tonemapped[j]);
+            float v = toSRGB(rgb[j]);
             if (v < 0) v = 0.f;
             if (v > 1) v = 1.f;
             sdr_buffer[k + j] = uint8_t(v * 255.f);
@@ -120,7 +91,7 @@ int main(int argc, char *argv[]) {
     }
 
     Renderer renderer({0, 1, batch_size, out_dim.x, out_dim.y, spp, depth,
-                       0, RenderMode::PathTracer,
+                       0, RenderMode::Biased,
                        RenderFlags::AuxiliaryOutputs | RenderFlags::Tonemap,
                        0.f, BackendSelect::Vulkan});
 
