@@ -205,4 +205,9 @@ vec3 getOrthogonalVec(vec3 v)
         vec3(0.0, -v.z, v.y);
 }
 
+float rgbToLuminance(vec3 rgb)
+{
+    return 0.2126f * rgb.x + 0.7152f * rgb.y + 0.0722f * rgb.z;
+}
+
 #endif

@@ -91,7 +91,7 @@ int main(int argc, char *argv[]) {
     }
 
     Renderer renderer({0, 1, batch_size, out_dim.x, out_dim.y, spp, depth,
-                       0, RenderMode::Biased,
+                       0, RenderMode::PathTracer,
                        RenderFlags::AuxiliaryOutputs | RenderFlags::Tonemap,
                        0.f, BackendSelect::Vulkan});
 

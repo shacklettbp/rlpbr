@@ -81,11 +81,6 @@ float pdfMSMicrofacetAngle(float dir_albedo_compl, float avg_albedo_compl,
     return wi_dot_n * dir_albedo_compl / avg_albedo_compl;
 }
 
-float rgbToLuminance(vec3 rgb)
-{
-    return 0.2126f * rgb.x + 0.7152f * rgb.y + 0.0722f * rgb.z;
-}
-
 #define COMPUTE_FRESNEL(T)                                              \
     T computeFresnel(T f0, T f90, float cos_theta)                      \
     {                                                                   \
