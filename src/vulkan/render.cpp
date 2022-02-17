@@ -1321,43 +1321,45 @@ void VulkanBackend::render(RenderBatch &batch)
         VK_ACCESS_SHADER_WRITE_BIT;
     comp_barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
 
-    dev.dt.cmdPipelineBarrier(render_cmd,
-        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1,
-        &comp_barrier, 0, nullptr, 0, nullptr);
+    if (cfg_.tonemap) {
+        dev.dt.cmdPipelineBarrier(render_cmd,
+            VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+            VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1,
+            &comp_barrier, 0, nullptr, 0, nullptr);
 
-    dev.dt.cmdBindPipeline(render_cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
-                           pipelines_.exposure.hdl);
+        dev.dt.cmdBindPipeline(render_cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
+                               pipelines_.exposure.hdl);
 
-    dev.dt.cmdBindDescriptorSets(render_cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
-                                 pipelines_.exposure.layout, 0, 1,
-                                 &batch_state.exposureSet,
-                                 0, nullptr);
+        dev.dt.cmdBindDescriptorSets(render_cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
+                                     pipelines_.exposure.layout, 0, 1,
+                                     &batch_state.exposureSet,
+                                     0, nullptr);
 
-    dev.dt.cmdDispatch(
-        render_cmd,
-        1,
-        1,
-        cfg_.batchSize);
+        dev.dt.cmdDispatch(
+            render_cmd,
+            1,
+            1,
+            cfg_.batchSize);
 
-    dev.dt.cmdPipelineBarrier(render_cmd,
-        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1,
-        &comp_barrier, 0, nullptr, 0, nullptr);
+        dev.dt.cmdPipelineBarrier(render_cmd,
+            VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+            VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1,
+            &comp_barrier, 0, nullptr, 0, nullptr);
 
-    dev.dt.cmdBindPipeline(render_cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
-                           pipelines_.tonemap.hdl);
+        dev.dt.cmdBindPipeline(render_cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
+                               pipelines_.tonemap.hdl);
 
-    dev.dt.cmdBindDescriptorSets(render_cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
-                                 pipelines_.tonemap.layout, 0, 1,
-                                 &batch_state.tonemapSet,
-                                 0, nullptr);
+        dev.dt.cmdBindDescriptorSets(render_cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
+                                     pipelines_.tonemap.layout, 0, 1,
+                                     &batch_state.tonemapSet,
+                                     0, nullptr);
 
-    dev.dt.cmdDispatch(
-        render_cmd,
-        launch_size_.x,
-        launch_size_.y,
-        launch_size_.z);
+        dev.dt.cmdDispatch(
+            render_cmd,
+            launch_size_.x,
+            launch_size_.y,
+            launch_size_.z);
+    }
 
     REQ_VK(dev.dt.endCommandBuffer(render_cmd));
 

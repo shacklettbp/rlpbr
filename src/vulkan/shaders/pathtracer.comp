@@ -540,7 +540,7 @@ PrimaryResult directLighting(in u32vec3 idx, in uint32_t linear_idx,
     }
 
     result.vertState.radiance += nee;
-    result.illuminance = illuminance;
+    result.illuminance = 0.18f * illuminance;
 
     if (pass_through) {
         result.vertState.radiance = vec3(0);
@@ -704,7 +704,10 @@ void main()
         float indirect_illuminance_weight =
             ((bounce_flags & BSDFFlagsDelta) > 0) ? 1.f :
                 (secondary_pdf == 0.f ? 0.f :
-                    (abs(dot(primary_normal, secondary_dir)) / secondary_pdf));
+                    1.f / secondary_pdf);
+
+        //debug
+        //indirect_illuminance_weight = abs(dot(primary_normal, secondary_dir));
 
         vec3 indirect_contrib = indirectLighting(
             env, secondary_origin, secondary_dir,
@@ -714,10 +717,11 @@ void main()
 
         float indirect_illuminance =
             rgbToLuminance(indirect_contrib) * indirect_illuminance_weight;
-        pixel_illuminance += indirect_illuminance / SPP;
+        pixel_illuminance += 0.18f * indirect_illuminance / SPP;
     }
 
     if (!oob) {
+        //setOutput(base_out_offset, pixel_avg == vec3(0.f) ? vec3(0.f) : 0.18 * pixel_avg / vec3(pixel_illuminance), instance_id);
         setOutput(base_out_offset, pixel_avg, instance_id);
 
 #ifdef AUXILIARY_OUTPUTS
@@ -726,7 +730,7 @@ void main()
     }
 
 #ifdef TONEMAP
-    //setIlluminance(pixel_illuminance);
+    //setExposureIlluminance(pixel_illuminance, oob);
     setExposureIlluminance(rgbToLuminance(pixel_avg), oob);
 #endif
 
