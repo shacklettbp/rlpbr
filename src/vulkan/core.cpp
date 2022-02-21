@@ -471,9 +471,9 @@ DeviceState InstanceState::makeDevice(
     atomic_float_features.shaderSharedFloat32Atomics = true;
     atomic_float_features.shaderSharedFloat32AtomicAdd = true;
 
-    VkPhysicalDeviceSubgroupSizeControlFeatures subgroup_size_features {};
+    VkPhysicalDeviceSubgroupSizeControlFeaturesEXT subgroup_size_features {};
     subgroup_size_features.sType =
-        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_SIZE_CONTROL_FEATURES;
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_SIZE_CONTROL_FEATURES_EXT;
     subgroup_size_features.pNext = &atomic_float_features;
     subgroup_size_features.computeFullSubgroups = true;
 
