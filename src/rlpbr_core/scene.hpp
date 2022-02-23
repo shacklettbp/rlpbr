@@ -162,6 +162,7 @@ struct SceneLoadData {
     std::vector<MaterialTextures> textureIndices;
     EnvironmentInit envInit;
     PhysicsMetadata physics;
+    std::string scenePath;
 
     std::variant<std::ifstream, std::vector<char>> data;
 

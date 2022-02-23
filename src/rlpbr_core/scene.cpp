@@ -181,6 +181,7 @@ SceneLoadData SceneLoadData::loadFromDisk(string_view scene_path_name,
             move(dynamic_instances),
             move(dynamic_transforms),
         },
+        scene_path,
         load_full_file ? 
             variant<ifstream, vector<char>>(loadRemainingData()) :
             variant<ifstream, vector<char>>(move(scene_file)),

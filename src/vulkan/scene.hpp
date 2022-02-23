@@ -31,11 +31,16 @@ struct BLAS {
 
 struct BLASData {
 public:
+    BLASData(const DeviceState &dev, std::vector<BLAS> &&as,
+             LocalBuffer &&buf);
     BLASData(const BLASData &) = delete;
-    BLASData(BLASData &&) = default;
+    BLASData(BLASData &&o);
     ~BLASData();
 
-    const DeviceState &dev;
+    BLASData &operator=(const BLASData &) = delete;
+    BLASData &operator=(BLASData &&o);
+
+    const DeviceState *dev;
     std::vector<BLAS> accelStructs;
     LocalBuffer storage;
 };

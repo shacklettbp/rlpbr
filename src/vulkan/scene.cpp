@@ -578,19 +578,48 @@ static optional<StagedTextures> prepareSceneTextures(const DeviceState &dev,
     };
 }
 
-BLASData::~BLASData()
+BLASData::BLASData(const DeviceState &d, vector<BLAS> &&as,
+                   LocalBuffer &&buf)
+    : dev(&d),
+      accelStructs(move(as)),
+      storage(move(buf))
+{}
+
+BLASData::BLASData(BLASData &&o)
+    : dev(o.dev),
+      accelStructs(move(o.accelStructs)),
+      storage(move(o.storage))
+{}
+
+static void freeBLASes(const DeviceState &dev, const vector<BLAS> &blases)
 {
-    for (const auto &blas : accelStructs) {
+    for (const auto &blas : blases) {
         dev.dt.destroyAccelerationStructureKHR(dev.hdl, blas.hdl,
-                                               nullptr);
+                                                nullptr);
     }
 }
 
-static optional<tuple<BLASData, LocalBuffer, VkDeviceSize>> makeBLASes(
+BLASData &BLASData::operator=(BLASData &&o)
+{
+    freeBLASes(*dev, accelStructs);
+
+    dev = o.dev;
+    accelStructs = move(o.accelStructs);
+    storage = move(o.storage);
+
+    return *this;
+}
+
+BLASData::~BLASData()
+{
+    freeBLASes(*dev, accelStructs);
+}
+
+static optional<tuple<BLASData, LocalBuffer, VkDeviceSize, bool>> makeBLASes(
     const DeviceState &dev,
     MemoryAllocator &alloc, 
-    const std::vector<MeshInfo> &meshes,
-    const std::vector<ObjectInfo> &objects,
+    const vector<MeshInfo> &meshes,
+    const vector<ObjectInfo> &objects,
     uint32_t max_num_vertices,
     VkDeviceAddress vert_base,
     VkDeviceAddress index_base,
@@ -756,13 +785,39 @@ static optional<tuple<BLASData, LocalBuffer, VkDeviceSize>> makeBLASes(
         build_infos.size(), build_infos.data(), range_info_ptrs.data());
 
     return make_tuple(
-        BLASData {
-            dev,
-            move(accel_structs),
-            move(accel_mem),
-        },
+        BLASData(dev, move(accel_structs), move(accel_mem)),
         move(scratch_mem),
-        total_accel_bytes);
+        total_accel_bytes,
+        true);
+}
+
+static optional<tuple<BLASData, LocalBuffer, VkDeviceSize, bool>> getBLASes(
+    const DeviceState &dev,
+    MemoryAllocator &alloc, 
+    const string_view blas_path,
+    const vector<MeshInfo> &meshes,
+    const vector<ObjectInfo> &objects,
+    uint32_t max_num_vertices,
+    VkDeviceAddress vert_base,
+    VkDeviceAddress index_base,
+    VkCommandBuffer build_cmd)
+{
+    optional<tuple<BLASData, LocalBuffer, VkDeviceSize, bool>> blas_data;
+
+    if (filesystem::exists(blas_path)) {
+    }
+
+    if (!blas_data.has_value()) {
+        blas_data = makeBLASes(dev, alloc, meshes, objects,
+                               max_num_vertices, vert_base,
+                               index_base, build_cmd);
+    }
+
+    return blas_data;
+}
+
+static void cacheBLASes(string_view blas_path, const BLASData &blas_data)
+{
 }
 
 void TLAS::build(const DeviceState &dev,
@@ -1193,13 +1248,17 @@ shared_ptr<Scene> VulkanLoader::loadScene(SceneLoadData &&load_info)
     VkDeviceAddress geometry_addr =
         dev.dt.getBufferDeviceAddress(dev.hdl, &addr_info);
 
-    auto blas_result = makeBLASes(dev, alloc, 
-                                  load_info.meshInfo,
-                                  load_info.objectInfo,
-                                  load_info.hdr.numVertices,
-                                  geometry_addr,
-                                  geometry_addr + load_info.hdr.indexOffset,
-                                  render_cmd_);
+    string blas_path =
+        filesystem::path(load_info.scenePath).replace_extension("blas_cache");
+
+    auto blas_result = getBLASes(dev, alloc,
+                                 blas_path,
+                                 load_info.meshInfo,
+                                 load_info.objectInfo,
+                                 load_info.hdr.numVertices,
+                                 geometry_addr,
+                                 geometry_addr + load_info.hdr.indexOffset,
+                                 render_cmd_);
 
     if (!blas_result.has_value()) {
         cerr <<
@@ -1207,7 +1266,7 @@ shared_ptr<Scene> VulkanLoader::loadScene(SceneLoadData &&load_info)
             << endl;
     }
 
-    auto [blases, scratch, total_blas_bytes] = move(*blas_result);
+    auto [blases, scratch, total_blas_bytes, cache_blas] = move(*blas_result);
 
     // Repurpose geometry_barrier for blas barrier
     geometry_barrier.srcAccessMask =
@@ -1242,6 +1301,10 @@ shared_ptr<Scene> VulkanLoader::loadScene(SceneLoadData &&load_info)
 
     waitForFenceInfinitely(dev, fence_);
     resetFence(dev, fence_);
+
+    if (cache_blas) {
+        cacheBLASes(blas_path, blases);
+    }
 
     // Set Layout
     // 0: Scene addresses uniform
