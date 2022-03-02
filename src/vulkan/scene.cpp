@@ -939,11 +939,18 @@ static optional<BLASBuildResults> loadCachedBLASes(
                    2 * VK_UUID_SIZE + sizeof(uint64_t), sizeof(uint64_t));
 
             cur_offset += serialized_bytes;
+            cur_offset = alignOffset(cur_offset, 256);
+
             total_deserialized_bytes += deserialized_bytes;
+            total_deserialized_bytes =
+                alignOffset(total_deserialized_bytes, 256);
         }
     }
 
     if (!version_match) {
+        cerr <<
+            "WARNING: cached BLAS found but version check failed - rebuilding\n"
+            << endl;
         return {};
     }
 
@@ -1011,7 +1018,9 @@ static optional<BLASBuildResults> loadCachedBLASes(
             build_cmd, &copy_info);
 
         serialized_offset += serialized_size;
+        serialized_offset = alignOffset(serialized_offset, 256);
         deserialized_offset += deserialized_size;
+        deserialized_offset = alignOffset(deserialized_offset, 256);
     }
 
     return BLASBuildResults {
@@ -1040,6 +1049,7 @@ static void cacheBLASes(const DeviceState &dev, MemoryAllocator &alloc,
     uint64_t total_serialized_bytes = 0;
     for (int i = 0; i < num_blases; i++) {
         total_serialized_bytes += blas_serialized_sizes[i];
+        total_serialized_bytes = alignOffset(total_serialized_bytes, 256);
     }
 
     HostBuffer serialized_buffer =
@@ -1071,6 +1081,7 @@ static void cacheBLASes(const DeviceState &dev, MemoryAllocator &alloc,
         dev.dt.cmdCopyAccelerationStructureToMemoryKHR(build_cmd, &copy_info);
 
         cur_offset += blas_serialized_sizes[i];
+        cur_offset = alignOffset(cur_offset, 256);
     }
 
     REQ_VK(dev.dt.endCommandBuffer(build_cmd));
@@ -1092,7 +1103,7 @@ static void cacheBLASes(const DeviceState &dev, MemoryAllocator &alloc,
 
     uint32_t num_blases_u32 = num_blases;
     cache_file.write((char *)&num_blases_u32, sizeof(uint32_t));
-    cache_file.write((char *)total_serialized_bytes, sizeof(uint64_t));
+    cache_file.write((char *)&total_serialized_bytes, sizeof(uint64_t));
     cache_file.write((char *)serialized_buffer.ptr, total_serialized_bytes);
 }
 
