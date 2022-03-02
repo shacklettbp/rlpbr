@@ -50,6 +50,8 @@ else()
     set(ENABLE_EDITOR OFF)
 endif()
 
+find_package(OpenImageIO QUIET)
+
 add_subdirectory(external)
 
 add_compile_definitions("RLPBR_DATA_DIR=${CMAKE_CURRENT_SOURCE_DIR}/data")

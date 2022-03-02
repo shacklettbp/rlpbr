@@ -101,7 +101,7 @@ static FramebufferConfig getFramebufferConfig(const RenderConfig &cfg)
 
     uint32_t output_bytes = 4 * sizeof(uint16_t) * pixels_per_batch;
     uint32_t normal_bytes = 3 * sizeof(uint16_t) * pixels_per_batch;
-    uint32_t albedo_bytes = 4 * sizeof(uint16_t) * pixels_per_batch;
+    uint32_t albedo_bytes = 3 * sizeof(uint16_t) * pixels_per_batch;
     uint32_t reservoir_bytes = sizeof(Reservoir) * pixels_per_batch;
 
     // FIXME: dedup this with the EXPOSURE_RES_X code

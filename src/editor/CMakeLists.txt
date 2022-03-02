@@ -82,3 +82,13 @@ target_link_libraries(stats PRIVATE
     rlpbr
     navmesh_utils
 )
+
+add_executable(datagen
+    datagen.cpp ../../bin/oiio_bridge.cpp
+)
+
+target_link_libraries(datagen PRIVATE
+    rlpbr
+    navmesh_utils
+    OpenImageIO
+)

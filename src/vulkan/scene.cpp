@@ -4,6 +4,8 @@
 #include "rlpbr_core/utils.hpp"
 #include "shader.hpp"
 #include "utils.hpp"
+#include "vulkan/core.hpp"
+#include "vulkan/memory.hpp"
 
 #include <glm/gtc/type_ptr.hpp>
 #include <glm/gtx/string_cast.hpp>
@@ -791,6 +793,156 @@ static optional<tuple<BLASData, LocalBuffer, VkDeviceSize, bool>> makeBLASes(
         true);
 }
 
+static optional<tuple<BLASData, LocalBuffer, VkDeviceSize, bool>>
+    loadCachedBLASes(
+        const DeviceState &dev, MemoryAllocator &alloc,
+        string_view blas_path,
+        VkCommandBuffer build_cmd, VkDeviceAddress vert_base,
+        VkDeviceAddress index_base)
+{
+    ifstream blases_file(filesystem::path(blas_path), ios::binary);
+
+    uint32_t num_blases;
+    blases_file.read((char *)&num_blases, sizeof(uint32_t));
+
+    bool version_match = true;
+    {
+        uint64_t num_version_bytes = num_blases * 2 * VK_UUID_SIZE;
+        unique_ptr<uint8_t[]> version_data(new uint8_t[num_version_bytes]);
+
+        blases_file.read((char *)version_data.get(), num_version_bytes);
+
+        for (int i = 0; i < (int)num_blases; i++) {
+            VkAccelerationStructureVersionInfoKHR blas_version;
+            blas_version.sType =
+                VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_VERSION_INFO_KHR;
+            blas_version.pNext = nullptr;
+            blas_version.pVersionData =
+                version_data.get() + i * 2 * VK_UUID_SIZE;
+
+            VkAccelerationStructureCompatibilityKHR compat_result;
+            dev.dt.getDeviceAccelerationStructureCompatibilityKHR(
+                dev.hdl, 
+                &blas_version,
+                &compat_result);
+
+            if (compat_result ==
+                VK_ACCELERATION_STRUCTURE_COMPATIBILITY_INCOMPATIBLE_KHR) {
+                version_match = false;
+                break;
+            }
+        }
+    }
+
+    if (!version_match) {
+        return {};
+    }
+
+    uint64_t serialized_bytes;
+    blases_file.read((char *)&serialized_bytes, sizeof(uint64_t));
+
+    HostBuffer staging_buf = alloc.makeHostBuffer(serialized_bytes, true);
+    blases_file.read((char *)staging_buf.ptr, serialized_bytes);
+    staging_buf.flush(dev);
+
+    optional<LocalBuffer> accel_buf_opt =
+        alloc.makeLocalBuffer(serialized_bytes, true);
+    LocalBuffer accel_buf = move(*accel_buf_opt);
+
+    VkBufferDeviceAddressInfo staging_addr_info;
+    staging_addr_info.sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO_KHR;
+    staging_addr_info.pNext = nullptr;
+    staging_addr_info.buffer = staging_buf.buffer;
+    VkDeviceAddress staging_addr =
+        dev.dt.getBufferDeviceAddress(dev.hdl, &staging_addr_info);
+
+    VkBufferDeviceAddressInfo dst_addr_info;
+    dst_addr_info.sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO_KHR;
+    dst_addr_info.pNext = nullptr;
+    dst_addr_info.buffer = accel_buf.buffer;
+    VkDeviceAddress dst_addr =
+        dev.dt.getBufferDeviceAddress(dev.hdl, &dst_addr_info);
+
+    uint64_t cur_offset = 0;
+    vector<BLAS> blases;
+    for (int i = 0; i < (int)num_blases; i++) {
+        uint64_t cur_size;
+        blases_file.read((char *)&cur_size, sizeof(uint64_t));
+
+        VkAccelerationStructureCreateInfoKHR as_info;
+        as_info.sType =
+            VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR;
+        as_info.pNext = nullptr;
+        as_info.createFlags = 0;
+        as_info.buffer = accel_buf.buffer;
+        as_info.offset = cur_offset;
+        as_info.size = cur_size;
+        as_info.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
+        as_info.deviceAddress = 0;
+
+        VkAccelerationStructureKHR blas_hdl;
+        REQ_VK(dev.dt.createAccelerationStructureKHR(
+                dev.hdl, &as_info, nullptr, &blas_hdl));
+
+        VkCopyMemoryToAccelerationStructureInfoKHR copy_info;
+        copy_info.sType =
+            VK_STRUCTURE_TYPE_COPY_MEMORY_TO_ACCELERATION_STRUCTURE_INFO_KHR;
+        copy_info.pNext = nullptr;
+        copy_info.src.deviceAddress = staging_addr + cur_offset;
+        copy_info.dst = blas_hdl;
+        copy_info.mode = VK_COPY_ACCELERATION_STRUCTURE_MODE_DESERIALIZE_KHR;
+
+        dev.dt.cmdCopyMemoryToAccelerationStructureKHR(
+            build_cmd, &copy_info);
+
+        cur_offset += cur_size;
+    }
+
+
+}
+
+static void cacheBLASes(const DeviceState &dev, MemoryAllocator &alloc,
+                        string_view blas_path, const BLASData &blas_data,
+                        VkCommandBuffer build_cmd)
+{
+    VkMemoryBarrier barrier;
+    barrier.srcAccessMask =
+        VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR;
+    barrier.dstAccessMask =
+        VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR;
+
+    dev.dt.cmdPipelineBarrier(
+        build_cmd,
+        VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
+        VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 
+        0,
+        1, &barrier,
+        0, nullptr,
+        0, nullptr);
+
+    DynArray<VkAccelerationStructureKHR> hdls(blas_data.accelStructs.size());
+
+    for (int i = 0; i < (int)hdls.size(); i++) {
+        hdls[i] = blas_data.accelStructs[i].hdl;
+    }
+
+    VkQueryPoolCreateInfo pool_info;
+    pool_info.sType = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO;
+    pool_info.pNext = nullptr;
+    pool_info.flags = 0;
+    pool_info.queryType = VK_QUERY_TYPE_ACCELERATION_STRUCTURE_COMPACTED_SIZE_KHR;
+    pool_info.queryCount = 1;
+    pool_info.pipelineStatistics = 0;
+
+    VkQueryPool query_pool;
+    REQ_VK(dev.dt.createQueryPool(dev.hdl, &pool_info, nullptr, &query_pool));
+
+    dev.dt.cmdWriteAccelerationStructuresPropertiesKHR(build_cmd,
+        hdls.size(), hdls.data(),
+        VK_QUERY_TYPE_ACCELERATION_STRUCTURE_COMPACTED_SIZE_KHR,
+        query_pool, 0);
+}
+
 static optional<tuple<BLASData, LocalBuffer, VkDeviceSize, bool>> getBLASes(
     const DeviceState &dev,
     MemoryAllocator &alloc, 
@@ -805,6 +957,9 @@ static optional<tuple<BLASData, LocalBuffer, VkDeviceSize, bool>> getBLASes(
     optional<tuple<BLASData, LocalBuffer, VkDeviceSize, bool>> blas_data;
 
     if (filesystem::exists(blas_path)) {
+        blas_data =
+            loadCachedBLASes(dev, alloc, blas_path
+                             build_cmd, vert_base, index_base);
     }
 
     if (!blas_data.has_value()) {
@@ -814,10 +969,6 @@ static optional<tuple<BLASData, LocalBuffer, VkDeviceSize, bool>> getBLASes(
     }
 
     return blas_data;
-}
-
-static void cacheBLASes(string_view blas_path, const BLASData &blas_data)
-{
 }
 
 void TLAS::build(const DeviceState &dev,

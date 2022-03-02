@@ -74,6 +74,8 @@ device:
 - vkCmdSetLineWidth
 - vkDeviceWaitIdle
 - vkGetDeviceProcAddr
+- vkCreateQueryPool
+- vkDestroyQueryPool
 - need_present:
     - vkCreateSwapchainKHR
     - vkGetSwapchainImagesKHR
@@ -86,6 +88,10 @@ device:
     - vkGetBufferDeviceAddress
     - vkCmdBuildAccelerationStructuresKHR
     - vkDestroyAccelerationStructureKHR
+    - vkGetDeviceAccelerationStructureCompatibilityKHR
+    - vkCmdCopyMemoryToAccelerationStructureKHR
+    - vkCmdCopyAccelerationStructureToMemoryKHR
+    - vkCmdWriteAccelerationStructuresPropertiesKHR
 
 instance:
 - vkEnumeratePhysicalDevices

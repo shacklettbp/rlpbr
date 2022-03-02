@@ -8,8 +8,6 @@ add_executable(singlebench
 )
 target_link_libraries(singlebench rlpbr)
 
-find_package(OpenImageIO QUIET)
-
 if (OpenImageIO_FOUND)
     add_executable(save_frame
         save_frame.cpp

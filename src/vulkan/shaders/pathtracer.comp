@@ -725,7 +725,7 @@ void main()
         setOutput(base_out_offset, pixel_avg, instance_id);
 
 #ifdef AUXILIARY_OUTPUTS
-        setAuxiliaries(base_aux_offset, aux_normal, aux_albedo);
+        setAuxiliaries(base_aux_offset, aux_albedo, aux_normal);
 #endif
     }
 
