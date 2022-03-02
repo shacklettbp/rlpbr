@@ -148,6 +148,24 @@ VulkanLoader::VulkanLoader(const DeviceState &d,
                    max_texture_resolution)
 {}
 
+static VkQueryPool makeQueryPool(const DeviceState &dev,
+                                 uint32_t max_num_queries,
+                                 VkQueryType query_type)
+{
+    VkQueryPoolCreateInfo pool_info;
+    pool_info.sType = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO;
+    pool_info.pNext = nullptr;
+    pool_info.flags = 0;
+    pool_info.queryType = query_type;
+    pool_info.queryCount = max_num_queries;
+    pool_info.pipelineStatistics = 0;
+
+    VkQueryPool query_pool;
+    REQ_VK(dev.dt.createQueryPool(dev.hdl, &pool_info, nullptr, &query_pool));
+
+    return query_pool;
+}
+
 VulkanLoader::VulkanLoader(const DeviceState &d,
                            MemoryAllocator &alc,
                            const QueueState &transfer_queue,
@@ -168,6 +186,11 @@ VulkanLoader::VulkanLoader(const DeviceState &d,
       render_cmd_(makeCmdBuffer(dev, render_cmd_pool_)),
       transfer_sema_(makeBinarySemaphore(dev)),
       fence_(makeFence(dev)),
+      max_queries_(256),
+      compacted_query_pool_(makeQueryPool(dev, max_queries_,
+          VK_QUERY_TYPE_ACCELERATION_STRUCTURE_COMPACTED_SIZE_KHR)),
+      serialized_query_pool_(makeQueryPool(dev, max_queries_,
+          VK_QUERY_TYPE_ACCELERATION_STRUCTURE_SERIALIZATION_SIZE_KHR)),
       render_qf_(render_qf),
       max_texture_resolution_(max_texture_resolution)
 {}
@@ -617,7 +640,79 @@ BLASData::~BLASData()
     freeBLASes(*dev, accelStructs);
 }
 
-static optional<tuple<BLASData, LocalBuffer, VkDeviceSize, bool>> makeBLASes(
+static DynArray<uint64_t> getBLASProperties(const DeviceState &dev,
+                                            const BLASData &blas_data,
+                                            VkCommandPool cmd_pool,
+                                            VkCommandBuffer query_cmd,
+                                            const QueueState &query_queue,
+                                            VkFence fence,
+                                            VkQueryPool query_pool,
+                                            uint32_t max_num_queries,
+                                            VkQueryType query_type)
+{
+    VkCommandBufferBeginInfo begin_info {};
+    begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+
+    DynArray<VkAccelerationStructureKHR> hdls(blas_data.accelStructs.size());
+
+    for (int i = 0; i < (int)hdls.size(); i++) {
+        hdls[i] = blas_data.accelStructs[i].hdl;
+    }
+    DynArray<uint64_t> blas_props(hdls.size());
+
+    for (int query_offset = 0; query_offset < (int)hdls.size();
+         query_offset += max_num_queries) {
+        uint32_t query_size =
+            min<uint32_t>(max_num_queries, hdls.size() - query_offset);
+
+        REQ_VK(dev.dt.resetCommandPool(dev.hdl, cmd_pool, 0));
+        REQ_VK(dev.dt.beginCommandBuffer(query_cmd, &begin_info));
+
+        dev.dt.cmdResetQueryPool(query_cmd, query_pool,
+                                 0, query_size);
+
+        dev.dt.cmdWriteAccelerationStructuresPropertiesKHR(query_cmd,
+            query_size, hdls.data() + query_offset,
+            query_type,
+            query_pool, 0);
+
+        REQ_VK(dev.dt.endCommandBuffer(query_cmd));
+
+        VkSubmitInfo query_submit {};
+        query_submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+        query_submit.waitSemaphoreCount = 0;
+        query_submit.pWaitSemaphores = nullptr;
+        query_submit.pWaitDstStageMask = nullptr;
+        query_submit.commandBufferCount = 1;
+        query_submit.pCommandBuffers = &query_cmd;
+
+        query_queue.submit(dev, 1, &query_submit, fence);
+
+        waitForFenceInfinitely(dev, fence);
+        resetFence(dev, fence);
+
+        REQ_VK(dev.dt.getQueryPoolResults(dev.hdl,
+            query_pool,
+            0,
+            query_size,
+            sizeof(uint64_t) * query_size,
+            blas_props.data() + query_offset,
+            sizeof(uint64_t),
+            VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WAIT_BIT));
+    }
+
+    return blas_props;
+}
+
+struct BLASBuildResults {
+    BLASData blases;
+    optional<LocalBuffer> scratch;
+    optional<HostBuffer> staging;
+    VkDeviceSize totalBLASBytes;
+    bool needCache;
+};
+
+static optional<BLASBuildResults> makeBLASes(
     const DeviceState &dev,
     MemoryAllocator &alloc, 
     const vector<MeshInfo> &meshes,
@@ -786,39 +881,42 @@ static optional<tuple<BLASData, LocalBuffer, VkDeviceSize, bool>> makeBLASes(
     dev.dt.cmdBuildAccelerationStructuresKHR(build_cmd,
         build_infos.size(), build_infos.data(), range_info_ptrs.data());
 
-    return make_tuple(
+    return BLASBuildResults {
         BLASData(dev, move(accel_structs), move(accel_mem)),
         move(scratch_mem),
+        {},
         total_accel_bytes,
-        true);
+        true,
+    };
 }
 
-static optional<tuple<BLASData, LocalBuffer, VkDeviceSize, bool>>
-    loadCachedBLASes(
+static optional<BLASBuildResults> loadCachedBLASes(
         const DeviceState &dev, MemoryAllocator &alloc,
-        string_view blas_path,
-        VkCommandBuffer build_cmd, VkDeviceAddress vert_base,
-        VkDeviceAddress index_base)
+        string_view blas_path, VkCommandBuffer build_cmd)
 {
     ifstream blases_file(filesystem::path(blas_path), ios::binary);
 
     uint32_t num_blases;
     blases_file.read((char *)&num_blases, sizeof(uint32_t));
+    uint64_t total_serialized_bytes;
+    blases_file.read((char *)&total_serialized_bytes, sizeof(uint64_t));
+    HostBuffer staging_buf =
+        alloc.makeHostBuffer(total_serialized_bytes, true);
+    blases_file.read((char *)staging_buf.ptr, total_serialized_bytes);
+    staging_buf.flush(dev);
+
+    uint8_t *staging_ptr = (uint8_t *)staging_buf.ptr;
 
     bool version_match = true;
+    uint64_t total_deserialized_bytes = 0;
     {
-        uint64_t num_version_bytes = num_blases * 2 * VK_UUID_SIZE;
-        unique_ptr<uint8_t[]> version_data(new uint8_t[num_version_bytes]);
-
-        blases_file.read((char *)version_data.get(), num_version_bytes);
-
+        int64_t cur_offset = 0;
         for (int i = 0; i < (int)num_blases; i++) {
             VkAccelerationStructureVersionInfoKHR blas_version;
             blas_version.sType =
                 VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_VERSION_INFO_KHR;
             blas_version.pNext = nullptr;
-            blas_version.pVersionData =
-                version_data.get() + i * 2 * VK_UUID_SIZE;
+            blas_version.pVersionData = staging_ptr + cur_offset;
 
             VkAccelerationStructureCompatibilityKHR compat_result;
             dev.dt.getDeviceAccelerationStructureCompatibilityKHR(
@@ -831,6 +929,17 @@ static optional<tuple<BLASData, LocalBuffer, VkDeviceSize, bool>>
                 version_match = false;
                 break;
             }
+
+            uint64_t serialized_bytes;
+            memcpy(&serialized_bytes, staging_ptr + cur_offset +
+                   2 * VK_UUID_SIZE, sizeof(uint64_t));
+
+            uint64_t deserialized_bytes;
+            memcpy(&deserialized_bytes, staging_ptr + cur_offset +
+                   2 * VK_UUID_SIZE + sizeof(uint64_t), sizeof(uint64_t));
+
+            cur_offset += serialized_bytes;
+            total_deserialized_bytes += deserialized_bytes;
         }
     }
 
@@ -838,15 +947,8 @@ static optional<tuple<BLASData, LocalBuffer, VkDeviceSize, bool>>
         return {};
     }
 
-    uint64_t serialized_bytes;
-    blases_file.read((char *)&serialized_bytes, sizeof(uint64_t));
-
-    HostBuffer staging_buf = alloc.makeHostBuffer(serialized_bytes, true);
-    blases_file.read((char *)staging_buf.ptr, serialized_bytes);
-    staging_buf.flush(dev);
-
     optional<LocalBuffer> accel_buf_opt =
-        alloc.makeLocalBuffer(serialized_bytes, true);
+        alloc.makeLocalBuffer(total_deserialized_bytes, true);
     LocalBuffer accel_buf = move(*accel_buf_opt);
 
     VkBufferDeviceAddressInfo staging_addr_info;
@@ -856,18 +958,16 @@ static optional<tuple<BLASData, LocalBuffer, VkDeviceSize, bool>>
     VkDeviceAddress staging_addr =
         dev.dt.getBufferDeviceAddress(dev.hdl, &staging_addr_info);
 
-    VkBufferDeviceAddressInfo dst_addr_info;
-    dst_addr_info.sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO_KHR;
-    dst_addr_info.pNext = nullptr;
-    dst_addr_info.buffer = accel_buf.buffer;
-    VkDeviceAddress dst_addr =
-        dev.dt.getBufferDeviceAddress(dev.hdl, &dst_addr_info);
-
-    uint64_t cur_offset = 0;
+    uint64_t serialized_offset = 0;
+    uint64_t deserialized_offset = 0;
     vector<BLAS> blases;
     for (int i = 0; i < (int)num_blases; i++) {
-        uint64_t cur_size;
-        blases_file.read((char *)&cur_size, sizeof(uint64_t));
+        uint64_t serialized_size;
+        memcpy(&serialized_size, staging_ptr + serialized_offset +
+               2 * VK_UUID_SIZE, sizeof(uint64_t));
+        uint64_t deserialized_size;
+        memcpy(&deserialized_size, staging_ptr + serialized_offset +
+               2 * VK_UUID_SIZE + sizeof(uint64_t), sizeof(uint64_t));
 
         VkAccelerationStructureCreateInfoKHR as_info;
         as_info.sType =
@@ -875,8 +975,8 @@ static optional<tuple<BLASData, LocalBuffer, VkDeviceSize, bool>>
         as_info.pNext = nullptr;
         as_info.createFlags = 0;
         as_info.buffer = accel_buf.buffer;
-        as_info.offset = cur_offset;
-        as_info.size = cur_size;
+        as_info.offset = deserialized_offset;
+        as_info.size = deserialized_size;
         as_info.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
         as_info.deviceAddress = 0;
 
@@ -884,66 +984,119 @@ static optional<tuple<BLASData, LocalBuffer, VkDeviceSize, bool>>
         REQ_VK(dev.dt.createAccelerationStructureKHR(
                 dev.hdl, &as_info, nullptr, &blas_hdl));
 
+        VkAccelerationStructureDeviceAddressInfoKHR blas_addr_info;
+        blas_addr_info.sType =
+            VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_DEVICE_ADDRESS_INFO_KHR;
+        blas_addr_info.pNext = nullptr;
+        blas_addr_info.accelerationStructure = blas_hdl;
+
+        VkDeviceAddress blas_addr =
+            dev.dt.getAccelerationStructureDeviceAddressKHR(
+                dev.hdl, &blas_addr_info);
+
+        blases.push_back({
+            blas_hdl,
+            blas_addr,
+        });
+
         VkCopyMemoryToAccelerationStructureInfoKHR copy_info;
         copy_info.sType =
             VK_STRUCTURE_TYPE_COPY_MEMORY_TO_ACCELERATION_STRUCTURE_INFO_KHR;
         copy_info.pNext = nullptr;
-        copy_info.src.deviceAddress = staging_addr + cur_offset;
+        copy_info.src.deviceAddress = staging_addr + serialized_offset;
         copy_info.dst = blas_hdl;
         copy_info.mode = VK_COPY_ACCELERATION_STRUCTURE_MODE_DESERIALIZE_KHR;
 
         dev.dt.cmdCopyMemoryToAccelerationStructureKHR(
             build_cmd, &copy_info);
 
-        cur_offset += cur_size;
+        serialized_offset += serialized_size;
+        deserialized_offset += deserialized_size;
     }
 
-
+    return BLASBuildResults {
+        BLASData(dev, move(blases), move(accel_buf)),
+        {},
+        move(staging_buf),
+        total_deserialized_bytes,
+        false,
+    };
 }
 
 static void cacheBLASes(const DeviceState &dev, MemoryAllocator &alloc,
                         string_view blas_path, const BLASData &blas_data,
-                        VkCommandBuffer build_cmd)
+                        VkCommandPool cmd_pool, VkCommandBuffer build_cmd,
+                        const QueueState &build_queue, VkFence fence,
+                        VkQueryPool serialization_size_query_pool,
+                        uint32_t max_num_queries)
 {
-    VkMemoryBarrier barrier;
-    barrier.srcAccessMask =
-        VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR;
-    barrier.dstAccessMask =
-        VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR;
+    DynArray<uint64_t> blas_serialized_sizes = getBLASProperties(
+        dev, blas_data, cmd_pool, build_cmd, build_queue, fence,
+        serialization_size_query_pool, max_num_queries,
+        VK_QUERY_TYPE_ACCELERATION_STRUCTURE_SERIALIZATION_SIZE_KHR);
 
-    dev.dt.cmdPipelineBarrier(
-        build_cmd,
-        VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
-        VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 
-        0,
-        1, &barrier,
-        0, nullptr,
-        0, nullptr);
+    const int num_blases = blas_data.accelStructs.size();
 
-    DynArray<VkAccelerationStructureKHR> hdls(blas_data.accelStructs.size());
-
-    for (int i = 0; i < (int)hdls.size(); i++) {
-        hdls[i] = blas_data.accelStructs[i].hdl;
+    uint64_t total_serialized_bytes = 0;
+    for (int i = 0; i < num_blases; i++) {
+        total_serialized_bytes += blas_serialized_sizes[i];
     }
 
-    VkQueryPoolCreateInfo pool_info;
-    pool_info.sType = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO;
-    pool_info.pNext = nullptr;
-    pool_info.flags = 0;
-    pool_info.queryType = VK_QUERY_TYPE_ACCELERATION_STRUCTURE_COMPACTED_SIZE_KHR;
-    pool_info.queryCount = 1;
-    pool_info.pipelineStatistics = 0;
+    HostBuffer serialized_buffer =
+        alloc.makeHostBuffer(total_serialized_bytes, true);
 
-    VkQueryPool query_pool;
-    REQ_VK(dev.dt.createQueryPool(dev.hdl, &pool_info, nullptr, &query_pool));
+    VkBufferDeviceAddressInfo serialized_addr_info;
+    serialized_addr_info.sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO_KHR;
+    serialized_addr_info.pNext = nullptr;
+    serialized_addr_info.buffer = serialized_buffer.buffer;
+    VkDeviceAddress serialized_addr =
+        dev.dt.getBufferDeviceAddress(dev.hdl, &serialized_addr_info);
 
-    dev.dt.cmdWriteAccelerationStructuresPropertiesKHR(build_cmd,
-        hdls.size(), hdls.data(),
-        VK_QUERY_TYPE_ACCELERATION_STRUCTURE_COMPACTED_SIZE_KHR,
-        query_pool, 0);
+    VkCommandBufferBeginInfo begin_info {};
+    begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+
+    REQ_VK(dev.dt.resetCommandPool(dev.hdl, cmd_pool, 0));
+    REQ_VK(dev.dt.beginCommandBuffer(build_cmd, &begin_info));
+
+    int cur_offset = 0;
+    for (int i = 0; i < num_blases; i++) {
+        VkCopyAccelerationStructureToMemoryInfoKHR copy_info;
+        copy_info.sType =
+            VK_STRUCTURE_TYPE_COPY_ACCELERATION_STRUCTURE_TO_MEMORY_INFO_KHR;
+        copy_info.pNext = nullptr;
+        copy_info.src = blas_data.accelStructs[i].hdl;
+        copy_info.dst.deviceAddress = serialized_addr + cur_offset;
+        copy_info.mode = VK_COPY_ACCELERATION_STRUCTURE_MODE_SERIALIZE_KHR;
+
+        dev.dt.cmdCopyAccelerationStructureToMemoryKHR(build_cmd, &copy_info);
+
+        cur_offset += blas_serialized_sizes[i];
+    }
+
+    REQ_VK(dev.dt.endCommandBuffer(build_cmd));
+
+    VkSubmitInfo cache_submit {};
+    cache_submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    cache_submit.waitSemaphoreCount = 0;
+    cache_submit.pWaitSemaphores = nullptr;
+    cache_submit.pWaitDstStageMask = nullptr;
+    cache_submit.commandBufferCount = 1;
+    cache_submit.pCommandBuffers = &build_cmd;
+
+    build_queue.submit(dev, 1, &cache_submit, fence);
+
+    waitForFenceInfinitely(dev, fence);
+    resetFence(dev, fence);
+
+    ofstream cache_file(filesystem::path(blas_path), ios::binary);
+
+    uint32_t num_blases_u32 = num_blases;
+    cache_file.write((char *)&num_blases_u32, sizeof(uint32_t));
+    cache_file.write((char *)total_serialized_bytes, sizeof(uint64_t));
+    cache_file.write((char *)serialized_buffer.ptr, total_serialized_bytes);
 }
 
-static optional<tuple<BLASData, LocalBuffer, VkDeviceSize, bool>> getBLASes(
+static optional<BLASBuildResults> getBLASes(
     const DeviceState &dev,
     MemoryAllocator &alloc, 
     const string_view blas_path,
@@ -954,21 +1107,20 @@ static optional<tuple<BLASData, LocalBuffer, VkDeviceSize, bool>> getBLASes(
     VkDeviceAddress index_base,
     VkCommandBuffer build_cmd)
 {
-    optional<tuple<BLASData, LocalBuffer, VkDeviceSize, bool>> blas_data;
+    optional<BLASBuildResults> blas_results;
 
     if (filesystem::exists(blas_path)) {
-        blas_data =
-            loadCachedBLASes(dev, alloc, blas_path
-                             build_cmd, vert_base, index_base);
+        blas_results =
+            loadCachedBLASes(dev, alloc, blas_path, build_cmd);
     }
 
-    if (!blas_data.has_value()) {
-        blas_data = makeBLASes(dev, alloc, meshes, objects,
-                               max_num_vertices, vert_base,
-                               index_base, build_cmd);
+    if (!blas_results.has_value()) {
+        blas_results = makeBLASes(dev, alloc, meshes, objects,
+                                  max_num_vertices, vert_base,
+                                  index_base, build_cmd);
     }
 
-    return blas_data;
+    return blas_results;
 }
 
 void TLAS::build(const DeviceState &dev,
@@ -1417,13 +1569,15 @@ shared_ptr<Scene> VulkanLoader::loadScene(SceneLoadData &&load_info)
             << endl;
     }
 
-    auto [blases, scratch, total_blas_bytes, cache_blas] = move(*blas_result);
+    auto [blases, blas_scratch, blas_staging, total_blas_bytes, cache_blas] =
+        move(*blas_result);
 
     // Repurpose geometry_barrier for blas barrier
     geometry_barrier.srcAccessMask =
         VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR;
     geometry_barrier.dstAccessMask =
-        VK_ACCESS_SHADER_READ_BIT;
+        VK_ACCESS_SHADER_READ_BIT |
+        VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR;
     geometry_barrier.srcQueueFamilyIndex = render_qf_;
     geometry_barrier.dstQueueFamilyIndex = render_qf_;
     geometry_barrier.buffer = blases.storage.buffer;
@@ -1432,7 +1586,7 @@ shared_ptr<Scene> VulkanLoader::loadScene(SceneLoadData &&load_info)
 
     dev.dt.cmdPipelineBarrier(
         render_cmd_, VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
-        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 
+        VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 
         0, 0, nullptr,
         1, &geometry_barrier,
         0, nullptr);
@@ -1454,7 +1608,9 @@ shared_ptr<Scene> VulkanLoader::loadScene(SceneLoadData &&load_info)
     resetFence(dev, fence_);
 
     if (cache_blas) {
-        cacheBLASes(blas_path, blases);
+        cacheBLASes(dev, alloc, blas_path, blases, render_cmd_pool_,
+                    render_cmd_, render_queue_, fence_,
+                    serialized_query_pool_, max_queries_);
     }
 
     // Set Layout

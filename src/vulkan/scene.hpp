@@ -190,6 +190,10 @@ private:
     VkSemaphore transfer_sema_;
     VkFence fence_;
 
+    uint32_t max_queries_;
+    VkQueryPool compacted_query_pool_;
+    VkQueryPool serialized_query_pool_;
+
     uint32_t render_qf_;
     uint32_t max_texture_resolution_;
 };

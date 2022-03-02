@@ -76,6 +76,8 @@ device:
 - vkGetDeviceProcAddr
 - vkCreateQueryPool
 - vkDestroyQueryPool
+- vkGetQueryPoolResults
+- vkCmdResetQueryPool
 - need_present:
     - vkCreateSwapchainKHR
     - vkGetSwapchainImagesKHR
