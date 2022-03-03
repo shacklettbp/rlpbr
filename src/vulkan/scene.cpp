@@ -709,7 +709,7 @@ struct BLASBuildResults {
     optional<LocalBuffer> scratch;
     optional<HostBuffer> staging;
     VkDeviceSize totalBLASBytes;
-    bool needCache;
+    bool blasesRebuilt;
 };
 
 static optional<BLASBuildResults> makeBLASes(
@@ -782,7 +782,8 @@ static optional<BLASBuildResults> makeBLASes(
         build_info.pNext = nullptr;
         build_info.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
         build_info.flags =
-            VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
+            VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR |
+            VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_COMPACTION_BIT_KHR;
         build_info.mode =
             VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
         build_info.srcAccelerationStructure = VK_NULL_HANDLE;
@@ -1107,6 +1108,129 @@ static void cacheBLASes(const DeviceState &dev, MemoryAllocator &alloc,
     cache_file.write((char *)serialized_buffer.ptr, total_serialized_bytes);
 }
 
+static BLASData compactBLASes(const DeviceState &dev,
+                              MemoryAllocator &alloc,
+                              const BLASData &blases,
+                              VkCommandPool cmd_pool,
+                              VkCommandBuffer compact_cmd,
+                              const QueueState &compact_queue,
+                              VkFence fence,
+                              VkQueryPool compact_query_pool,
+                              uint32_t max_queries)
+{
+    DynArray<uint64_t> blas_compacted_sizes = getBLASProperties(
+        dev, blases, cmd_pool, compact_cmd, compact_queue, fence,
+        compact_query_pool, max_queries,
+        VK_QUERY_TYPE_ACCELERATION_STRUCTURE_COMPACTED_SIZE_KHR);
+
+    const int num_blases = blases.accelStructs.size();
+
+    uint64_t total_compacted_size = 0;
+    for (int i = 0; i < num_blases; i++) {
+        total_compacted_size += blas_compacted_sizes[i];
+        total_compacted_size = alignOffset(total_compacted_size, 256);
+    }
+
+    LocalBuffer compact_buffer =
+        *alloc.makeLocalBuffer(total_compacted_size, true);
+
+    VkCommandBufferBeginInfo begin_info {};
+    begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+
+    REQ_VK(dev.dt.resetCommandPool(dev.hdl, cmd_pool, 0));
+    REQ_VK(dev.dt.beginCommandBuffer(compact_cmd, &begin_info));
+
+    vector<BLAS> compacted_blases;
+    compacted_blases.reserve(num_blases);
+
+    uint64_t cur_offset = 0;
+    for (int i = 0; i < num_blases; i++) {
+        VkAccelerationStructureCreateInfoKHR create_info;
+        create_info.sType =
+            VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR;
+        create_info.pNext = nullptr;
+        create_info.createFlags = 0;
+        create_info.buffer = compact_buffer.buffer;
+        create_info.offset = cur_offset;
+        create_info.size = blas_compacted_sizes[i];
+        create_info.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
+        create_info.deviceAddress = 0;
+
+        VkAccelerationStructureKHR blas;
+        dev.dt.createAccelerationStructureKHR(dev.hdl, &create_info, nullptr,
+                                              &blas);
+
+        VkAccelerationStructureDeviceAddressInfoKHR addr_info;
+        addr_info.sType =
+            VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_DEVICE_ADDRESS_INFO_KHR;
+        addr_info.pNext = nullptr;
+        addr_info.accelerationStructure = blas;
+
+        VkDeviceAddress dev_addr = 
+            dev.dt.getAccelerationStructureDeviceAddressKHR(dev.hdl, &addr_info);
+
+        compacted_blases.push_back({
+            blas,
+            dev_addr,
+        });
+
+        VkCopyAccelerationStructureInfoKHR copy_info;
+        copy_info.sType =
+            VK_STRUCTURE_TYPE_COPY_ACCELERATION_STRUCTURE_INFO_KHR;
+        copy_info.pNext = nullptr;
+        copy_info.src = blases.accelStructs[i].hdl;
+        copy_info.dst = blas;
+        copy_info.mode = VK_COPY_ACCELERATION_STRUCTURE_MODE_COMPACT_KHR;
+
+        dev.dt.cmdCopyAccelerationStructureKHR(compact_cmd, &copy_info);
+
+        cur_offset += blas_compacted_sizes[i];
+        cur_offset = alignOffset(cur_offset, 256);
+    }
+
+    VkBufferMemoryBarrier barrier;
+    barrier.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
+    barrier.pNext = nullptr;
+    barrier.srcAccessMask =
+        VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR;
+    barrier.dstAccessMask =
+        VK_ACCESS_SHADER_READ_BIT |
+        VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR;
+    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.buffer = compact_buffer.buffer;
+    barrier.offset = 0;
+    barrier.size = total_compacted_size;
+
+    dev.dt.cmdPipelineBarrier(
+        compact_cmd, VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
+        VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 
+        0, 0, nullptr,
+        1, &barrier,
+        0, nullptr);
+
+    REQ_VK(dev.dt.endCommandBuffer(compact_cmd));
+
+    VkSubmitInfo compact_submit {};
+    compact_submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    compact_submit.waitSemaphoreCount = 0;
+    compact_submit.pWaitSemaphores = nullptr;
+    compact_submit.pWaitDstStageMask = nullptr;
+    compact_submit.commandBufferCount = 1;
+    compact_submit.pCommandBuffers = &compact_cmd;
+
+    compact_queue.submit(dev, 1, &compact_submit, fence);
+
+    waitForFenceInfinitely(dev, fence);
+    resetFence(dev, fence);
+
+    return BLASData {
+        dev,
+        move(compacted_blases),
+        move(compact_buffer),
+    };
+}
+
 static optional<BLASBuildResults> getBLASes(
     const DeviceState &dev,
     MemoryAllocator &alloc, 
@@ -1129,6 +1253,29 @@ static optional<BLASBuildResults> getBLASes(
         blas_results = makeBLASes(dev, alloc, meshes, objects,
                                   max_num_vertices, vert_base,
                                   index_base, build_cmd);
+    }
+
+    if (blas_results.has_value()) {
+        VkBufferMemoryBarrier barrier;
+        barrier.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
+        barrier.pNext = nullptr;
+        barrier.srcAccessMask =
+            VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR;
+        barrier.dstAccessMask =
+            VK_ACCESS_SHADER_READ_BIT |
+            VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR;
+        barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.buffer = blas_results->blases.storage.buffer;
+        barrier.offset = 0;
+        barrier.size = blas_results->totalBLASBytes;
+
+        dev.dt.cmdPipelineBarrier(
+            build_cmd, VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
+            VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 
+            0, 0, nullptr,
+            1, &barrier,
+            0, nullptr);
     }
 
     return blas_results;
@@ -1580,27 +1727,9 @@ shared_ptr<Scene> VulkanLoader::loadScene(SceneLoadData &&load_info)
             << endl;
     }
 
-    auto [blases, blas_scratch, blas_staging, total_blas_bytes, cache_blas] =
+    auto [blases, blas_scratch, blas_staging, total_blas_bytes,
+          blases_rebuilt] =
         move(*blas_result);
-
-    // Repurpose geometry_barrier for blas barrier
-    geometry_barrier.srcAccessMask =
-        VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR;
-    geometry_barrier.dstAccessMask =
-        VK_ACCESS_SHADER_READ_BIT |
-        VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR;
-    geometry_barrier.srcQueueFamilyIndex = render_qf_;
-    geometry_barrier.dstQueueFamilyIndex = render_qf_;
-    geometry_barrier.buffer = blases.storage.buffer;
-    geometry_barrier.offset = 0;
-    geometry_barrier.size = total_blas_bytes;
-
-    dev.dt.cmdPipelineBarrier(
-        render_cmd_, VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
-        VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 
-        0, 0, nullptr,
-        1, &geometry_barrier,
-        0, nullptr);
 
     REQ_VK(dev.dt.endCommandBuffer(render_cmd_));
 
@@ -1618,7 +1747,15 @@ shared_ptr<Scene> VulkanLoader::loadScene(SceneLoadData &&load_info)
     waitForFenceInfinitely(dev, fence_);
     resetFence(dev, fence_);
 
-    if (cache_blas) {
+    // Free BLAS temporaries as early as possible
+    blas_scratch.reset();
+    blas_staging.reset();
+
+    if (blases_rebuilt) {
+        blases = compactBLASes(dev, alloc, blases, render_cmd_pool_,
+            render_cmd_, render_queue_, fence_,
+            compacted_query_pool_, max_queries_);
+
         cacheBLASes(dev, alloc, blas_path, blases, render_cmd_pool_,
                     render_cmd_, render_queue_, fence_,
                     serialized_query_pool_, max_queries_);

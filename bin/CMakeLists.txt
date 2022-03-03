@@ -8,6 +8,10 @@ add_executable(singlebench
 )
 target_link_libraries(singlebench rlpbr)
 
+add_executable(load_scene
+    load_scene.cpp)
+target_link_libraries(load_scene rlpbr)
+
 if (OpenImageIO_FOUND)
     add_executable(save_frame
         save_frame.cpp

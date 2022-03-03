@@ -91,6 +91,7 @@ device:
     - vkCmdBuildAccelerationStructuresKHR
     - vkDestroyAccelerationStructureKHR
     - vkGetDeviceAccelerationStructureCompatibilityKHR
+    - vkCmdCopyAccelerationStructureKHR
     - vkCmdCopyMemoryToAccelerationStructureKHR
     - vkCmdCopyAccelerationStructureToMemoryKHR
     - vkCmdWriteAccelerationStructuresPropertiesKHR
