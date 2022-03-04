@@ -190,6 +190,8 @@ LocalBuffer::LocalBuffer(LocalBuffer &&o)
 
 LocalBuffer & LocalBuffer::operator=(LocalBuffer &&o)
 {
+    deleter_(buffer);
+
     buffer = o.buffer;
     deleter_ = o.deleter_;
 

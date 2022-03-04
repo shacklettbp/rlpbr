@@ -1131,8 +1131,15 @@ static BLASData compactBLASes(const DeviceState &dev,
         total_compacted_size = alignOffset(total_compacted_size, 256);
     }
 
-    LocalBuffer compact_buffer =
-        *alloc.makeLocalBuffer(total_compacted_size, true);
+    auto compact_buffer_opt =
+        alloc.makeLocalBuffer(total_compacted_size, true);
+
+    if (!compact_buffer_opt.has_value()) {
+        cerr << "OOM while compacting BLAS\n" << endl;
+        fatalExit();
+    }
+
+    auto compact_buffer = move(*compact_buffer_opt);
 
     VkCommandBufferBeginInfo begin_info {};
     begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
@@ -1752,9 +1759,9 @@ shared_ptr<Scene> VulkanLoader::loadScene(SceneLoadData &&load_info)
     blas_staging.reset();
 
     if (blases_rebuilt) {
-        //blases = compactBLASes(dev, alloc, blases, render_cmd_pool_,
-        //    render_cmd_, render_queue_, fence_,
-        //    compacted_query_pool_, max_queries_);
+        blases = compactBLASes(dev, alloc, blases, render_cmd_pool_,
+            render_cmd_, render_queue_, fence_,
+            compacted_query_pool_, max_queries_);
 
         cacheBLASes(dev, alloc, blas_path, blases, render_cmd_pool_,
                     render_cmd_, render_queue_, fence_,
