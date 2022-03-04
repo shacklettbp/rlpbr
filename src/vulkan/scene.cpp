@@ -1752,9 +1752,9 @@ shared_ptr<Scene> VulkanLoader::loadScene(SceneLoadData &&load_info)
     blas_staging.reset();
 
     if (blases_rebuilt) {
-        blases = compactBLASes(dev, alloc, blases, render_cmd_pool_,
-            render_cmd_, render_queue_, fence_,
-            compacted_query_pool_, max_queries_);
+        //blases = compactBLASes(dev, alloc, blases, render_cmd_pool_,
+        //    render_cmd_, render_queue_, fence_,
+        //    compacted_query_pool_, max_queries_);
 
         cacheBLASes(dev, alloc, blas_path, blases, render_cmd_pool_,
                     render_cmd_, render_queue_, fence_,
