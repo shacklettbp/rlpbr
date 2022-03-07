@@ -122,8 +122,16 @@ int main(int argc, char *argv[]) {
             cout << scene_path << ": " << i << "/" << batches_per_env << endl;
             for (int env_idx = 0; env_idx < (int)batch_size; env_idx++) {
                 glm::vec3 pos = navmesh.getRandomPoint();
+
+                // Elevate
+                pos += glm::vec3(0, 1, 0);
+
                 float angle = rot_dist(mt) * 2.f * M_PI;
                 glm::quat rot = glm::angleAxis(angle, glm::vec3(0, 1, 0));
+
+                //batch.getEnvironment(env_idx).setCameraView(
+                //    pos, rot * glm::vec3(0, 0, 1), rot * glm::vec3(0, 1, 0),
+                //    rot * glm::vec3(1, 0, 0));
 
                 batch.getEnvironment(env_idx).setCameraView(
                     pos, glm::vec3(0, 0, 1), glm::vec3(0, 1, 0),

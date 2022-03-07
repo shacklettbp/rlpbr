@@ -220,13 +220,15 @@ void setAuxiliaries(uint32_t base_offset, vec3 albedo, vec3 normal)
     uint32_t normal_ab = packHalf2x16(normal.xy);
     uint32_t normal_cd = packHalf2x16(vec2(normal.z, 0));
 
-    albedoBuffer[nonuniformEXT(base_offset)] = uint16_t((albedo_ab >> 16) & 0xFFFF);
-    albedoBuffer[nonuniformEXT(base_offset) + 1] = uint16_t(albedo_ab & 0xFFFF);
-    albedoBuffer[nonuniformEXT(base_offset) + 2] = uint16_t((albedo_cd >> 16) & 0xFFFF);
+    albedoBuffer[nonuniformEXT(base_offset)] = uint16_t(albedo_ab & 0xFFFF);
+    albedoBuffer[nonuniformEXT(base_offset) + 1] =
+        uint16_t((albedo_ab >> 16) & 0xFFFF);
+    albedoBuffer[nonuniformEXT(base_offset) + 2] = uint16_t(albedo_cd & 0xFFFF);
 
-    normalBuffer[nonuniformEXT(base_offset)] = uint16_t((normal_ab >> 16) & 0xFFFF);
-    normalBuffer[nonuniformEXT(base_offset) + 1] = uint16_t(normal_ab & 0xFFFF);
-    normalBuffer[nonuniformEXT(base_offset) + 2] = uint16_t((normal_cd >> 16) & 0xFFFF);
+    normalBuffer[nonuniformEXT(base_offset)] = uint16_t(normal_ab & 0xFFFF);
+    normalBuffer[nonuniformEXT(base_offset) + 1] =
+        uint16_t((normal_ab >> 16) & 0xFFFF);
+    normalBuffer[nonuniformEXT(base_offset) + 2] = uint16_t(normal_cd & 0xFFFF);
 }
 #endif
 
