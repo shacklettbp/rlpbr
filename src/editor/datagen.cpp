@@ -115,9 +115,9 @@ int main(int argc, char *argv[]) {
     auto src_ptrs = getRendererPointers(src_renderer, src_batch);
     auto ref_ptrs = getRendererPointers(ref_renderer, ref_batch);
 
-    mt19937 mt(1292482335);
+    mt19937 mt(1792582337);
     uniform_real_distribution<float> rot_dist(0.f, 1.f);
-    srand(1292482335);
+    srand(1792582337);
 
     auto saveBatch = [num_pixels, batch_size, res, out_dir](
             const DataPointers &ptrs,
