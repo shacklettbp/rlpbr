@@ -465,7 +465,7 @@ PrimaryResult directLighting(in u32vec3 idx, in uint32_t linear_idx,
         // Not really correct, but what else would we use?
         result.illuminance = rgbToLuminance(result.vertState.radiance);
 #ifdef AUXILIARY_OUTPUTS
-        result.auxAlbedo = vec3(0);
+        result.auxAlbedo = result.vertState.radiance;
 #endif
         return result;
     }
@@ -690,7 +690,9 @@ void main()
                 dot(normalize(cam.up) * -1.f, primary_result.hitNormal),
                 dot(normalize(cam.view) * -1.f, primary_result.hitNormal));
             
-            view_normal = normalize(view_normal);
+            float view_normal_len = length(view_normal);
+            view_normal = view_normal_len > 0.f ?
+                view_normal / view_normal_len : view_normal;
     
             aux_normal += view_normal / SPP;
             aux_albedo += primary_result.auxAlbedo / SPP;

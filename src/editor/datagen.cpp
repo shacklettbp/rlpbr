@@ -90,13 +90,19 @@ int main(int argc, char *argv[]) {
         cudaMemcpy(normal_host, aux_outputs.normal, num_pixels * sizeof(half) * 3, cudaMemcpyDeviceToHost);
 
         for (int batch_idx = 0; batch_idx < (int)batch_size; batch_idx++) {
-            string color_name = out_dir + string(prefix) + "color_" + to_string(offset + batch_idx) + ".exr";
-            string albedo_name = out_dir + string(prefix) + "albedo_" + to_string(offset + batch_idx) + ".exr";
-            string normal_name = out_dir + string(prefix) + "normal_" + to_string(offset + batch_idx) + ".exr";
+            string color_name = out_dir + string(prefix) +
+                "color_" + to_string(offset + batch_idx) + ".exr";
+            string albedo_name = out_dir + string(prefix) +
+                "albedo_" + to_string(offset + batch_idx) + ".exr";
+            string normal_name = out_dir + string(prefix) +
+                "normal_" + to_string(offset + batch_idx) + ".exr";
 
-            saveHDR(color_name.c_str(), res, res, output_host + batch_idx * res * res * 3, true);
-            saveHDR(albedo_name.c_str(), res, res, albedo_host + batch_idx * res * res * 3, true);
-            saveHDR(normal_name.c_str(), res, res, normal_host + batch_idx * res * res * 3, true);
+            saveHDR(color_name.c_str(), res, res,
+                    output_host + batch_idx * res * res * 3, true);
+            saveHDR(albedo_name.c_str(), res, res,
+                    albedo_host + batch_idx * res * res * 3, true);
+            saveHDR(normal_name.c_str(), res, res,
+                    normal_host + batch_idx * res * res * 3, true);
         }
     };
 
@@ -127,15 +133,12 @@ int main(int argc, char *argv[]) {
                 pos += glm::vec3(0, 1, 0);
 
                 float angle = rot_dist(mt) * 2.f * M_PI;
-                glm::quat rot = glm::angleAxis(angle, glm::vec3(0, 1, 0));
-
-                //batch.getEnvironment(env_idx).setCameraView(
-                //    pos, rot * glm::vec3(0, 0, 1), rot * glm::vec3(0, 1, 0),
-                //    rot * glm::vec3(1, 0, 0));
+                auto rot = 
+                    glm::mat3(glm::angleAxis(angle, glm::vec3(0, 1, 0)));
 
                 batch.getEnvironment(env_idx).setCameraView(
-                    pos, glm::vec3(0, 0, 1), glm::vec3(0, 1, 0),
-                    glm::vec3(1, 0, 0));
+                    pos, rot * glm::vec3(0, 0, 1), rot * glm::vec3(0, 1, 0),
+                    rot * glm::vec3(-1, 0, 0));
             }
 
             renderer.render(batch);
