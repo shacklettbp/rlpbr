@@ -189,7 +189,6 @@ private:
     RenderPipelines pipelines_;
 
     DynArray<QueueState> transfer_queues_;
-    DynArray<QueueState> graphics_queues_;
     DynArray<QueueState> compute_queues_;
 
     BSDFPrecomputed bsdf_precomp_;

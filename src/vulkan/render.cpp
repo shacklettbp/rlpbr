@@ -1016,25 +1016,20 @@ static DynArray<QueueState> initTransferQueues(const RenderConfig &cfg,
     return queues;
 }
 
-static DynArray<QueueState> initGraphicsQueues(const DeviceState &dev)
-{
-    DynArray<QueueState> queues(dev.numGraphicsQueues);
-
-    for (int i = 0; i < (int)queues.size(); i++) {
-        new (&queues[i])
-            QueueState(makeQueue(dev, dev.gfxQF, i),
-                       i == (int)queues.size() - 1 ? true : false);
-    }
-
-    return queues;
-}
-
-static DynArray<QueueState> initComputeQueues(const DeviceState &dev)
+static DynArray<QueueState> initComputeQueues(const RenderConfig &cfg,
+                                              const DeviceState &dev)
 {
     DynArray<QueueState> queues(dev.numComputeQueues);
 
+    int num_transfer_compute_queues = max((int)dev.numComputeQueues - 2, 0);
+    bool loaders_shared = (int)cfg.numLoaders > num_transfer_compute_queues;
+
     for (int i = 0; i < (int)queues.size(); i++) {
-        new (&queues[i]) QueueState(makeQueue(dev, dev.computeQF, i), false);
+        bool shared = num_transfer_compute_queues == 0 ||
+            (i >= 2 && loaders_shared);
+
+        new (&queues[i]) QueueState(makeQueue(dev, dev.computeQF, i),
+                                    shared);
     }
 
     return queues;
@@ -1070,7 +1065,12 @@ static DeviceState makeDevice(const InstanceState &inst,
         PresentationState::deviceSupportCallback :
         nullptr;
 
-    return inst.makeDevice(getUUIDFromCudaID(cfg.gpuID), 1, 3, cfg.numLoaders,
+    uint32_t num_compute_queues = 2 + cfg.numLoaders;
+
+    return inst.makeDevice(getUUIDFromCudaID(cfg.gpuID),
+                           1,
+                           num_compute_queues, 
+                           cfg.numLoaders,
                            present_callback);
 }
 
@@ -1097,8 +1097,7 @@ VulkanBackend::VulkanBackend(const RenderConfig &cfg,
       render_state_(makeRenderState(dev, cfg, init_cfg)),
       pipelines_(makePipelines(dev, render_state_)),
       transfer_queues_(initTransferQueues(cfg, dev)),
-      graphics_queues_(initGraphicsQueues(dev)),
-      compute_queues_(initComputeQueues(dev)),
+      compute_queues_(initComputeQueues(cfg, dev)),
       bsdf_precomp_(loadPrecomputedTextures(dev, alloc, compute_queues_[0],
                     dev.computeQF)),
       launch_size_(getLaunchSize(cfg)),
@@ -1123,9 +1122,14 @@ LoaderImpl VulkanBackend::makeLoader()
     int loader_idx = num_loaders_.fetch_add(1, memory_order_acq_rel);
     assert(loader_idx < (int)cfg_.maxLoaders);
 
+    int num_transfer_compute_queues = max((int)compute_queues_.size() - 2, 0);
+
+    int compute_queue_idx = num_transfer_compute_queues == 0 ? 0 :
+        loader_idx % num_transfer_compute_queues + 2;
+
     auto loader = new VulkanLoader(
         dev, alloc, transfer_queues_[loader_idx % transfer_queues_.size()],
-        compute_queues_.back(), shared_scene_state_,
+        compute_queues_[compute_queue_idx], shared_scene_state_,
         dev.computeQF, cfg_.maxTextureResolution);
 
     return makeLoaderImpl<VulkanLoader>(loader);
