@@ -155,6 +155,7 @@ public:
         uint32_t maxTextureResolution;
         bool auxiliaryOutputs;
         bool tonemap;
+        bool enableRandomization;
     };
 
     VulkanBackend(const RenderConfig &cfg, bool validate);

@@ -80,6 +80,11 @@ vec3 quatRotate(vec4 quat, vec3 dir)
         2.f * scalar * cross(pure, dir);
 }
 
+vec3 quatInvRotate(vec4 quat, vec3 dir)
+{
+    return quatRotate(vec4(-quat.x, -quat.y, -quat.z, quat.w), dir);
+}
+
 vec2 dirToLatLong(vec3 dir)
 {
     vec3 n = normalize(dir);

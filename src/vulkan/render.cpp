@@ -1088,6 +1088,7 @@ VulkanBackend::VulkanBackend(const RenderConfig &cfg,
               cfg.maxTextureResolution,
           cfg.flags & RenderFlags::AuxiliaryOutputs,
           cfg.flags & RenderFlags::Tonemap,
+          cfg.flags & RenderFlags::Randomize,
       }),
       inst(makeInstance(init_cfg)),
       dev(makeDevice(inst, cfg, init_cfg)),
@@ -1115,8 +1116,6 @@ VulkanBackend::VulkanBackend(const RenderConfig &cfg,
     if (init_cfg.needPresent) {
         present_->forceTransition(dev, compute_queues_[0], dev.computeQF);
     }
-
-    srand(time(nullptr));
 }
 
 LoaderImpl VulkanBackend::makeLoader()
@@ -1140,9 +1139,14 @@ LoaderImpl VulkanBackend::makeLoader()
 EnvironmentImpl VulkanBackend::makeEnvironment(const shared_ptr<Scene> &scene,
                                                const Camera &cam)
 {
+    // FIXME: allow seeding, get rid of thread_local, need some kind of
+    // VulkanBackend thread context
+    static thread_local mt19937 rand_gen {random_device {}()};
+
     const VulkanScene &vk_scene = *static_cast<VulkanScene *>(scene.get());
     VulkanEnvironment *environment =
-        new VulkanEnvironment(dev, alloc, vk_scene, cam);
+        new VulkanEnvironment(dev, vk_scene, cam, rand_gen,
+                              cfg_.enableRandomization);
     return makeEnvironmentImpl<VulkanEnvironment>(environment);
 }
 
@@ -1305,12 +1309,26 @@ void VulkanBackend::render(RenderBatch &batch)
         light_offset += env_backend.lights.size();
 
         packed_env.tlasAddr = env_backend.tlas.tlasStorageDevAddr;
-        packed_env.reservoirGridAddr = env_backend.reservoirGrid.devAddr;
-        packed_env.domainRand.x = env_backend.domainRandomization.lightDir.x;
-        packed_env.domainRand.y = env_backend.domainRandomization.lightDir.y;
-        packed_env.domainRand.z = env_backend.domainRandomization.lightDir.z;
-        packed_env.domainRand.w =
-            env_backend.domainRandomization.roughnessOffset;
+        //packed_env.reservoirGridAddr = env_backend.reservoirGrid.devAddr;
+        packed_env.reservoirGridAddr = 0;
+
+        packed_env.envMapRotation.x =
+            env_backend.domainRandomization.envRotation.x;
+        packed_env.envMapRotation.y =
+            env_backend.domainRandomization.envRotation.y;
+        packed_env.envMapRotation.z =
+            env_backend.domainRandomization.envRotation.z;
+        packed_env.envMapRotation.w =
+            env_backend.domainRandomization.envRotation.w;
+
+        packed_env.lightFilterAndEnvIdx.x =
+            env_backend.domainRandomization.lightFilter.x;
+        packed_env.lightFilterAndEnvIdx.y =
+            env_backend.domainRandomization.lightFilter.y;
+        packed_env.lightFilterAndEnvIdx.z =
+            env_backend.domainRandomization.lightFilter.z;
+        packed_env.lightFilterAndEnvIdx.w =
+            glm::uintBitsToFloat(env_backend.domainRandomization.envMapIdx);
     }
 
     shared_scene_state_.lock.lock();

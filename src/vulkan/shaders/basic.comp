@@ -256,7 +256,9 @@ DirectResult directLighting(in u32vec3 idx, in Camera cam, in Camera prev_cam,
     DirectResult result;
     result.radiance = vec3(0.f);
     if (!primary_hit) {
-        result.radiance = evalEnvMap(env.baseTextureOffset, ray_dir);
+        result.radiance = evalEnvMap(env.baseTextureOffset,
+            quatInvRotate(env.envMapRotation, ray_dir)) *
+            env.lightFilter;
         result.illuminance = rgbToLuminance(result.radiance);
 #ifdef AUXILIARY_OUTPUTS
         result.auxNormal = vec3(0);
@@ -269,13 +271,6 @@ DirectResult directLighting(in u32vec3 idx, in Camera cam, in Camera prev_cam,
     result.instanceID = getHitInstance(primary_query);
 
     HitInfo hit = processHit(primary_query, env, ray_origin, ray_dir, ray_diff);
-    hit.material.roughness = clamp(
-        hit.material.roughness + env.roughnessOffset,
-        0.f, 1.f);
-
-    if (ISTHREAD0) {
-        debugPrintfEXT("%f\n", env.roughnessOffset);
-    }
 
 #ifdef AUXILIARY_OUTPUTS
     vec3 view_normal = vec3(
@@ -297,13 +292,15 @@ DirectResult directLighting(in u32vec3 idx, in Camera cam, in Camera prev_cam,
     vec2 prev_screen_pos = getScreenSpacePosition(prev_cam, hit.position);
     i32vec2 prev_pixel_coords = getPixelCoords(prev_screen_pos);
 
-    float ambient = 0.2;
+    vec3 ambient = vec3(0.2);
+    ambient *= env.lightFilter;
 
     result.radiance = hit.material.emittance + ambient * hit.material.rho;
     vec3 illuminance = hit.material.emittance + ambient;
 
-    //vec3 to_light = normalize(vec3(0.399129, 0.638264, -0.473601));
-    vec3 to_light = env.lightDir;
+    vec3 to_light = normalize(vec3(0.399129, 0.638264, -0.473601));
+    to_light = quatRotate(env.envMapRotation, to_light);
+
     vec3 light_irradiance = vec3(5.f);
 
     vec3 wi = normalize(worldToLocalIncoming(to_light, hit.tangentFrame));
@@ -314,6 +311,7 @@ DirectResult directLighting(in u32vec3 idx, in Camera cam, in Camera prev_cam,
     vec3 light_illuminance = max(light_irradiance * wi.z, 0);
 
     vec3 nee = bsdf_response * light_illuminance;
+    nee *= env.lightFilter; 
 
     result.radiance += nee;
 
@@ -365,7 +363,8 @@ void main()
     }
 
 #ifdef TONEMAP
-    setExposureIlluminance(result.illuminance, oob);
+    //setExposureIlluminance(result.illuminance, oob);
+    setExposureIlluminance(rgbToLuminance(result.radiance), oob);
 #endif
 
 #if 0

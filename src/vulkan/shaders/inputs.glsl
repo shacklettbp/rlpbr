@@ -50,8 +50,10 @@ struct Environment {
     uint32_t numLights;
     uint64_t tlasAddr;
     uint32_t baseTextureOffset;
-    vec3 lightDir;
-    float roughnessOffset;
+    // Domain Randomization
+    vec4 envMapRotation;
+    vec3 lightFilter;
+    uint32_t envMapIdx;
 };
 
 struct MeshInfo {

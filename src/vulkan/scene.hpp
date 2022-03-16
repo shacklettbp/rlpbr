@@ -9,6 +9,7 @@
 #include <optional>
 #include <string_view>
 #include <unordered_map>
+#include <random>
 
 #include "descriptors.hpp"
 #include "utils.hpp"
@@ -74,13 +75,17 @@ struct ReservoirGrid {
 };
 
 struct DomainRandomization {
-    glm::vec3 lightDir;
-    float roughnessOffset;
+    glm::quat envRotation;
+    glm::vec3 lightFilter;
+    uint32_t envMapIdx;
 };
 
 struct VulkanEnvironment : public EnvironmentBackend {
-    VulkanEnvironment(const DeviceState &dev, MemoryAllocator &alloc,
-                      const VulkanScene &scene, const Camera &cam);
+    VulkanEnvironment(const DeviceState &dev,
+                      const VulkanScene &scene,
+                      const Camera &cam,
+                      std::mt19937 &rand_gen,
+                      bool should_randomize);
     VulkanEnvironment(const VulkanEnvironment &) = delete;
     ~VulkanEnvironment();
 
@@ -93,7 +98,6 @@ struct VulkanEnvironment : public EnvironmentBackend {
     const DeviceState &dev;
     TLAS tlas;
 
-    ReservoirGrid reservoirGrid;
     Camera prevCam;
 
     DomainRandomization domainRandomization;

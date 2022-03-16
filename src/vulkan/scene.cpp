@@ -8,6 +8,7 @@
 #include "vulkan/memory.hpp"
 
 #include <glm/gtc/type_ptr.hpp>
+#include <glm/gtx/quaternion.hpp>
 #include <glm/gtx/string_cast.hpp>
 
 #include <cassert>
@@ -73,29 +74,53 @@ static ReservoirGrid makeReservoirGrid(
     };
 }
 
-DomainRandomization randomizeDomain()
+DomainRandomization randomizeDomain(mt19937 &rand_gen,
+                                    uint32_t num_env_maps,
+                                    bool enable_randomization)
 {
-    glm::vec3 dir (float(rand()) / float(RAND_MAX), 1, float(rand()) / float(RAND_MAX));
+    if (!enable_randomization) {
+        return DomainRandomization {
+            glm::quat(1, 0, 0, 0),
+            glm::vec3(1.f, 1.f, 1.f),
+            0,
+        };
+    }
 
-    float roughness_off = 0.5f * (float(rand() / float(RAND_MAX)) - 0.5f);
+    uniform_real_distribution<float> rand_dist(0, 1.f);
+
+    float env_angle = rand_dist(rand_gen) * 2.f * M_PI;
+
+    glm::quat env_rot = glm::angleAxis(env_angle, glm::vec3(0.f, 1.f, 0.f));
+
+    glm::vec3 light_filter(rand_dist(rand_gen),
+                           rand_dist(rand_gen),
+                           rand_dist(rand_gen));
+
+    light_filter = glm::normalize(light_filter);
+
+    // FIXME: Not very useful currently
+    light_filter = glm::vec3(1.f);
+
+    uniform_int_distribution<uint32_t> env_map_dist(0, num_env_maps - 1);
 
     return DomainRandomization {
-        glm::normalize(dir),
-        roughness_off,
+        env_rot,
+        light_filter,
+        env_map_dist(rand_gen),
     };
 }
 
 VulkanEnvironment::VulkanEnvironment(const DeviceState &d,
-                                     MemoryAllocator &alloc,
                                      const VulkanScene &scene,
-                                     const Camera &cam)
+                                     const Camera &cam,
+                                     mt19937 &rand_gen,
+                                     bool should_randomize)
     : EnvironmentBackend {},
       lights(),
       dev(d),
       tlas(),
-      reservoirGrid(makeReservoirGrid(dev, alloc, scene)),
       prevCam(cam),
-      domainRandomization(randomizeDomain())
+      domainRandomization(randomizeDomain(rand_gen, 1, should_randomize))
 {
     for (const LightProperties &light : scene.envInit.lights) {
         PackedLight packed;

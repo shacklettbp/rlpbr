@@ -19,6 +19,7 @@ enum class RenderFlags : uint32_t {
     ForceUniform = 1 << 1,
     Tonemap = 1 << 2,
     EnablePhysics = 1 << 4,
+    Randomize = 1 << 5,
 };
 
 struct RenderConfig {
