@@ -1156,7 +1156,8 @@ EnvironmentImpl VulkanBackend::makeEnvironment(const shared_ptr<Scene> &scene,
     const VulkanScene &vk_scene = *static_cast<VulkanScene *>(scene.get());
     VulkanEnvironment *environment =
         new VulkanEnvironment(dev, vk_scene, cam, rand_gen,
-                              cfg_.enableRandomization);
+                              cfg_.enableRandomization,
+                              cur_env_maps_->texData.textures.size() / 2);
     return makeEnvironmentImpl<VulkanEnvironment>(environment);
 }
 

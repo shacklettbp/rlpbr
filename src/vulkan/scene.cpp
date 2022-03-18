@@ -114,13 +114,15 @@ VulkanEnvironment::VulkanEnvironment(const DeviceState &d,
                                      const VulkanScene &scene,
                                      const Camera &cam,
                                      mt19937 &rand_gen,
-                                     bool should_randomize)
+                                     bool should_randomize,
+                                     uint32_t num_env_maps)
     : EnvironmentBackend {},
       lights(),
       dev(d),
       tlas(),
       prevCam(cam),
-      domainRandomization(randomizeDomain(rand_gen, 1, should_randomize))
+      domainRandomization(randomizeDomain(rand_gen, num_env_maps,
+                                          should_randomize))
 {
     for (const LightProperties &light : scene.envInit.lights) {
         PackedLight packed;

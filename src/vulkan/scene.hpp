@@ -85,7 +85,8 @@ struct VulkanEnvironment : public EnvironmentBackend {
                       const VulkanScene &scene,
                       const Camera &cam,
                       std::mt19937 &rand_gen,
-                      bool should_randomize);
+                      bool should_randomize,
+                      uint32_t num_env_maps);
     VulkanEnvironment(const VulkanEnvironment &) = delete;
     ~VulkanEnvironment();
 
