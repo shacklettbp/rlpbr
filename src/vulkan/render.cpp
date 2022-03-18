@@ -302,6 +302,12 @@ static RenderState makeRenderState(const DeviceState &dev,
                 VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT |
                 VK_DESCRIPTOR_BINDING_UPDATE_UNUSED_WHILE_PENDING_BIT,
             },
+            {
+                2, 0, VK_NULL_HANDLE,
+                VulkanConfig::max_env_maps * 2,
+                VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT |
+                VK_DESCRIPTOR_BINDING_UPDATE_UNUSED_WHILE_PENDING_BIT,
+            },
         },
         rt_defines,
         STRINGIFY(SHADER_DIR));
@@ -345,9 +351,10 @@ static RenderPipelines makePipelines(const DeviceState &dev,
     };
     // Layout configuration
 
-    array<VkDescriptorSetLayout, 2> desc_layouts {{
+    array<VkDescriptorSetLayout, 3> desc_layouts {{
         render_state.rt.getLayout(0),
         render_state.rt.getLayout(1),
+        render_state.rt.getLayout(2),
     }};
 
     VkPipelineLayoutCreateInfo pt_layout_info;
@@ -1106,6 +1113,7 @@ VulkanBackend::VulkanBackend(const RenderConfig &cfg,
       scene_pool_(render_state_.rt.makePool(1, 1)),
       shared_scene_state_(dev, scene_pool_, render_state_.rt.getLayout(1),
                           alloc),
+      env_maps_(nullptr),
       cur_queue_(0),
       frame_counter_(0),
       present_(init_cfg.needPresent ?
@@ -1131,6 +1139,7 @@ LoaderImpl VulkanBackend::makeLoader()
     auto loader = new VulkanLoader(
         dev, alloc, transfer_queues_[loader_idx % transfer_queues_.size()],
         compute_queues_[compute_queue_idx], shared_scene_state_,
+        DescriptorManager(dev, render_state_.rt, 2),
         dev.computeQF, cfg_.maxTextureResolution);
 
     return makeLoaderImpl<VulkanLoader>(loader);
@@ -1148,6 +1157,13 @@ EnvironmentImpl VulkanBackend::makeEnvironment(const shared_ptr<Scene> &scene,
         new VulkanEnvironment(dev, vk_scene, cam, rand_gen,
                               cfg_.enableRandomization);
     return makeEnvironmentImpl<VulkanEnvironment>(environment);
+}
+
+void VulkanBackend::setActiveEnvironmentMaps(
+    shared_ptr<EnvironmentMapGroup> env_maps)
+{
+    auto impl = static_pointer_cast<VulkanEnvMapGroup>(move(env_maps));
+    env_maps_ = move(impl);
 }
 
 RenderBatch::Handle VulkanBackend::makeRenderBatch()
@@ -1234,6 +1250,11 @@ void VulkanBackend::render(RenderBatch &batch)
     dev.dt.cmdBindDescriptorSets(render_cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
                                  pipelines_.rt.layout, 0, 1,
                                  &batch_state.rtSets[batch_backend.curBuffer],
+                                 0, nullptr);
+
+    dev.dt.cmdBindDescriptorSets(render_cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
+                                 pipelines_.rt.layout, 2, 1,
+                                 &env_maps_->descSet.hdl,
                                  0, nullptr);
 
     // TLAS build

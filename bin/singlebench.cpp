@@ -61,6 +61,9 @@ int main(int argc, char *argv[]) {
     auto loader = renderer.makeLoader();
     auto scene = loader.loadScene(argv[1]);
 
+    auto env_map = loader.loadEnvironmentMap(defaults::getEnvironmentMap());
+    renderer.setActiveEnvironmentMaps(move(env_map));
+
     vector<Environment> envs;
 
     RenderBatch batch = renderer.makeRenderBatch();

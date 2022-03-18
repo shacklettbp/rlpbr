@@ -1140,8 +1140,7 @@ processScene(const SceneDescription<VertexType, MaterialType> &orig_desc)
 }
 
 static MaterialMetadata stageMaterials(const vector<Material> &materials,
-                                       const string &texture_dir,
-                                       const string &env_map)
+                                       const string &texture_dir)
 {
     auto packNonlinearUnorm = [&](float v) {
         float s = sqrtf(v);
@@ -1305,7 +1304,6 @@ static MaterialMetadata stageMaterials(const vector<Material> &materials,
             move(transmission_textures),
             move(clearcoat_textures),
             move(aniso_textures),
-            env_map,
         },
         move(mat_params),
         move(tex_indices),
@@ -1494,8 +1492,7 @@ void ScenePreprocessor::dump(string_view out_path_name)
                   relative_path_str.size());
         out.put(0);
         
-        out.write(metadata.textureInfo.envMap.data(),
-                  metadata.textureInfo.envMap.size());
+        // FIXME: used to write environment map here, maintaining compatibility
         out.put(0);
 
         auto writeNameArray = [&](const auto &names) {
@@ -1650,10 +1647,9 @@ void ScenePreprocessor::dump(string_view out_path_name)
                            const AABB &bbox,
                            const auto &lights,
                            const auto &materials,
-                           const auto &env_map,
                            const auto &data_dir) {
         auto material_metadata =
-            stageMaterials(materials, data_dir, env_map);
+            stageMaterials(materials, data_dir);
 
         StagingHeader hdr = make_staging_header(geometry, material_metadata);
         write(hdr);
@@ -1676,8 +1672,7 @@ void ScenePreprocessor::dump(string_view out_path_name)
     // Header: magic
     write(uint32_t(0x55555555));
     write_scene(processed_geometry, processed_instances, default_bbox,
-                processed_lights, materials, scene_data_->desc.envMap,
-                scene_data_->dataDir);
+                processed_lights, materials, scene_data_->dataDir);
     out.close();
 }
 

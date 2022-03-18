@@ -31,6 +31,19 @@ shared_ptr<Scene> AssetLoader::loadScene(string_view scene_path)
     return backend_.loadScene(move(load_data));
 }
 
+
+shared_ptr<EnvironmentMapGroup> AssetLoader::loadEnvironmentMaps(
+    const char **paths, uint32_t num_maps)
+{
+    return backend_.loadEnvironmentMaps(paths, num_maps);
+}
+
+shared_ptr<EnvironmentMapGroup> AssetLoader::loadEnvironmentMap(
+    const char *env_paths)
+{
+    return loadEnvironmentMaps(&env_paths, 1);
+}
+
 static bool enableValidation()
 {
     char *enable_env = getenv("RLPBR_VALIDATE");
@@ -114,6 +127,12 @@ Environment Renderer::makeEnvironment(const std::shared_ptr<Scene> &scene,
                aspect_ratio == 0.f ? aspect_ratio_ : aspect_ratio);
 
     return Environment(backend_.makeEnvironment(scene, cam), scene, cam);
+}
+
+void Renderer::setActiveEnvironmentMaps(
+    shared_ptr<EnvironmentMapGroup> env_maps)
+{
+    return backend_.setActiveEnvironmentMaps(move(env_maps));
 }
 
 RenderBatch::RenderBatch(Handle &&backend, uint32_t batch_size)
@@ -254,15 +273,27 @@ shared_ptr<Scene> LoaderImpl::loadScene(SceneLoadData &&scene_data)
     return invoke(load_scene_ptr_, state_, move(scene_data));
 }
 
+shared_ptr<EnvironmentMapGroup> LoaderImpl::loadEnvironmentMaps(
+    const char **paths, uint32_t num_maps)
+{
+    return invoke(load_env_maps_ptr_, state_, paths, num_maps);
+}
+
 LoaderImpl RendererImpl::makeLoader()
 {
     return invoke(make_loader_ptr_, state_);
 }
 
 EnvironmentImpl RendererImpl::makeEnvironment(
-    const std::shared_ptr<Scene> &scene, const Camera &cam) const
+    const shared_ptr<Scene> &scene, const Camera &cam) const
 {
     return invoke(make_env_ptr_, state_, scene, cam);
+}
+
+void RendererImpl::setActiveEnvironmentMaps(
+    shared_ptr<EnvironmentMapGroup> env_maps)
+{
+    return invoke(set_env_maps_ptr_, state_, move(env_maps));
 }
 
 RenderBatch::Handle RendererImpl::makeRenderBatch() const
@@ -293,6 +324,17 @@ AuxiliaryOutputs RendererImpl::getAuxiliaryOutputs(RenderBatch &batch) const
 void BatchDeleter::operator()(BatchBackend *ptr) const
 {
     deletePtr(state, ptr);
+}
+
+namespace defaults {
+const char * getEnvironmentMap()
+{
+    static const char *default_path =
+        STRINGIFY(RLPBR_DATA_DIR) "/default_env.bpsenv";
+
+    return default_path;
+}
+
 }
 
 }

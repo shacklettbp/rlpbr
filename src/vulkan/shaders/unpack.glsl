@@ -42,7 +42,7 @@ void unpackEnv(in uint32_t batch_idx,
     env.numLights = data.w;
     env.tlasAddr = packed.tlasAddr;
 
-    const uint32_t textures_per_scene = 2 + MAX_MATERIALS *
+    const uint32_t textures_per_scene = MAX_MATERIALS *
         TextureConstantsTexturesPerMaterial;
     env.baseTextureOffset = env.sceneID * textures_per_scene;
 

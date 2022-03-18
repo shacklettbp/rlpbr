@@ -168,10 +168,12 @@ VulkanLoader::VulkanLoader(const DeviceState &d,
                            const QueueState &transfer_queue,
                            const QueueState &render_queue,
                            VkDescriptorSet scene_set,
+                           DescriptorManager &&env_map_pool,
                            uint32_t render_qf,
                            uint32_t max_texture_resolution)
     : VulkanLoader(d, alc, transfer_queue, render_queue, nullptr,
-                   scene_set, render_qf, max_texture_resolution)
+                   scene_set, move(env_map_pool), render_qf,
+                   max_texture_resolution)
 {}
 
 VulkanLoader::VulkanLoader(const DeviceState &d,
@@ -179,10 +181,12 @@ VulkanLoader::VulkanLoader(const DeviceState &d,
                            const QueueState &transfer_queue,
                            const QueueState &render_queue,
                            SharedSceneState &shared_scene_state,
+                           DescriptorManager &&env_map_pool,
                            uint32_t render_qf,
                            uint32_t max_texture_resolution)
     : VulkanLoader(d, alc, transfer_queue, render_queue, &shared_scene_state,
-                   shared_scene_state.descSet, render_qf,
+                   shared_scene_state.descSet,
+                   move(env_map_pool), render_qf,
                    max_texture_resolution)
 {}
 
@@ -210,6 +214,7 @@ VulkanLoader::VulkanLoader(const DeviceState &d,
                            const QueueState &render_queue,
                            SharedSceneState *shared_scene_state,
                            VkDescriptorSet scene_set,
+                           DescriptorManager &&env_map_pool,
                            uint32_t render_qf,
                            uint32_t max_texture_resolution)
     : dev(d),
@@ -218,6 +223,7 @@ VulkanLoader::VulkanLoader(const DeviceState &d,
       render_queue_(render_queue),
       shared_scene_state_(shared_scene_state),
       scene_set_(scene_set),
+      env_map_pool_(move(env_map_pool)),
       transfer_cmd_pool_(makeCmdPool(d, d.transferQF)),
       transfer_cmd_(makeCmdBuffer(dev, transfer_cmd_pool_)),
       render_cmd_pool_(makeCmdPool(d, render_qf)),
@@ -425,8 +431,6 @@ struct StagedTextures {
     vector<uint32_t> transmission;
     vector<uint32_t> clearcoat;
     vector<uint32_t> anisotropic;
-    optional<uint32_t> envMap;
-    optional<uint32_t> importanceMap;
 };
 
 static optional<StagedTextures> prepareSceneTextures(const DeviceState &dev,
@@ -439,10 +443,6 @@ static optional<StagedTextures> prepareSceneTextures(const DeviceState &dev,
         texture_info.specular.size() + texture_info.normal.size() +
         texture_info.emittance.size() + texture_info.transmission.size() +
         texture_info.clearcoat.size() + texture_info.anisotropic.size();
-
-    if (!texture_info.envMap.empty()) {
-        num_textures += 2;
-    }
 
     if (num_textures == 0) {
         return optional<StagedTextures>();
@@ -530,28 +530,6 @@ static optional<StagedTextures> prepareSceneTextures(const DeviceState &dev,
     auto anisotropic_locs = stageTextureList(texture_info.anisotropic,
                                              twoCompUnorm);
 
-    optional<uint32_t> env_loc;
-    optional<uint32_t> env_importance_loc;
-
-    if (!texture_info.envMap.empty()) {
-        string env_path = texture_info.textureDir + texture_info.envMap;
-        auto [env_data, env_data_bytes, env_dims,
-              imp_data, imp_data_bytes, imp_dims] =
-            loadEnvironmentMapFromDisk(
-                env_path);
-
-        env_loc = stageTexture(env_data, env_data_bytes,
-                               env_dims.x, env_dims.y, env_dims.z,
-            alloc.getTextureFormat(TextureFormat::R32G32B32A32_SFLOAT),
-            getTexelBytes(TextureFormat::R32G32B32A32_SFLOAT));
-
-
-        env_importance_loc = stageTexture(imp_data, imp_data_bytes,
-                                          imp_dims.x, imp_dims.y, imp_dims.z,
-            alloc.getTextureFormat(TextureFormat::R32_SFLOAT),
-            getTexelBytes(TextureFormat::R32_SFLOAT));
-    }
-
     size_t num_device_bytes = cur_tex_offset;
 
     size_t num_staging_bytes = 0;
@@ -584,7 +562,6 @@ static optional<StagedTextures> prepareSceneTextures(const DeviceState &dev,
     }
 
     VkDeviceMemory tex_mem = tex_mem_opt.value();
-
 
     // Bind image memory and create views
     for (uint32_t i = 0; i < num_textures; i++) {
@@ -636,8 +613,6 @@ static optional<StagedTextures> prepareSceneTextures(const DeviceState &dev,
         move(transmission_locs),
         move(clearcoat_locs),
         move(anisotropic_locs),
-        move(env_loc),
-        move(env_importance_loc),
     };
 }
 
@@ -1812,30 +1787,13 @@ shared_ptr<Scene> VulkanLoader::loadScene(SceneLoadData &&load_info)
 
     DescriptorUpdates desc_updates(1);
     vector<VkDescriptorImageInfo> descriptor_views;
-    descriptor_views.reserve(load_info.hdr.numMaterials * 8 + 2);
+    descriptor_views.reserve(load_info.hdr.numMaterials * 8);
 
     VkDescriptorImageInfo null_img {
         VK_NULL_HANDLE,
         VK_NULL_HANDLE,
         VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
     };
-
-    if (staged_textures->envMap.has_value()) {
-        descriptor_views.push_back({
-            VK_NULL_HANDLE,
-            texture_views[staged_textures->envMap.value()],
-            VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-        });
-
-        descriptor_views.push_back({
-            VK_NULL_HANDLE,
-            texture_views[staged_textures->importanceMap.value()],
-            VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-        });
-    } else {
-        descriptor_views.push_back(null_img);
-        descriptor_views.push_back(null_img);
-    }
 
     for (int mat_idx = 0; mat_idx < (int)load_info.hdr.numMaterials;
          mat_idx++) {
@@ -1898,9 +1856,8 @@ shared_ptr<Scene> VulkanLoader::loadScene(SceneLoadData &&load_info)
     if (load_info.hdr.numMaterials > 0) {
         assert(load_info.hdr.numMaterials < VulkanConfig::max_materials);
 
-        uint32_t texture_offset = scene_id *
-            (2 + VulkanConfig::max_materials *
-             VulkanConfig::textures_per_material);
+        uint32_t texture_offset = scene_id * VulkanConfig::max_materials *
+             VulkanConfig::textures_per_material;
         desc_updates.textures(scene_set_,
                               descriptor_views.data(),
                               descriptor_views.size(), 1,
@@ -1935,6 +1892,330 @@ shared_ptr<Scene> VulkanLoader::loadScene(SceneLoadData &&load_info)
         move(scene_id_tracker),
         move(blases),
     });
+}
+
+shared_ptr<EnvironmentMapGroup> VulkanLoader::loadEnvironmentMaps(
+    const char **paths, uint32_t num_paths)
+{
+    vector<void *> host_ptrs;
+    vector<uint64_t> num_host_bytes;
+    vector<uint64_t> host_offsets;
+    vector<uint64_t> dev_offsets;
+    vector<LocalTexture> gpu_textures;
+    vector<VkImageView> views;
+    host_ptrs.reserve(num_paths * 2);
+    num_host_bytes.reserve(num_paths * 2);
+    host_offsets.reserve(num_paths * 2);
+    dev_offsets.reserve(num_paths * 2);
+    gpu_textures.reserve(num_paths * 2);
+    views.reserve(num_paths * 2);
+    
+    auto env_fmt = alloc.getTextureFormat(TextureFormat::R32G32B32A32_SFLOAT);
+    auto imp_fmt = alloc.getTextureFormat(TextureFormat::R32_SFLOAT);
+
+    auto env_texel_bytes = getTexelBytes(TextureFormat::R32G32B32A32_SFLOAT);
+    auto imp_texel_bytes = getTexelBytes(TextureFormat::R32_SFLOAT);
+
+    uint64_t cur_host_offset = 0;
+    uint64_t cur_dev_offset = 0;
+    for (int i = 0; i < (int)num_paths; i++) {
+        auto [env_data, env_data_bytes, env_dims,
+              imp_data, imp_data_bytes, imp_dims] =
+            loadEnvironmentMapFromDisk(paths[i]);
+
+        auto [env_gpu_tex, env_tex_reqs] = alloc.makeTexture2D(
+            env_dims.x, env_dims.y, env_dims.z, env_fmt);
+
+        auto [imp_gpu_tex, imp_tex_reqs] = alloc.makeTexture2D(
+            imp_dims.x, imp_dims.y, imp_dims.z, imp_fmt);
+
+        host_ptrs.push_back(env_data);
+        host_ptrs.push_back(imp_data);
+        num_host_bytes.push_back(env_data_bytes);
+        num_host_bytes.push_back(imp_data_bytes);
+        gpu_textures.emplace_back(move(env_gpu_tex));
+        gpu_textures.emplace_back(move(imp_gpu_tex));
+
+        cur_host_offset =
+            alignOffset(cur_host_offset, max(env_texel_bytes, 4u));
+        host_offsets.push_back(cur_host_offset);
+        cur_host_offset += env_data_bytes;
+
+        cur_host_offset =
+            alignOffset(cur_host_offset, max(imp_texel_bytes, 4u));
+        host_offsets.push_back(cur_host_offset);
+        cur_host_offset += imp_data_bytes;
+
+        cur_dev_offset = alignOffset(cur_dev_offset, env_tex_reqs.alignment);
+        dev_offsets.push_back(cur_dev_offset);
+        cur_dev_offset += env_tex_reqs.size;
+
+        cur_dev_offset = alignOffset(cur_dev_offset, imp_tex_reqs.alignment);
+        dev_offsets.push_back(cur_dev_offset);
+        cur_dev_offset += env_tex_reqs.size;
+    }
+
+    HostBuffer staging_buffer = alloc.makeStagingBuffer(cur_host_offset);
+
+    const uint64_t num_device_bytes = cur_dev_offset;
+
+    optional<VkDeviceMemory> tex_mem_opt = alloc.alloc(num_device_bytes);
+    if (!tex_mem_opt.has_value()) {
+        cerr << "Out of device memory for environment maps" << endl;
+        fatalExit();
+    }
+
+    VkDeviceMemory tex_mem = tex_mem_opt.value();
+
+    // Bind image memory and create views
+    for (int pair_idx = 0; pair_idx < (int)num_paths; pair_idx++) {
+        int env_idx = pair_idx * 2;
+        int imp_idx = env_idx + 1;
+        LocalTexture &env_texture = gpu_textures[env_idx];
+        VkDeviceSize env_offset = dev_offsets[env_idx];
+
+        REQ_VK(dev.dt.bindImageMemory(dev.hdl, env_texture.image,
+                                      tex_mem, env_offset));
+
+        LocalTexture &imp_texture = gpu_textures[imp_idx];
+        VkDeviceSize imp_offset = dev_offsets[imp_idx];
+
+        REQ_VK(dev.dt.bindImageMemory(dev.hdl, imp_texture.image,
+                                      tex_mem, imp_offset));
+
+        VkImageViewCreateInfo view_info;
+        view_info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+        view_info.pNext = nullptr;
+        view_info.flags = 0;
+        view_info.image = env_texture.image;
+        view_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        view_info.format = env_fmt;
+        view_info.components = {
+            VK_COMPONENT_SWIZZLE_R,
+            VK_COMPONENT_SWIZZLE_G,
+            VK_COMPONENT_SWIZZLE_B,
+            VK_COMPONENT_SWIZZLE_A,
+        };
+        view_info.subresourceRange = {
+            VK_IMAGE_ASPECT_COLOR_BIT,
+            0,
+            env_texture.mipLevels, 
+            0,
+            1,
+        };
+
+        VkImageView env_view;
+        REQ_VK(dev.dt.createImageView(dev.hdl, &view_info, nullptr,
+                                      &env_view));
+
+        views.push_back(env_view);
+
+        view_info.image = imp_texture.image;
+        view_info.format = imp_fmt;
+        view_info.subresourceRange.levelCount = imp_texture.mipLevels;
+
+        VkImageView imp_view;
+        REQ_VK(dev.dt.createImageView(dev.hdl, &view_info, nullptr,
+                                      &imp_view));
+
+        views.push_back(imp_view);
+    }
+
+    int num_textures = (int)views.size();
+
+    for (int i = 0; i < num_textures; i++) {
+        memcpy((char *)staging_buffer.ptr + host_offsets[i],
+               host_ptrs[i], num_host_bytes[i]);
+
+        free(host_ptrs[i]);
+    }
+
+    staging_buffer.flush(dev);
+
+    // Reset command buffers
+    REQ_VK(dev.dt.resetCommandPool(dev.hdl, transfer_cmd_pool_, 0));
+    REQ_VK(dev.dt.resetCommandPool(dev.hdl, render_cmd_pool_, 0));
+
+    // Start recording for transfer queue
+    VkCommandBufferBeginInfo begin_info {};
+    begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    REQ_VK(dev.dt.beginCommandBuffer(transfer_cmd_, &begin_info));
+
+    // Set initial texture layouts
+    DynArray<VkImageMemoryBarrier> texture_barriers(num_textures);
+    for (int i = 0; i < num_textures; i++) {
+        const LocalTexture &gpu_texture = gpu_textures[i];
+        VkImageMemoryBarrier &barrier = texture_barriers[i];
+
+        barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        barrier.pNext = nullptr;
+        barrier.srcAccessMask = 0;
+        barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.image = gpu_texture.image;
+        barrier.subresourceRange = {
+            VK_IMAGE_ASPECT_COLOR_BIT, 0, gpu_texture.mipLevels, 0, 1,
+        };
+    }
+
+    dev.dt.cmdPipelineBarrier(
+        transfer_cmd_, VK_PIPELINE_STAGE_TRANSFER_BIT,
+        VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr,
+        texture_barriers.size(), texture_barriers.data());
+
+    // Record cpu -> gpu copies
+    vector<VkBufferImageCopy> copy_infos;
+
+    auto recordCopy = [&](const LocalTexture &gpu_texture,
+                          uint64_t base_staging_offset,
+                          uint32_t texel_bytes) {
+        uint32_t base_width = gpu_texture.width;
+        uint32_t base_height = gpu_texture.height;
+        uint32_t num_levels = gpu_texture.mipLevels;
+        copy_infos.resize(num_levels);
+        uint32_t level_alignment = max(texel_bytes, 4u);
+
+        size_t cur_lvl_offset = base_staging_offset;
+
+        for (uint32_t level = 0; level < num_levels; level++) {
+            uint32_t level_div = 1 << level;
+            uint32_t level_width = max(1U, base_width / level_div);
+            uint32_t level_height = max(1U, base_height / level_div);
+
+            cur_lvl_offset = alignOffset(cur_lvl_offset,
+                                         level_alignment);
+
+            // Set level copy
+            VkBufferImageCopy copy_info {};
+            copy_info.bufferOffset = cur_lvl_offset;
+            copy_info.imageSubresource.aspectMask =
+                VK_IMAGE_ASPECT_COLOR_BIT;
+            copy_info.imageSubresource.mipLevel = level;
+            copy_info.imageSubresource.baseArrayLayer = 0;
+            copy_info.imageSubresource.layerCount = 1;
+            copy_info.imageExtent = {
+                level_width,
+                level_height,
+                1,
+            };
+
+            copy_infos[level] = copy_info;
+
+            cur_lvl_offset += level_width * level_height *
+                texel_bytes;
+        }
+
+        dev.dt.cmdCopyBufferToImage(
+            transfer_cmd_, staging_buffer.buffer,
+            gpu_texture.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+            copy_infos.size(), copy_infos.data());
+    };
+
+    for (int i = 0; i < (int)num_paths; i++) {
+        int env_idx = 2 * i;
+        int imp_idx = 2 * i + 1;
+        recordCopy(gpu_textures[env_idx], host_offsets[env_idx],
+                   env_texel_bytes);
+        recordCopy(gpu_textures[imp_idx], host_offsets[imp_idx],
+                   imp_texel_bytes);
+    }
+
+    // Transfer queue relinquish texture barriers
+    for (VkImageMemoryBarrier &barrier : texture_barriers) {
+        barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        barrier.dstAccessMask = 0;
+        barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        barrier.srcQueueFamilyIndex = dev.transferQF;
+        barrier.dstQueueFamilyIndex = render_qf_;
+    }
+
+    dev.dt.cmdPipelineBarrier(
+        transfer_cmd_, VK_PIPELINE_STAGE_TRANSFER_BIT,
+        VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr,
+        texture_barriers.size(), texture_barriers.data());
+
+    REQ_VK(dev.dt.endCommandBuffer(transfer_cmd_));
+
+    VkSubmitInfo copy_submit {};
+    copy_submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    copy_submit.waitSemaphoreCount = 0;
+    copy_submit.pWaitSemaphores = nullptr;
+    copy_submit.pWaitDstStageMask = nullptr;
+    copy_submit.commandBufferCount = 1;
+    copy_submit.pCommandBuffers = &transfer_cmd_;
+    copy_submit.signalSemaphoreCount = 1;
+    copy_submit.pSignalSemaphores = &transfer_sema_;
+
+    transfer_queue_.submit(dev, 1, &copy_submit, VK_NULL_HANDLE);
+
+    // Start recording for transferring to rendering queue
+    REQ_VK(dev.dt.beginCommandBuffer(render_cmd_, &begin_info));
+    for (VkImageMemoryBarrier &barrier : texture_barriers) {
+        barrier.srcAccessMask = 0;
+        barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        barrier.srcQueueFamilyIndex = dev.transferQF;
+        barrier.dstQueueFamilyIndex = render_qf_;
+    }
+
+    // Finish acquiring mips on render queue and transition layout
+    dev.dt.cmdPipelineBarrier(
+        render_cmd_, VK_PIPELINE_STAGE_TRANSFER_BIT,
+        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, nullptr, 0, nullptr,
+        texture_barriers.size(), texture_barriers.data());
+
+    REQ_VK(dev.dt.endCommandBuffer(render_cmd_));
+
+    VkSubmitInfo render_submit {};
+    render_submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    render_submit.waitSemaphoreCount = 1;
+    render_submit.pWaitSemaphores = &transfer_sema_;
+    VkPipelineStageFlags sema_wait_mask = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+    render_submit.pWaitDstStageMask = &sema_wait_mask;
+    render_submit.commandBufferCount = 1;
+    render_submit.pCommandBuffers = &render_cmd_;
+
+    render_queue_.submit(dev, 1, &render_submit, fence_);
+    waitForFenceInfinitely(dev, fence_);
+    resetFence(dev, fence_);
+
+    vector<VkDescriptorImageInfo> desc_views;
+    desc_views.reserve(views.size());
+
+    for (VkImageView view : views) {
+        desc_views.push_back({
+            VK_NULL_HANDLE,
+            view,
+            VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+        });
+    }
+
+    DescriptorSet desc_set = env_map_pool_.makeSet();
+
+    DescriptorUpdates desc_updates(1);
+
+    desc_updates.textures(desc_set.hdl,
+                          desc_views.data(),
+                          desc_views.size(), 0, 0);
+
+    desc_updates.update(dev);
+
+    auto hdl = std::shared_ptr<VulkanEnvMapGroup>(new VulkanEnvMapGroup {
+        {},
+        TextureData(dev, alloc),
+        move(desc_set),
+    });
+
+    hdl->texData.memory = tex_mem;
+    hdl->texData.textures = move(gpu_textures);
+    hdl->texData.views = move(views);
+
+    return hdl;
 }
 
 }

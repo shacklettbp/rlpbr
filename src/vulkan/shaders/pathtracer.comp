@@ -405,11 +405,11 @@ PathVertexState processPathVertex(inout Sampler rng, in Environment env,
     return result;
 }
 
-vec3 envMapMiss(uint32_t tex_offset, vec3 ray_dir, float bounce_pdf,
+vec3 envMapMiss(uint32_t map_idx, vec3 ray_dir, float bounce_pdf,
                 uint32_t bounce_flags, uint32_t num_lights,
                 bool mis_only)
 {
-    vec3 radiance = evalEnvMap(tex_offset, ray_dir);
+    vec3 radiance = evalEnvMap(map_idx, ray_dir);
 
     if (bool(bounce_flags & BSDFFlagsDelta)) {
 #ifdef USE_MIS
@@ -421,7 +421,7 @@ vec3 envMapMiss(uint32_t tex_offset, vec3 ray_dir, float bounce_pdf,
     }
 
 #ifdef USE_MIS
-    float light_pdf = envMapPDF(tex_offset, ray_dir, num_lights);
+    float light_pdf = envMapPDF(map_idx, ray_dir, num_lights);
     float mis_weight = misPowerHeuristic(1, bounce_pdf, 1, light_pdf);
 
     return radiance * mis_weight;
@@ -458,7 +458,7 @@ PrimaryResult directLighting(in u32vec3 idx, in uint32_t linear_idx,
     PrimaryResult result;
 
     if (!primary_hit) {
-        result.vertState.radiance = evalEnvMap(env.baseTextureOffset, ray_dir);
+        result.vertState.radiance = evalEnvMap(env.envMapIdx, ray_dir);
         result.vertState.bounceWeight = vec3(0);
         result.instanceID = 0xFFFF;
         result.hitNormal = vec3(0);
@@ -587,7 +587,7 @@ vec3 indirectLighting(in Environment env, in vec3 ray_origin, in vec3 ray_dir,
         // Miss, hit env map
         if (!shade_hit) {
             indirect_contrib += path_weight *
-                envMapMiss(env.baseTextureOffset, ray_dir,
+                envMapMiss(env.envMapIdx, ray_dir,
                            bounce_pdf, bounce_flags,
                            env.numLights + 1,
                            path_depth == MAX_DEPTH);

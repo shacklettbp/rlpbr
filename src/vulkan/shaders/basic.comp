@@ -122,6 +122,8 @@ layout (set = 1, binding = 0) readonly uniform Addrs {
 
 layout (set = 1, binding = 1) uniform texture2D textures[];
 
+layout (set = 2, binding = 0) uniform texture2D environmentMaps[];
+
 
 // This function needs to be defined before the include of 
 // materials.glsl
@@ -256,7 +258,7 @@ DirectResult directLighting(in u32vec3 idx, in Camera cam, in Camera prev_cam,
     DirectResult result;
     result.radiance = vec3(0.f);
     if (!primary_hit) {
-        result.radiance = evalEnvMap(env.baseTextureOffset,
+        result.radiance = evalEnvMap(env.envMapIdx,
             quatInvRotate(env.envMapRotation, ray_dir)) *
             env.lightFilter;
         result.illuminance = rgbToLuminance(result.radiance);

@@ -62,4 +62,8 @@ private:
     size_t n_;
 };
 
+namespace defaults {
+    const char * getEnvironmentMap();
+}
+
 }

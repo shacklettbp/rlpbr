@@ -83,13 +83,7 @@ HabitatJSON::Scene habitatJSONLoad(string_view scene_path_name)
                     color,
                 });
             } else if (type == LightType::Environment) {
-                if (!scene.envMap.empty()) {
-                    cerr << "Can only specify one environment map per scene" <<
-                        endl;
-                    abort();
-                }
-
-                scene.envMap = light["path"];
+                // ignore environment map
             }
         }
 
@@ -164,7 +158,6 @@ SceneDescription<VertexType, MaterialType> parseHabitatJSON(
 
     SceneDesc desc = parseGLTF<VertexType, MaterialType>(
             raw_scene.stagePath, base_txfm, texture_cb);
-    desc.envMap = raw_scene.envMap;
 
     unordered_map<string, uint32_t> loaded_gltfs;
 

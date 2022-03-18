@@ -67,8 +67,6 @@ struct SceneDescription {
     std::vector<InstanceProperties> defaultInstances;
     std::vector<LightProperties> defaultLights;
 
-    std::string envMap;
-
     static SceneDescription parseScene(std::string_view scene_path,
                                        const glm::mat4 &base_txfm,
                                        const TextureCallback &texture_cb);

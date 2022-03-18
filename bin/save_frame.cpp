@@ -98,6 +98,9 @@ int main(int argc, char *argv[]) {
     auto loader = renderer.makeLoader();
     auto scene = loader.loadScene(argv[1]);
 
+    auto env_map = loader.loadEnvironmentMap(defaults::getEnvironmentMap());
+    renderer.setActiveEnvironmentMaps(move(env_map));
+
     //glm::vec3 eye (-2.206948, 1.599559, -5.020905);
     //glm::vec3 look(-2.287329, 1.336111, -5.982229);
     //glm::vec3 up(0.011677, 0.964129, -0.265193);

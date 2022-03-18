@@ -67,10 +67,10 @@ SceneLoadData SceneLoadData::loadFromDisk(string_view scene_path_name,
     textures.textureDir = scene_dir / name_buffer.data();
     name_buffer.clear();
 
+    // FIXME: Environment map name. Stored but unused now
     do {
         name_buffer.push_back(scene_file.get());
     } while (name_buffer.back() != 0);
-    textures.envMap = name_buffer.data();
     name_buffer.clear();
 
     auto readTextureNames = [&]() {

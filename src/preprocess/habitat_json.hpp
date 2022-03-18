@@ -42,7 +42,6 @@ struct Scene {
     std::vector<AdditionalInstance> additionalInstances;
     std::vector<AdditionalObject> additionalObjects;
     std::vector<Light> lights;
-    std::string envMap;
 };
 
 }

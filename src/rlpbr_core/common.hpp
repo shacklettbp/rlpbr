@@ -26,7 +26,10 @@ template <typename LoaderType>
 LoaderImpl makeLoaderImpl(LoaderBackend *ptr)
 {
     return LoaderImpl(destroyLoader<LoaderType>,
-        static_cast<LoaderImpl::LoadSceneType>(&LoaderType::loadScene), ptr);
+        static_cast<LoaderImpl::LoadSceneType>(&LoaderType::loadScene),
+        static_cast<LoaderImpl::LoadEnvMapsType>(
+            &LoaderType::loadEnvironmentMaps),
+        ptr);
 }
 
 template <typename EnvType>
@@ -60,6 +63,8 @@ RendererImpl makeRendererImpl(RenderBackend *ptr)
             &RendererType::makeLoader),
         static_cast<RendererImpl::MakeEnvironmentType>(
             &RendererType::makeEnvironment),
+        static_cast<RendererImpl::SetEnvMapsType>(
+            &RendererType::setActiveEnvironmentMaps),
         static_cast<RendererImpl::MakeBatchType>(
             &RendererType::makeRenderBatch),
         static_cast<RendererImpl::RenderType>(

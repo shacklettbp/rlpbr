@@ -117,6 +117,11 @@ struct TextureData {
     std::vector<VkImageView> views;
 };
 
+struct VulkanEnvMapGroup : public EnvironmentMapGroup {
+    TextureData texData;
+    DescriptorSet descSet;
+};
+
 struct SharedSceneState {
     SharedSceneState(const DeviceState &dev,
                      VkDescriptorPool scene_pool,
@@ -163,6 +168,7 @@ public:
                  const QueueState &transfer_queue,
                  const QueueState &render_queue,
                  SharedSceneState &shared_scene_state,
+                 DescriptorManager &&env_map_pool,
                  uint32_t render_qf,
                  uint32_t max_texture_resolution);
 
@@ -171,10 +177,14 @@ public:
                  const QueueState &transfer_queue,
                  const QueueState &render_queue,
                  VkDescriptorSet scene_set,
+                 DescriptorManager &&env_map_pool,
                  uint32_t render_qf,
                  uint32_t max_texture_resolution);
 
     std::shared_ptr<Scene> loadScene(SceneLoadData &&load_info);
+
+    std::shared_ptr<EnvironmentMapGroup> loadEnvironmentMaps(
+        const char **paths, uint32_t num_paths);
 
 private:
     VulkanLoader(const DeviceState &dev,
@@ -183,6 +193,7 @@ private:
                  const QueueState &render_queue,
                  SharedSceneState *shared_scene_state,
                  VkDescriptorSet scene_set,
+                 DescriptorManager &&env_map_pool,
                  uint32_t render_qf,
                  uint32_t max_texture_resolution);
 
@@ -192,6 +203,8 @@ private:
     const QueueState &render_queue_;
     SharedSceneState *shared_scene_state_;
     VkDescriptorSet scene_set_;
+
+    DescriptorManager env_map_pool_;
 
     VkCommandPool transfer_cmd_pool_;
     VkCommandBuffer transfer_cmd_;

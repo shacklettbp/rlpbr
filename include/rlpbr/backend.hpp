@@ -1,6 +1,7 @@
 #pragma once
 
 #include <rlpbr/fwd.hpp>
+#include <rlpbr/utils.hpp>
 
 #include <glm/glm.hpp>
 
@@ -19,8 +20,8 @@ public:
     typedef void(EnvironmentBackend::*RemoveLightType)(uint32_t);
 
     EnvironmentImpl(DestroyType destroy_ptr, AddLightType add_light_ptr,
-                           RemoveLightType remove_light_ptr,
-                           EnvironmentBackend *state);
+                    RemoveLightType remove_light_ptr,
+                    EnvironmentBackend *state);
     EnvironmentImpl(const EnvironmentImpl &) = delete;
     EnvironmentImpl(EnvironmentImpl &&);
 
@@ -48,9 +49,11 @@ public:
     typedef void(*DestroyType)(LoaderBackend *);
     typedef std::shared_ptr<Scene>(LoaderBackend::*LoadSceneType)(
         SceneLoadData &&);
+    typedef std::shared_ptr<EnvironmentMapGroup>(LoaderBackend::*LoadEnvMapsType)(
+        const char **, uint32_t);
 
     LoaderImpl(DestroyType destroy_ptr, LoadSceneType load_scene_ptr,
-               LoaderBackend *state);
+               LoadEnvMapsType load_env_maps_ptr, LoaderBackend *state);
     LoaderImpl(const LoaderImpl &) = delete;
     LoaderImpl(LoaderImpl &&);
 
@@ -61,9 +64,13 @@ public:
 
     inline std::shared_ptr<Scene> loadScene(SceneLoadData &&scene_data);
 
+    inline std::shared_ptr<EnvironmentMapGroup> loadEnvironmentMaps(
+        const char **paths, uint32_t num_maps);
+
 private:
     DestroyType destroy_ptr_;
     LoadSceneType load_scene_ptr_;
+    LoadEnvMapsType load_env_maps_ptr_;
     LoaderBackend *state_;
 };
 
@@ -78,6 +85,8 @@ public:
     typedef LoaderImpl(RenderBackend::*MakeLoaderType)();
     typedef EnvironmentImpl(RenderBackend::*MakeEnvironmentType)(
         const std::shared_ptr<Scene> &, const Camera &);
+    typedef void(RenderBackend::*SetEnvMapsType)(
+        std::shared_ptr<EnvironmentMapGroup>);
     typedef std::unique_ptr<BatchBackend, BatchDeleter>(
         RenderBackend::*MakeBatchType)();
     typedef void(RenderBackend::*RenderType)(RenderBatch &batch);
@@ -87,7 +96,8 @@ public:
 
     RendererImpl(DestroyType destroy_ptr,
         MakeLoaderType make_loader_ptr, MakeEnvironmentType make_env_ptr,
-        MakeBatchType make_batch_ptr, RenderType render_ptr, WaitType wait_ptr,
+        SetEnvMapsType set_env_maps_ptr_, MakeBatchType make_batch_ptr,
+        RenderType render_ptr, WaitType wait_ptr,
         GetOutputType get_output_ptr, GetAuxType get_aux_ptr,
         RenderBackend *state);
     RendererImpl(const RendererImpl &) = delete;
@@ -103,6 +113,9 @@ public:
     inline EnvironmentImpl makeEnvironment(
         const std::shared_ptr<Scene> &scene, const Camera &) const;
 
+    inline void setActiveEnvironmentMaps(
+        std::shared_ptr<EnvironmentMapGroup> env_maps);
+
     inline void render(RenderBatch &batch);
     inline std::unique_ptr<BatchBackend, BatchDeleter> makeRenderBatch() const;
 
@@ -116,6 +129,7 @@ private:
     DestroyType destroy_ptr_;
     MakeLoaderType make_loader_ptr_;
     MakeEnvironmentType make_env_ptr_;
+    SetEnvMapsType set_env_maps_ptr_;
     MakeBatchType make_batch_ptr_;
     RenderType render_ptr_;
     WaitType wait_ptr_;

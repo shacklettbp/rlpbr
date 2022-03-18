@@ -164,6 +164,9 @@ public:
     EnvironmentImpl makeEnvironment(const std::shared_ptr<Scene> &scene,
                                     const Camera &cam);
 
+    void setActiveEnvironmentMaps(
+        std::shared_ptr<EnvironmentMapGroup> env_maps);
+
     RenderBatch::Handle makeRenderBatch();
 
     void render(RenderBatch &batch);
@@ -198,6 +201,7 @@ private:
     std::atomic_int num_loaders_;
     VkDescriptorPool scene_pool_;
     SharedSceneState shared_scene_state_;
+    std::shared_ptr<VulkanEnvMapGroup> env_maps_;
 
     uint32_t cur_queue_;
     uint32_t frame_counter_;

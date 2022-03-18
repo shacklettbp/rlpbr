@@ -368,7 +368,7 @@ HitInfo processHit(in rayQueryEXT ray_query, in Environment env,
     MaterialParams material_params =
         unpackMaterialParams(scene_addrs.matAddr, material_id);
 
-    uint32_t mat_texture_offset = env.baseTextureOffset + 2 +
+    uint32_t mat_texture_offset = env.baseTextureOffset +
         material_id * TextureConstantsTexturesPerMaterial;
 
     TangentFrame obj_tangent_frame =

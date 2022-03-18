@@ -5,6 +5,7 @@ namespace RLpbr {
 struct Camera;
 struct SceneLoadData;
 struct Scene;
+struct EnvironmentMapGroup;
 struct EnvironmentBackend;
 struct LoaderBackend;
 struct RenderBackend;

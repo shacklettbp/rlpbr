@@ -1035,7 +1035,6 @@ SceneDescription<VertexType, MaterialType> parseGLTF(
         move(materials),
         move(instances),
         {},
-        "",
     };
 }
 

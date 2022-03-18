@@ -17,6 +17,12 @@ public:
 
     std::shared_ptr<Scene> loadScene(std::string_view scene_path);
 
+    std::shared_ptr<EnvironmentMapGroup> loadEnvironmentMaps(
+            const char **paths, uint32_t num_maps);
+
+    std::shared_ptr<EnvironmentMapGroup> loadEnvironmentMap(
+            const char *env_path);
+
 private:
     LoaderImpl backend_;
 
@@ -45,6 +51,9 @@ public:
                                 const glm::vec3 &right,
                                 float vertical_fov = 90.f,
                                 float aspect_ratio = 0.f);
+
+    void setActiveEnvironmentMaps(
+        std::shared_ptr<EnvironmentMapGroup> env_maps);
 
     RenderBatch makeRenderBatch();
 

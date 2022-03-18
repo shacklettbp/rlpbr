@@ -127,7 +127,8 @@ vec3 evalEnvMap(uint32_t map_idx, vec3 dir)
     vec2 uv = dirToLatLong(dir);
 
     vec3 v =
-        textureLod(sampler2D(textures[map_idx], repeatSampler), uv, 0.0).xyz;
+        textureLod(sampler2D(environmentMaps[2 * map_idx], repeatSampler),
+                   uv, 0.0).xyz;
 
     return v;
 }
@@ -135,8 +136,10 @@ vec3 evalEnvMap(uint32_t map_idx, vec3 dir)
 LightSample sampleEnvMap(uint32_t map_idx,
     vec2 uv, float inv_selection_pdf)
 {
+    uint32_t imp_idx = 2 * map_idx + 1;
+
     int num_levels =
-        textureQueryLevels(sampler2D(textures[map_idx + 1], clampSampler));
+        textureQueryLevels(sampler2D(environmentMaps[imp_idx], clampSampler));
 
     ivec2 pos = ivec2(0);
 
@@ -144,13 +147,13 @@ LightSample sampleEnvMap(uint32_t map_idx,
         pos *= 2;
 
         vec4 w;
-        w.x = texelFetch(sampler2D(textures[map_idx + 1], clampSampler),
+        w.x = texelFetch(sampler2D(environmentMaps[imp_idx], clampSampler),
                          pos, level_idx).r;
-        w.y = texelFetch(sampler2D(textures[map_idx + 1], clampSampler),
+        w.y = texelFetch(sampler2D(environmentMaps[imp_idx], clampSampler),
                          pos + ivec2(1, 0), level_idx).r;
-        w.z = texelFetch(sampler2D(textures[map_idx + 1], clampSampler),
+        w.z = texelFetch(sampler2D(environmentMaps[imp_idx], clampSampler),
                          pos + ivec2(0, 1), level_idx).r;
-        w.w = texelFetch(sampler2D(textures[map_idx + 1], clampSampler),
+        w.w = texelFetch(sampler2D(environmentMaps[imp_idx], clampSampler),
                          pos + ivec2(1, 1), level_idx).r;
 
         vec2 q;
@@ -183,13 +186,13 @@ LightSample sampleEnvMap(uint32_t map_idx,
     }
 
     ivec2 dims =
-        textureSize(sampler2D(textures[map_idx + 1], clampSampler), 0);
+        textureSize(sampler2D(environmentMaps[imp_idx], clampSampler), 0);
 
     uv = (vec2(pos) + uv) / dims;
 
     vec3 dir = octSphereMap(uv);
 
-    float imp_pdf = textureLod(sampler2D(textures[map_idx + 1], clampSampler),
+    float imp_pdf = textureLod(sampler2D(environmentMaps[imp_idx], clampSampler),
                            uv, 0).r;
 
     vec3 radiance = evalEnvMap(map_idx, dir);
@@ -206,7 +209,8 @@ float envMapPDF(uint32_t map_idx, vec3 dir, float inv_selection_pdf)
 {
     vec2 uv = invOctSphereMap(dir);
 
-    float imp_pdf = textureLod(sampler2D(textures[map_idx + 1], clampSampler),
+    float imp_pdf = textureLod(sampler2D(environmentMaps[2 * map_idx + 1],
+                                         clampSampler),
                       uv, 0).r;
 
     return imp_pdf / (4.f * M_PI * inv_selection_pdf);

@@ -50,6 +50,8 @@ struct alignas(16) MaterialParams {
     glm::u16vec3 baseEmittance;
 };
 
+struct EnvironmentMapGroup {};
+
 enum class LightType : uint32_t {
     Sphere,
     Triangle,
@@ -117,7 +119,6 @@ struct TextureInfo {
     std::vector<std::string> transmission;
     std::vector<std::string> clearcoat;
     std::vector<std::string> anisotropic;
-    std::string envMap;
 };
 
 struct MaterialTextures {

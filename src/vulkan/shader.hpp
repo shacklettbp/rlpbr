@@ -36,6 +36,7 @@ namespace VulkanConfig {
 constexpr uint32_t max_materials = MAX_MATERIALS;
 constexpr uint32_t textures_per_material = 8;
 constexpr uint32_t max_scenes = MAX_SCENES;
+constexpr uint32_t max_env_maps = MAX_ENV_MAPS;
 constexpr uint32_t max_lights = MAX_LIGHTS;
 constexpr uint32_t max_instances = 10000000;
 constexpr uint32_t compute_workgroup_size = WORKGROUP_SIZE;

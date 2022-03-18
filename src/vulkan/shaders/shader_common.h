@@ -54,5 +54,6 @@ struct ReGIRCell {
 #define MAX_MATERIALS (2048)
 #define MAX_LIGHTS (1000000)
 #define MAX_SCENES (16)
+#define MAX_ENV_MAPS (32)
 
 #endif
