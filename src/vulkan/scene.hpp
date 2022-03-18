@@ -137,6 +137,20 @@ struct SharedSceneState {
     uint32_t numSceneIDs;
 };
 
+class SharedEnvMapState {
+public:
+    SharedEnvMapState(const DeviceState &dev,
+                      const ShaderPipeline &rt_shader, uint32_t env_set_id);
+    SharedEnvMapState(const SharedEnvMapState &) = delete;
+    SharedEnvMapState(SharedEnvMapState &&) = delete;
+
+    DescriptorSet getSet();
+private:
+
+    std::mutex lock_;
+    DescriptorManager desc_mgr_;
+};
+
 class SceneID {
 public:
     SceneID(SharedSceneState &shared);
@@ -168,7 +182,7 @@ public:
                  const QueueState &transfer_queue,
                  const QueueState &render_queue,
                  SharedSceneState &shared_scene_state,
-                 DescriptorManager &&env_map_pool,
+                 SharedEnvMapState *env_map_state,
                  uint32_t render_qf,
                  uint32_t max_texture_resolution);
 
@@ -177,7 +191,7 @@ public:
                  const QueueState &transfer_queue,
                  const QueueState &render_queue,
                  VkDescriptorSet scene_set,
-                 DescriptorManager &&env_map_pool,
+                 SharedEnvMapState *env_map_state,
                  uint32_t render_qf,
                  uint32_t max_texture_resolution);
 
@@ -193,7 +207,7 @@ private:
                  const QueueState &render_queue,
                  SharedSceneState *shared_scene_state,
                  VkDescriptorSet scene_set,
-                 DescriptorManager &&env_map_pool,
+                 SharedEnvMapState *env_map_state,
                  uint32_t render_qf,
                  uint32_t max_texture_resolution);
 
@@ -204,7 +218,7 @@ private:
     SharedSceneState *shared_scene_state_;
     VkDescriptorSet scene_set_;
 
-    DescriptorManager env_map_pool_;
+    SharedEnvMapState *env_map_state_;
 
     VkCommandPool transfer_cmd_pool_;
     VkCommandBuffer transfer_cmd_;

@@ -125,6 +125,8 @@ layout (set = 1, binding = 0) readonly uniform Addrs {
 
 layout (set = 1, binding = 1) uniform texture2D textures[];
 
+layout (set = 2, binding = 0) uniform texture2D environmentMaps[];
+
 // materials.glsl
 vec4 fetchSceneTexture(uint32_t idx, vec2 uv, TextureDerivatives tex_derivs)
 {

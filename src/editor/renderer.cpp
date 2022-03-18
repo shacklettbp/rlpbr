@@ -1085,11 +1085,7 @@ Renderer::Renderer(uint32_t gpu_id, uint32_t img_width, uint32_t img_height)
                                    default_pipeline_.shader.getLayout(1))),
       loader_(dev, alloc, transfer_wrapper_,
               render_transfer_wrapper_,
-              scene_set_,
-              // FIXME: super hacky, this desc manager will never be used
-              // by the editor since environment maps aren't used
-              DescriptorManager(dev, default_pipeline_.shader, 0),
-              dev.gfxQF, 128)
+              scene_set_, nullptr, dev.gfxQF, 128)
 {
     for (int i = 0; i < (int)frames_.size(); i++) {
         makeFrame(dev, alloc, fb_dims_, render_pass_,

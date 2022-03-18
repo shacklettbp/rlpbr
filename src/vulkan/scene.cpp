@@ -168,11 +168,11 @@ VulkanLoader::VulkanLoader(const DeviceState &d,
                            const QueueState &transfer_queue,
                            const QueueState &render_queue,
                            VkDescriptorSet scene_set,
-                           DescriptorManager &&env_map_pool,
+                           SharedEnvMapState *env_map_state,
                            uint32_t render_qf,
                            uint32_t max_texture_resolution)
     : VulkanLoader(d, alc, transfer_queue, render_queue, nullptr,
-                   scene_set, move(env_map_pool), render_qf,
+                   scene_set, env_map_state, render_qf,
                    max_texture_resolution)
 {}
 
@@ -181,12 +181,12 @@ VulkanLoader::VulkanLoader(const DeviceState &d,
                            const QueueState &transfer_queue,
                            const QueueState &render_queue,
                            SharedSceneState &shared_scene_state,
-                           DescriptorManager &&env_map_pool,
+                           SharedEnvMapState *env_map_state,
                            uint32_t render_qf,
                            uint32_t max_texture_resolution)
     : VulkanLoader(d, alc, transfer_queue, render_queue, &shared_scene_state,
                    shared_scene_state.descSet,
-                   move(env_map_pool), render_qf,
+                   env_map_state, render_qf,
                    max_texture_resolution)
 {}
 
@@ -214,7 +214,7 @@ VulkanLoader::VulkanLoader(const DeviceState &d,
                            const QueueState &render_queue,
                            SharedSceneState *shared_scene_state,
                            VkDescriptorSet scene_set,
-                           DescriptorManager &&env_map_pool,
+                           SharedEnvMapState *env_map_state,
                            uint32_t render_qf,
                            uint32_t max_texture_resolution)
     : dev(d),
@@ -223,7 +223,7 @@ VulkanLoader::VulkanLoader(const DeviceState &d,
       render_queue_(render_queue),
       shared_scene_state_(shared_scene_state),
       scene_set_(scene_set),
-      env_map_pool_(move(env_map_pool)),
+      env_map_state_(env_map_state),
       transfer_cmd_pool_(makeCmdPool(d, d.transferQF)),
       transfer_cmd_(makeCmdBuffer(dev, transfer_cmd_pool_)),
       render_cmd_pool_(makeCmdPool(d, render_qf)),
@@ -1485,6 +1485,21 @@ SharedSceneState::SharedSceneState(const DeviceState &dev,
       numSceneIDs(0)
 {}
 
+SharedEnvMapState::SharedEnvMapState(const DeviceState &dev,
+                                     const ShaderPipeline &shader,
+                                     uint32_t env_set_id)
+    : lock_(),
+      desc_mgr_(dev, shader, env_set_id)
+{
+}
+
+DescriptorSet SharedEnvMapState::getSet()
+{
+    lock_guard lck(lock_);
+
+    return desc_mgr_.makeSet();
+}
+
 SceneID::SceneID(SharedSceneState &shared)
     : shared_(&shared),
       id_([&]() {
@@ -2195,7 +2210,8 @@ shared_ptr<EnvironmentMapGroup> VulkanLoader::loadEnvironmentMaps(
         });
     }
 
-    DescriptorSet desc_set = env_map_pool_.makeSet();
+    
+    DescriptorSet desc_set = env_map_state_->getSet();
 
     DescriptorUpdates desc_updates(1);
 

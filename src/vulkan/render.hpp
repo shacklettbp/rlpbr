@@ -201,7 +201,8 @@ private:
     std::atomic_int num_loaders_;
     VkDescriptorPool scene_pool_;
     SharedSceneState shared_scene_state_;
-    std::shared_ptr<VulkanEnvMapGroup> env_maps_;
+    std::unique_ptr<SharedEnvMapState> env_map_state_;
+    std::shared_ptr<VulkanEnvMapGroup> cur_env_maps_;
 
     uint32_t cur_queue_;
     uint32_t frame_counter_;
