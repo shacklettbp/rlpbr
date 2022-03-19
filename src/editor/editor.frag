@@ -81,7 +81,7 @@ void main()
 {
     MaterialParams mat_params = unpackMaterialParams(0, iface.materialIndex);
     uint32_t base_texture_idx = 
-        2 + iface.materialIndex * TextureConstantsTexturesPerMaterial;
+        iface.materialIndex * TextureConstantsTexturesPerMaterial;
 
     TextureDerivatives tex_derivs;
     Material mat = processMaterial(mat_params, base_texture_idx,
