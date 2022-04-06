@@ -20,6 +20,7 @@ enum class RenderFlags : uint32_t {
     Tonemap = 1 << 2,
     EnablePhysics = 1 << 4,
     Randomize = 1 << 5,
+    AdaptiveSample = 1 << 6,
 };
 
 struct RenderConfig {

@@ -94,7 +94,6 @@ layout (set = 0, binding = 12, scalar) writeonly buffer PrevReservoirs {
     Reservoir prevReservoirs[];
 };
 
-
 layout (set = 0, binding = 13, scalar) writeonly buffer Out {
     uint32_t outputBuffer[];
 };
@@ -115,6 +114,18 @@ layout (set = 0, binding = 15, scalar) writeonly buffer Albedo {
 
 layout (set = 0, binding = 16, scalar) writeonly buffer TonemapIlluminance {
     float tonemapIlluminanceBuffer[];
+};
+
+#endif
+
+#ifdef ADAPTIVE_SAMPLING
+
+layout (set = 0, binding = 17, scalar) buffer InputTiles {
+    InputTile inputTiles[];
+};
+
+layout (set = 0, binding = 18, scalar) buffer AdaptiveTiles {
+    AdaptiveTile adaptiveTiles[];
 };
 
 #endif
@@ -150,6 +161,15 @@ u32vec4 fetchSceneMaterialParams(MatRef ref, uint32_t idx, uint32_t sub_idx)
 #include "geometry.glsl"
 #include "lighting.glsl"
 #include "camera.glsl"
+
+#if defined(TONEMAP) or defined(ADAPTIVE_SAMPLING)
+shared float workgroupScratch[NUM_SUBGROUPS];
+shared uint32_t workgroupCount;
+#endif
+
+#ifdef ADAPTIVE_SAMPLING
+shared float workgroupSum;
+#endif
 
 #ifdef TONEMAP
 #include "exposure_common.glsl"
@@ -620,21 +640,63 @@ vec3 indirectLighting(in Environment env, in vec3 ray_origin, in vec3 ray_dir,
     return indirect_contrib;
 }
 
+#ifdef ADAPTIVE_SAMPLING
+void adaptiveTileSpinlock(uint32_t tile_idx)
+{
+    bool loop = true;
+
+    while (loop) {
+        if (atomicCompSwap(adaptiveTiles[tile_idx].spinLock, 0, 1) == 0) {
+            memoryBarrier();
+            loop = false;
+        }
+    }
+}
+
+void adaptiveTileUnlock(uint32_t tile_idx)
+{
+    atomicExchange(adaptiveTiles[tile_idx].spinLock, 0);
+}
+#endif
+
 // Entry point
 
+#ifdef ADAPTIVE_SAMPLING
+// FIXME
+layout (local_size_x = LOCAL_WORKGROUP_Z,
+        local_size_y = LOCAL_WORKGROUP_X,
+        local_size_z = LOCAL_WORKGROUP_Y) in;
+#else
 layout (local_size_x = LOCAL_WORKGROUP_X,
         local_size_y = LOCAL_WORKGROUP_Y,
         local_size_z = LOCAL_WORKGROUP_Z) in;
+#endif
 void main()
 {
+#ifdef ADAPTIVE_SAMPLING
+    uint32_t input_tile_idx = gl_GlobalInvocationID.x;
+
+    u32vec2 input_tile_offset = gl_LocalInvocationID.yz;
+
+    InputTile input_tile = inputTiles[input_tile_idx];
+
+    u32vec3 idx = u32vec3(
+        input_tile.xOffset * LOCAL_WORKGROUP_X + input_tile_offset.x,
+        input_tile.yOffset * LOCAL_WORKGROUP_Y + input_tile_offset.y,
+        input_tile.batchIdx);
+
+    uint32_t tile_sample_offset = input_tile.sampleOffset;
+#else
+
     u32vec3 idx = gl_GlobalInvocationID.xyz;
+
+    // Lookup our location within the launch grid
+#endif
+    uint32_t batch_idx = idx.z;
 
     bool oob = idx.x >= RES_X || idx.y >= RES_Y;
     idx.x = min(idx.x, RES_X - 1);
     idx.y = min(idx.y, RES_Y - 1);
-
-    // Lookup our location within the launch grid
-    uint32_t batch_idx = idx.z;
 
     uint32_t linear_idx = batch_idx * RES_Y * RES_X + idx.y * RES_X + idx.x;
     uint32_t base_out_offset = 2 * linear_idx;
@@ -656,10 +718,16 @@ void main()
     vec3 aux_albedo = vec3(0);
 #endif
 
-#ifdef ONE_SAMPLE
+#ifdef ADAPTIVE_SAMPLING
+    [[dont_unroll]]
+    for (int32_t loop_sample_idx = 0; loop_sample_idx < 4; loop_sample_idx++) {
+        int32_t sample_idx = int32_t(tile_sample_offset) + loop_sample_idx;
+#else
+#ifndef ONE_SAMPLE
     [[dont_unroll]]
 #endif
     for (int32_t sample_idx = 0; sample_idx < SPP; sample_idx++) {
+#endif
         Sampler rng = makeSampler(idx.x, idx.y, sample_idx,
             push_const.baseFrameCounter + batch_idx);
 
@@ -726,6 +794,43 @@ void main()
         pixel_illuminance += 0.18f * indirect_illuminance / SPP;
     }
 
+    // Proper illuminance
+#ifdef TONEMAP
+    float workgroup_illuminance =
+        avgWorkgroupIlluminance(rgbToLuminance(pixel_avg), oob);
+#endif
+
+#ifdef ADAPTIVE_SAMPLING
+    uint32_t x_tile_idx = input_tile.xOffset;
+    uint32_t y_tile_idx = input_tile.yOffset;
+
+    uint32_t out_tile_idx = y_tile_idx * NUM_WORKGROUPS_X + x_tile_idx;
+
+    if (gl_SubgroupID == 0 && subgroupElect()) {
+        adaptiveTileSpinlock(out_tile_idx);
+
+        workgroupSum = 0.0;
+    }
+
+    barrier();
+
+    float subgroup_avg = subgroupAdd(pixel_avg) / subgroupAdd(oob ? 0u : 1u);
+
+    if (subgroupElect()) {
+        atomicAdd(workgroupSum, num_subgroup_inbounds)
+    }
+
+    barrier();
+    
+    uint32_t old_tile_count = adaptiveTiles[out_tile_idx].numSamples; 
+
+    if (gl_SubgroupID == 0 && subgroupElect()) {
+        adaptiveTiles[out_tile_idx].numSamples = old_tile_count + 1;
+    }
+
+#endif
+
+
     if (!oob) {
         //setOutput(base_out_offset, pixel_avg == vec3(0.f) ? vec3(0.f) : 0.18 * pixel_avg / vec3(pixel_illuminance), instance_id);
         setOutput(base_out_offset, pixel_avg, instance_id);
@@ -737,7 +842,12 @@ void main()
 
 #ifdef TONEMAP
     //setExposureIlluminance(pixel_illuminance, oob);
-    setExposureIlluminance(rgbToLuminance(pixel_avg), oob);
+    setExposureIlluminance(idx, workgroup_illuminance);
 #endif
 
+    barrier();
+
+    if (gl_SubgroupID == 0 && subgroupElect()) {
+        adaptiveTileUnlock(out_tile_idx);
+    }
 }

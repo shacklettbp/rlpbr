@@ -92,7 +92,8 @@ int main(int argc, char *argv[]) {
 
     Renderer renderer({0, 1, batch_size, out_dim.x, out_dim.y, spp, depth,
                        0, RenderMode::PathTracer,
-                       RenderFlags::AuxiliaryOutputs | RenderFlags::Tonemap,
+                       RenderFlags::AuxiliaryOutputs | RenderFlags::Tonemap |
+                           RenderFlags::AdaptiveSample,
                        0.f, BackendSelect::Vulkan});
 
     auto loader = renderer.makeLoader();
@@ -146,13 +147,19 @@ int main(int argc, char *argv[]) {
 #endif
 
     // 103997613_171030702 - easy texture bug example
-    //glm::vec3 eye(-7.150498, 1.390147, -5.932401);
-    //glm::vec3 look(-7.072584, 1.256431, -4.944434);
-    //glm::vec3 up(0.019160, 0.990987, 0.132613);
+    glm::vec3 eye(-7.150498, 1.390147, -5.932401);
+    glm::vec3 look(-7.072584, 1.256431, -4.944434);
+    glm::vec3 up(0.019160, 0.990987, 0.132613);
 
-    glm::vec3 eye(13.176077, 1.342774, -14.801639);
-    glm::vec3 look(14.168353, 1.330278, -14.925199);
-    glm::vec3 up(0.014370, 0.999804, 0.014288);
+#if 0
+    glm::vec3 eye(-7.216372, 1.212176, -5.725752);
+    glm::vec3 look(-7.125773, 1.173129, -4.730618);
+    glm::vec3 up(-0.008632, 0.999172, 0.039989);
+#endif
+
+    //glm::vec3 eye(1.442097, 1.555936, -3.697870);
+    //glm::vec3 look(0.515843, 1.410803, -4.045725);
+    //glm::vec3 up(-0.107063, 0.986192, -0.126372);
 
     // 108736737_177263406
     //glm::vec3 eye(0.724215, 1.477543, -10.388538);

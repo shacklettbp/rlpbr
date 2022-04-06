@@ -46,11 +46,15 @@ struct FramebufferConfig {
     uint32_t frameWidth;
     uint32_t frameHeight;
 
+    uint32_t tileWidth;
+    uint32_t tileHeight;
+
     uint32_t outputBytes;
     uint32_t normalBytes;
     uint32_t albedoBytes;
     uint32_t reservoirBytes;
     uint32_t illuminanceBytes;
+    uint32_t adaptiveBytes;
 };
 
 struct ParamBufferConfig {
@@ -76,6 +80,14 @@ struct FramebufferState {
 
     std::vector<LocalBuffer> reservoirs;
     std::vector<VkDeviceMemory> reservoirMemory;
+
+    std::optional<HostBuffer> adaptiveReadback;
+
+    int outputIdx;
+    int normalIdx;
+    int albedoIdx;
+    int illuminanceIdx;
+    int adaptiveIdx;
 };
 
 struct RenderState {
@@ -123,6 +135,8 @@ struct PerBatchState {
     uint32_t *materialPtr;
     PackedLight *lightPtr;
     PackedEnv *envPtr;
+    InputTile *tileInputPtr;
+    AdaptiveTile *adaptiveReadbackPtr;
 };
 
 struct BSDFPrecomputed {
@@ -140,7 +154,9 @@ struct BSDFPrecomputed {
 struct VulkanBatch : public BatchBackend {
     FramebufferState fb;
 
-    HostBuffer renderInputBuffer;
+    std::optional<HostBuffer> adaptiveInput;
+    HostBuffer renderInputStaging;
+    LocalBuffer renderInputDev;
     PerBatchState state;
 
     uint32_t curBuffer;
@@ -156,6 +172,7 @@ public:
         bool auxiliaryOutputs;
         bool tonemap;
         bool enableRandomization;
+        bool adaptiveSampling;
     };
 
     VulkanBackend(const RenderConfig &cfg, bool validate);

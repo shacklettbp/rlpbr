@@ -30,6 +30,8 @@ using Shader::PackedEnv;
 using Shader::SceneAddresses;
 using Shader::RTPushConstant;
 using Shader::Reservoir;
+using Shader::InputTile;
+using Shader::AdaptiveTile;
 
 namespace VulkanConfig {
 
@@ -38,6 +40,7 @@ constexpr uint32_t textures_per_material = 8;
 constexpr uint32_t max_scenes = MAX_SCENES;
 constexpr uint32_t max_env_maps = MAX_ENV_MAPS;
 constexpr uint32_t max_lights = MAX_LIGHTS;
+constexpr uint32_t max_tiles = MAX_TILES;
 constexpr uint32_t max_instances = 10000000;
 constexpr uint32_t compute_workgroup_size = WORKGROUP_SIZE;
 constexpr uint32_t localWorkgroupX = LOCAL_WORKGROUP_X;

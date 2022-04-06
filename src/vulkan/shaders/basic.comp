@@ -151,6 +151,9 @@ u32vec4 fetchSceneMaterialParams(MatRef ref, uint32_t idx, uint32_t sub_idx)
 #include "camera.glsl"
 
 #ifdef TONEMAP
+shared float workgroupScratch[NUM_SUBGROUPS];
+shared uint32_t workgroupCount;
+
 #include "exposure_common.glsl"
 #endif
 
@@ -365,8 +368,13 @@ void main()
     }
 
 #ifdef TONEMAP
-    //setExposureIlluminance(result.illuminance, oob);
-    setExposureIlluminance(rgbToLuminance(result.radiance), oob);
+    //float workgroup_illuminance =
+    //    avgWorkgroupIlluminance(result.illuminance, oob);
+
+    float workgroup_illuminance =
+        avgWorkgroupIlluminance(rgbToLuminance(result.radiance), oob);
+
+    setExposureIlluminance(idx, workgroup_illuminance);
 #endif
 
 #if 0

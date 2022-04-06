@@ -47,6 +47,20 @@ struct Reservoir {
     uint32_t pad;
 };
 
+struct InputTile {
+    uint32_t xOffset;
+    uint32_t yOffset;
+    uint32_t batchIdx;
+    uint32_t sampleOffset;
+};
+
+struct AdaptiveTile {
+    float tileMean;
+    float tileVariance;
+    uint32_t numSamples;
+    uint32_t spinLock;
+};
+
 struct ReGIRCell {
     Reservoir reservoirs[64];
 };
@@ -55,5 +69,6 @@ struct ReGIRCell {
 #define MAX_LIGHTS (1000000)
 #define MAX_SCENES (16)
 #define MAX_ENV_MAPS (32)
+#define MAX_TILES (524288)
 
 #endif

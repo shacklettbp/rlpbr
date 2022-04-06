@@ -39,7 +39,7 @@ static constexpr VkBufferUsageFlags indirectUsage =
     VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT;
 
 static constexpr VkBufferUsageFlags dedicatedUsage =
-    VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
+    VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
 
 static constexpr VkBufferUsageFlags rtGeometryUsage =
     VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR |

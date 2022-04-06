@@ -1,12 +1,10 @@
 #ifndef RLPBR_VK_SHADERS_EXPOSURE_COMMON_GLSL_INCLUDED
 #define RLPBR_VK_SHADERS_EXPOSURE_COMMON_GLSL_INCLUDED
 
-shared float illuminanceScratch[NUM_SUBGROUPS];
-shared uint32_t illuminanceCount;
-void setExposureIlluminance(float illuminance, bool oob)
+float avgWorkgroupIlluminance(float illuminance, bool oob)
 {
     if (gl_SubgroupID == 0 && subgroupElect()) {
-        illuminanceCount = 0;
+        workgroupCount = 0;
     }
 
     barrier();
@@ -20,31 +18,36 @@ void setExposureIlluminance(float illuminance, bool oob)
     if (subgroupElect()) {
         float subgroup_avg = 0.f;
         if (denom > 0.f) {
-            atomicAdd(illuminanceCount, 1);
+            atomicAdd(workgroupCount, 1);
             subgroup_avg = illuminance / denom;
         }
 
-        illuminanceScratch[gl_SubgroupID] = subgroup_avg;
+        workgroupScratch[gl_SubgroupID] = subgroup_avg;
     }
 
     barrier();
 
-    if (gl_SubgroupID != 0) return;
+    if (gl_SubgroupID == 0) {
+        float tmp = gl_SubgroupInvocationID < NUM_SUBGROUPS ?
+            workgroupScratch[gl_SubgroupInvocationID] : 0;
 
-    float tmp = gl_SubgroupInvocationID < NUM_SUBGROUPS ?
-        illuminanceScratch[gl_SubgroupInvocationID] : 0;
-
-    float full_avg = subgroupAdd(tmp) / float(illuminanceCount);
-
-    if (subgroupElect()) {
-        uint32_t linear_idx = gl_GlobalInvocationID.z *
-            EXPOSURE_RES_X * EXPOSURE_RES_Y +
-                gl_WorkGroupID.y * EXPOSURE_RES_X +
-                gl_WorkGroupID.x;
-
-        tonemapIlluminanceBuffer[linear_idx] = full_avg;
+        float full_avg = subgroupAdd(tmp) / float(workgroupCount);
+        return full_avg;
+    } else {
+        return 0.f;
     }
-    
+}
+
+void setExposureIlluminance(u32vec3 idx, float avg_illuminance)
+{
+    uint32_t subres_x = idx.x / NUM_WORKGROUPS_X;
+    uint32_t subres_y = idx.y / NUM_WORKGROUPS_Y;
+    uint32_t linear_idx = idx.z * NUM_WORKGROUPS_Y * NUM_WORKGROUPS_X +
+        subres_y * NUM_WORKGROUPS_X + subres_x;
+
+    if (gl_SubgroupID == 0 && subgroupElect()) {
+        tonemapIlluminanceBuffer[linear_idx] += avg_illuminance;
+    }
 }
 
 #endif

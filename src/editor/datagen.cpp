@@ -43,15 +43,22 @@ int main(int argc, char *argv[]) {
     uint32_t batches_per_env = vk::divideRoundUp(points_per_env, batch_size);
 
     Renderer src_renderer({0, 1, batch_size, res, res, src_spp, src_path_depth,
-        128, RenderMode::PathTracer, RenderFlags::AuxiliaryOutputs, 0.f,
+        128, RenderMode::PathTracer,
+        RenderFlags::AuxiliaryOutputs, 0.f,
         BackendSelect::Vulkan});
 
     Renderer ref_renderer({0, 1, batch_size, res, res, ref_spp, ref_path_depth,
-        128, RenderMode::PathTracer, RenderFlags::AuxiliaryOutputs, 0.f,
+        128, RenderMode::PathTracer,
+        RenderFlags::AuxiliaryOutputs | RenderFlags::Randomize, 0.f,
         BackendSelect::Vulkan});
 
     auto src_loader = src_renderer.makeLoader();
     auto ref_loader = ref_renderer.makeLoader();
+
+    auto src_env_map = src_loader.loadEnvironmentMap(defaults::getEnvironmentMap());
+    src_renderer.setActiveEnvironmentMaps(move(src_env_map));
+    auto ref_env_map = ref_loader.loadEnvironmentMap(defaults::getEnvironmentMap());
+    ref_renderer.setActiveEnvironmentMaps(move(ref_env_map));
 
     vector<pair<string, string>> scenes;
     {
@@ -205,10 +212,13 @@ int main(int argc, char *argv[]) {
 
             saveBatch(src_ptrs, "src_", img_count, true);
 
-            ref_renderer.render(ref_batch);
-            ref_renderer.waitForBatch(ref_batch);
+            src_renderer.render(src_batch);
+            src_renderer.waitForBatch(src_batch);
 
-            saveBatch(ref_ptrs, "ref_", img_count, false);
+            //ref_renderer.render(ref_batch);
+            //ref_renderer.waitForBatch(ref_batch);
+
+            saveBatch(src_ptrs, "ref_", img_count, false);
 
             img_count += batch_size;
         }

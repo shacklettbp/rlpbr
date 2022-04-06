@@ -14,8 +14,9 @@ namespace vk {
 
 static InitConfig getInitConfig(const RenderConfig &cfg, bool validate)
 {
-    bool use_zsobol =  uint64_t(cfg.spp) * uint64_t(cfg.imgWidth) *
-        uint64_t(cfg.imgHeight) < uint64_t(~0u);
+    bool use_zsobol = (cfg.flags & RenderFlags::AdaptiveSample) ||
+        uint64_t(cfg.spp) * uint64_t(cfg.imgWidth) * uint64_t(cfg.imgHeight) <
+            uint64_t(~0u);
 
     bool need_present = false;
     char *fake_present = getenv("VK_FAKE_PRESENT");
@@ -105,13 +106,16 @@ static FramebufferConfig getFramebufferConfig(const RenderConfig &cfg)
     uint32_t reservoir_bytes = sizeof(Reservoir) * pixels_per_batch;
 
     // FIXME: dedup this with the EXPOSURE_RES_X code
-    uint32_t illuminance_width =
+    uint32_t tile_width =
         divideRoundUp(cfg.imgWidth, VulkanConfig::localWorkgroupX);
-    uint32_t illuminance_height =
-        divideRoundUp(cfg.imgWidth, VulkanConfig::localWorkgroupY);
+    uint32_t tile_height =
+        divideRoundUp(cfg.imgHeight, VulkanConfig::localWorkgroupY);
 
     uint32_t illuminance_bytes =
-        sizeof(float) * illuminance_width * illuminance_height * batch_size;
+        sizeof(float) * tile_width * tile_height * batch_size;
+
+    uint32_t adaptive_bytes =
+        sizeof(AdaptiveTile) * tile_width * tile_height * batch_size;
 
     return FramebufferConfig {
         cfg.imgWidth,
@@ -123,11 +127,14 @@ static FramebufferConfig getFramebufferConfig(const RenderConfig &cfg)
         batch_fb_images_tall,
         batch_fb_width,
         batch_fb_height,
+        tile_width,
+        tile_height,
         output_bytes,
         normal_bytes,
         albedo_bytes,
         reservoir_bytes,
         illuminance_bytes,
+        adaptive_bytes,
     };
 }
 
@@ -145,9 +152,14 @@ static RenderState makeRenderState(const DeviceState &dev,
         return 32 - __builtin_clz(v) - 1;
     };
 
+    uint32_t spp = cfg.spp;
+    if (cfg.flags & RenderFlags::AdaptiveSample) {
+        spp = 64;
+    }
+
     // In optix these are just C++ constexprs
     // Compute a bunch of sampler variables ahead of time
-    uint32_t log2_spp = log2Int(cfg.spp);
+    uint32_t log2_spp = log2Int(spp);
     bool is_odd_power2 = log2_spp & 1;
 
     uint32_t index_shift = is_odd_power2 ? (log2_spp + 1) : log2_spp;
@@ -169,7 +181,7 @@ static RenderState makeRenderState(const DeviceState &dev,
         sampling_define = "UNIFORM_SAMPLING";
     }
 
-    float inv_sqrt_spp = 1.f / sqrtf(float(cfg.spp));
+    float inv_sqrt_spp = 1.f / sqrtf(float(spp));
     ostringstream float_conv;
     float_conv.precision(9);
     float_conv << fixed << inv_sqrt_spp;
@@ -180,17 +192,14 @@ static RenderState makeRenderState(const DeviceState &dev,
     uint32_t num_workgroups_y = divideRoundUp(cfg.imgHeight,
                                               VulkanConfig::localWorkgroupY);
 
-    uint32_t exposure_res_x = num_workgroups_x;
-    uint32_t exposure_res_y = num_workgroups_y;
-    
     vector<string> rt_defines {
-        string("SPP (") + to_string(cfg.spp) + "u)",
+        string("SPP (") + to_string(spp) + "u)",
         string("INV_SQRT_SPP (") + float_conv.str() + "f)",
         string("MAX_DEPTH (") + to_string(cfg.maxDepth) + "u)",
         string("RES_X (") + to_string(cfg.imgWidth) + "u)",
         string("RES_Y (") + to_string(cfg.imgHeight) + "u)",
-        string("EXPOSURE_RES_X (") + to_string(exposure_res_x) + "u)",
-        string("EXPOSURE_RES_Y (") + to_string(exposure_res_y) + "u)",
+        string("NUM_WORKGROUPS_X (") + to_string(num_workgroups_x) + "u)",
+        string("NUM_WORKGROUPS_Y (") + to_string(num_workgroups_y) + "u)",
         string("BATCH_SIZE (") + to_string(cfg.batchSize) + "u)",
         sampling_define,
         string("ZSOBOL_NUM_BASE4 (") + to_string(num_index_digits_base4) + "u)",
@@ -201,7 +210,7 @@ static RenderState makeRenderState(const DeviceState &dev,
         rt_defines.push_back("ZSOBOL_ODD_POWER");
     }
 
-    if (cfg.spp == 1) {
+    if (spp == 1) {
         rt_defines.push_back("ONE_SAMPLE");
     }
 
@@ -215,6 +224,10 @@ static RenderState makeRenderState(const DeviceState &dev,
 
     if (cfg.flags & RenderFlags::Tonemap) {
          rt_defines.emplace_back("TONEMAP");
+    }
+
+    if (cfg.flags & RenderFlags::AdaptiveSample) {
+        rt_defines.emplace_back("ADAPTIVE_SAMPLING");
     }
 
     if (cfg.clampThreshold > 0.f) {
@@ -252,9 +265,9 @@ static RenderState makeRenderState(const DeviceState &dev,
     int num_exposure_bins = 128;
     float exposure_bias = 0.f;
 
-    uint32_t thread_elems_x = divideRoundUp(exposure_res_x,
+    uint32_t thread_elems_x = divideRoundUp(num_workgroups_x,
                                             VulkanConfig::localWorkgroupX);
-    uint32_t thread_elems_y = divideRoundUp(exposure_res_y,
+    uint32_t thread_elems_y = divideRoundUp(num_workgroups_y,
                                             VulkanConfig::localWorkgroupY);
 
     vector<string> exposure_defines {
@@ -271,8 +284,8 @@ static RenderState makeRenderState(const DeviceState &dev,
             floatToString(exposure_bias) + "f)",
         string("MIN_LUMINANCE (") +
             floatToString(min_luminance) + "f)",
-        string("EXPOSURE_RES_X (") + to_string(exposure_res_x) + "u)",
-        string("EXPOSURE_RES_Y (") + to_string(exposure_res_y) + "u)",
+        string("EXPOSURE_RES_X (") + to_string(num_workgroups_x) + "u)",
+        string("EXPOSURE_RES_Y (") + to_string(num_workgroups_y) + "u)",
         string("THREAD_ELEMS_X (") + to_string(thread_elems_x) + "u)",
         string("THREAD_ELEMS_Y (") + to_string(thread_elems_y) + "u)",
     };
@@ -494,12 +507,27 @@ static FramebufferState makeFramebuffer(const DeviceState &dev,
     uint32_t num_buffers = 1;
     uint32_t num_exported_buffers = 1;
 
+    int output_idx = 0;
+    int normal_idx = -1;
+    int albedo_idx = -1;
+    int illuminance_idx = -1;
+    int adaptive_idx = -1;
+
     if (cfg.auxiliaryOutputs) {
         num_buffers += 2;
         num_exported_buffers += 2;
+
+        normal_idx = 1;
+        albedo_idx = 2;
     }
 
     if (cfg.tonemap) {
+        illuminance_idx = 3;
+        num_buffers += 1;
+    }
+
+    if (cfg.adaptiveSampling) {
+        adaptive_idx = 4;
         num_buffers += 1;
     }
 
@@ -541,6 +569,19 @@ static FramebufferState makeFramebuffer(const DeviceState &dev,
         backings.emplace_back(move(illum_mem));
     }
 
+    optional<HostBuffer> adaptive_readback;
+
+    if (cfg.adaptiveSampling) {
+        auto [adaptive_buffer, adaptive_mem] =
+            alloc.makeDedicatedBuffer(fb_cfg.adaptiveBytes);
+
+        outputs.emplace_back(move(adaptive_buffer));
+        backings.emplace_back(move(adaptive_mem));
+
+        // FIXME: specific readback buffer type
+        adaptive_readback = alloc.makeHostBuffer(fb_cfg.adaptiveBytes, true);
+    }
+
     vector<LocalBuffer> reservoirs;
     vector<VkDeviceMemory> reservoir_mem;
 
@@ -562,6 +603,12 @@ static FramebufferState makeFramebuffer(const DeviceState &dev,
         move(exported),
         move(reservoirs),
         move(reservoir_mem),
+        move(adaptive_readback),
+        output_idx,
+        normal_idx,
+        albedo_idx,
+        illuminance_idx,
+        adaptive_idx,
     };
 }
 
@@ -570,12 +617,15 @@ static PerBatchState makePerBatchState(const DeviceState &dev,
                                        const FramebufferState &fb,
                                        const ParamBufferConfig &param_cfg,
                                        HostBuffer &param_buffer,
+                                       const LocalBuffer &dev_param_buffer,
+                                       optional<HostBuffer> &tile_input_buffer,
                                        FixedDescriptorPool &&rt_pool,
                                        FixedDescriptorPool &&exposure_pool,
                                        FixedDescriptorPool &&tonemap_pool,
                                        const BSDFPrecomputed &precomp_tex,
                                        bool auxiliary_outputs,
                                        bool tonemap,
+                                       bool adaptive_sampling,
                                        bool need_present)
 {
     array rt_sets {
@@ -589,13 +639,18 @@ static PerBatchState makePerBatchState(const DeviceState &dev,
     VkCommandPool cmd_pool = makeCmdPool(dev, dev.computeQF);
     VkCommandBuffer render_cmd = makeCmdBuffer(dev, cmd_pool);
 
-    half *output_buffer = (half *)((char *)fb.exported[0].getDevicePointer());
+    half *output_buffer = (half *)fb.exported[0].getDevicePointer();
 
     half *normal_buffer = nullptr, *albedo_buffer = nullptr;
     if (auxiliary_outputs) {
-        normal_buffer = (half *)((char *)fb.exported[1].getDevicePointer());
+        normal_buffer = (half *)fb.exported[1].getDevicePointer();
 
-        albedo_buffer = (half *)((char *)fb.exported[2].getDevicePointer());
+        albedo_buffer = (half *)fb.exported[2].getDevicePointer();
+    }
+
+    AdaptiveTile *adaptive_readback_ptr = nullptr;
+    if (adaptive_sampling) {
+        adaptive_readback_ptr = (AdaptiveTile *)fb.adaptiveReadback->ptr;
     }
 
     vector<VkWriteDescriptorSet> desc_set_updates;
@@ -618,25 +673,25 @@ static PerBatchState makePerBatchState(const DeviceState &dev,
     DescriptorUpdates desc_updates(14);
 
     VkDescriptorBufferInfo transform_info {
-        param_buffer.buffer,
+        dev_param_buffer.buffer,
         0,
         param_cfg.totalTransformBytes,
     };
 
     VkDescriptorBufferInfo mat_info {
-        param_buffer.buffer,
+        dev_param_buffer.buffer,
         param_cfg.materialIndicesOffset,
         param_cfg.totalMaterialIndexBytes,
     };
 
     VkDescriptorBufferInfo light_info {
-        param_buffer.buffer,
+        dev_param_buffer.buffer,
         param_cfg.lightsOffset,
         param_cfg.totalLightParamBytes,
     };
 
     VkDescriptorBufferInfo env_info {
-        param_buffer.buffer,
+        dev_param_buffer.buffer,
         param_cfg.envOffset,
         param_cfg.totalEnvParamBytes,
     };
@@ -672,7 +727,7 @@ static PerBatchState makePerBatchState(const DeviceState &dev,
     };
 
     VkDescriptorBufferInfo out_info {
-        fb.outputs[0].buffer,
+        fb.outputs[fb.outputIdx].buffer,
         0,
         fb_cfg.outputBytes,
     };
@@ -726,13 +781,13 @@ static PerBatchState makePerBatchState(const DeviceState &dev,
 
     if (auxiliary_outputs) {
         normal_info = {
-            fb.outputs[1].buffer,
+            fb.outputs[fb.albedoIdx].buffer,
             0,
             fb_cfg.normalBytes,
         };
 
         albedo_info = {
-            fb.outputs[2].buffer,
+            fb.outputs[fb.normalIdx].buffer,
             0,
             fb_cfg.albedoBytes,
         };
@@ -745,27 +800,52 @@ static PerBatchState makePerBatchState(const DeviceState &dev,
         }
     }
 
-    VkDescriptorBufferInfo illuminance_info {
-        fb.outputs.back().buffer,
-        0,
-        fb_cfg.illuminanceBytes,
-    };
+    VkDescriptorBufferInfo illuminance_info;
 
     if (tonemap) {
+        illuminance_info = {
+            fb.outputs[fb.illuminanceIdx].buffer,
+            0,
+            fb_cfg.illuminanceBytes,
+        };
+
         for (int i = 0; i < (int)rt_sets.size(); i++) {
             desc_updates.buffer(rt_sets[i], &illuminance_info, 16,
                                 VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
         }
+
+        desc_updates.buffer(exposure_set, &illuminance_info, 0,
+                            VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
+
+        desc_updates.buffer(tonemap_set, &illuminance_info, 0,
+                            VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
+
+        desc_updates.buffer(tonemap_set, &out_info, 1,
+                            VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
     }
 
-    desc_updates.buffer(exposure_set, &illuminance_info, 0,
-                        VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
+    VkDescriptorBufferInfo tile_input_info;
+    VkDescriptorBufferInfo adaptive_info;
+    if (adaptive_sampling) {
+        tile_input_info = {
+            tile_input_buffer->buffer,
+            0,
+            sizeof(InputTile) * VulkanConfig::max_tiles * 2,
+        };
 
-    desc_updates.buffer(tonemap_set, &illuminance_info, 0,
-                        VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
+        adaptive_info = {
+            fb.outputs[fb.adaptiveIdx].buffer,
+            0,
+            fb_cfg.adaptiveBytes,
+        };
 
-    desc_updates.buffer(tonemap_set, &out_info, 1,
-                        VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
+        for (int i = 0; i < (int)rt_sets.size(); i++) {
+            desc_updates.buffer(rt_sets[i], &tile_input_info, 17,
+                                VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
+            desc_updates.buffer(rt_sets[i], &adaptive_info, 18,
+                                VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
+        }
+    }
 
     desc_updates.update(dev);
 
@@ -788,6 +868,8 @@ static PerBatchState makePerBatchState(const DeviceState &dev,
         material_ptr,
         light_ptr,
         env_ptr,
+        (InputTile *)tile_input_buffer->ptr,
+        adaptive_readback_ptr,
     };
 }
 
@@ -1096,12 +1178,14 @@ VulkanBackend::VulkanBackend(const RenderConfig &cfg,
           cfg.flags & RenderFlags::AuxiliaryOutputs,
           cfg.flags & RenderFlags::Tonemap,
           cfg.flags & RenderFlags::Randomize,
+          cfg.flags & RenderFlags::AdaptiveSample,
       }),
       inst(makeInstance(init_cfg)),
       dev(makeDevice(inst, cfg, init_cfg)),
       alloc(dev, inst),
       fb_cfg_(getFramebufferConfig(cfg)),
-      param_cfg_(getParamBufferConfig(cfg.batchSize, alloc)),
+      param_cfg_(
+          getParamBufferConfig(cfg.batchSize, alloc)),
       render_state_(makeRenderState(dev, cfg, init_cfg)),
       pipelines_(makePipelines(dev, render_state_)),
       transfer_queues_(initTransferQueues(cfg, dev)),
@@ -1177,22 +1261,37 @@ RenderBatch::Handle VulkanBackend::makeRenderBatch()
 
     auto fb = makeFramebuffer(dev, cfg_, fb_cfg_, alloc);
 
-    auto render_input_buffer =
-        alloc.makeParamBuffer(param_cfg_.totalParamBytes);
+    // max_tiles * 2 to allow double buffering to hide cpu readback
+    optional<HostBuffer> adaptive_input;
+
+    if (cfg_.adaptiveSampling) {
+        adaptive_input = alloc.makeHostBuffer(
+            sizeof(InputTile) * VulkanConfig::max_tiles * 2, true);
+    }
+
+    auto render_input_staging =
+        alloc.makeStagingBuffer(param_cfg_.totalParamBytes);
+
+    auto render_input_dev =
+        *alloc.makeLocalBuffer(param_cfg_.totalParamBytes, true);
 
     PerBatchState batch_state = makePerBatchState(
             dev, fb_cfg_, fb, param_cfg_,
-            render_input_buffer,
+            render_input_staging,
+            render_input_dev,
+            adaptive_input,
             FixedDescriptorPool(dev, render_state_.rt, 0, 2),
             FixedDescriptorPool(dev, render_state_.exposure, 0, 1),
             FixedDescriptorPool(dev, render_state_.tonemap, 0, 1),
             bsdf_precomp_, cfg_.auxiliaryOutputs, cfg_.tonemap,
-            present_.has_value());
+            cfg_.adaptiveSampling, present_.has_value());
 
     auto backend = new VulkanBatch {
         {},
         move(fb),
-        move(render_input_buffer),
+        move(adaptive_input),
+        move(render_input_staging),
+        move(render_input_dev),
         move(batch_state),
         0,
     };
@@ -1360,11 +1459,120 @@ void VulkanBackend::render(RenderBatch &batch)
                                  &shared_scene_state_.descSet, 0, nullptr);
     shared_scene_state_.lock.unlock();
 
-    dev.dt.cmdDispatch(
-        render_cmd,
-        launch_size_.x,
-        launch_size_.y,
-        launch_size_.z);
+    batch_backend.renderInputStaging.flush(dev);
+
+    VkBufferCopy param_copy;
+    param_copy.srcOffset = 0;
+    param_copy.dstOffset = 0;
+    param_copy.size = param_cfg_.totalParamBytes;
+
+    dev.dt.cmdCopyBuffer(render_cmd,
+                         batch_backend.renderInputStaging.buffer,
+                         batch_backend.renderInputDev.buffer,
+                         1, &param_copy);
+
+    if (cfg_.adaptiveSampling) {
+        dev.dt.cmdFillBuffer(render_cmd,
+            batch_backend.fb.outputs[batch_backend.fb.adaptiveIdx].buffer,
+            0, fb_cfg_.adaptiveBytes, 0);
+
+        dev.dt.cmdFillBuffer(render_cmd,
+            batch_backend.fb.outputs[batch_backend.fb.outputIdx].buffer,
+            0, fb_cfg_.outputBytes, 0);
+
+        if (cfg_.tonemap) {
+            dev.dt.cmdFillBuffer(render_cmd,
+                batch_backend.fb.outputs[batch_backend.fb.illuminanceIdx].buffer,
+                0, fb_cfg_.illuminanceBytes, 0);
+        }
+
+        if (cfg_.auxiliaryOutputs) {
+            dev.dt.cmdFillBuffer(render_cmd,
+                batch_backend.fb.outputs[batch_backend.fb.normalIdx].buffer,
+                0, fb_cfg_.normalBytes, 0);
+
+            dev.dt.cmdFillBuffer(render_cmd,
+                batch_backend.fb.outputs[batch_backend.fb.albedoIdx].buffer,
+                0, fb_cfg_.albedoBytes, 0);
+        }
+
+        VkMemoryBarrier zero_barrier;
+        zero_barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+        zero_barrier.pNext = nullptr;
+        zero_barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        zero_barrier.dstAccessMask =
+            VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+
+        dev.dt.cmdPipelineBarrier(render_cmd,
+                                  VK_PIPELINE_STAGE_TRANSFER_BIT,
+                                  VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                                  0,
+                                  1, &zero_barrier, 0, nullptr, 0, nullptr);
+
+        int cur_tile_idx = 0;
+
+        auto writeTile = [&cur_tile_idx, &batch_state](int batch_idx,
+                                                       int tile_x,
+                                                       int tile_y,
+                                                       int sample_offset) {
+            InputTile &cur_tile =
+                batch_state.tileInputPtr[cur_tile_idx];
+            cur_tile.batchIdx = batch_idx;
+            cur_tile.xOffset = tile_x;
+            cur_tile.yOffset = tile_y;
+            cur_tile.sampleOffset = sample_offset;
+
+            cur_tile_idx++;
+        };
+
+        for (int batch_idx = 0; batch_idx < (int)cfg_.batchSize; batch_idx++) {
+            for (int tile_y = 0; tile_y < (int)fb_cfg_.tileHeight; tile_y++) {
+                for (int tile_x = 0; tile_x < (int)fb_cfg_.tileWidth;
+                     tile_x++) {
+                    for (int sample_idx = 0; sample_idx < 64;
+                         sample_idx += 4) {
+                        writeTile(batch_idx, tile_x, tile_y, sample_idx);
+                    }
+                }
+            }
+        }
+
+        batch_backend.adaptiveInput->flush(dev);
+
+        const int num_tiles = cur_tile_idx;
+
+        // FIXME: xy -> yz, z -> x (larger launch limit in X)
+        dev.dt.cmdDispatch(
+            render_cmd,
+            num_tiles,
+            VulkanConfig::localWorkgroupX,
+            VulkanConfig::localWorkgroupY);
+    } else {
+        VkBufferMemoryBarrier param_barrier;
+        param_barrier.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
+        param_barrier.pNext = nullptr;
+        param_barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        param_barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        param_barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        param_barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        param_barrier.buffer = batch_backend.renderInputDev.buffer;
+        param_barrier.offset = 0;
+        param_barrier.size = param_cfg_.totalParamBytes;
+
+        dev.dt.cmdPipelineBarrier(render_cmd,
+                                  VK_PIPELINE_STAGE_TRANSFER_BIT,
+                                  VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                                  0,
+                                  0, nullptr,
+                                  1, &param_barrier,
+                                  0, nullptr);
+
+        dev.dt.cmdDispatch(
+            render_cmd,
+            launch_size_.x,
+            launch_size_.y,
+            launch_size_.z);
+    }
 
     VkMemoryBarrier comp_barrier;
     comp_barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
@@ -1414,8 +1622,6 @@ void VulkanBackend::render(RenderBatch &batch)
     }
 
     REQ_VK(dev.dt.endCommandBuffer(render_cmd));
-
-    batch_backend.renderInputBuffer.flush(dev);
 
     VkSubmitInfo render_submit {
         VK_STRUCTURE_TYPE_SUBMIT_INFO,
