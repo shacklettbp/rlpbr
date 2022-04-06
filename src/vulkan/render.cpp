@@ -230,6 +230,11 @@ static RenderState makeRenderState(const DeviceState &dev,
         rt_defines.emplace_back("ADAPTIVE_SAMPLING");
     }
 
+    if ((cfg.flags & RenderFlags::Tonemap) ||
+        (cfg.flags & RenderFlags::AdaptiveSample)) {
+        rt_defines.emplace_back("NEED_SHARED_MEM");
+    }
+
     if (cfg.clampThreshold > 0.f) {
         rt_defines.emplace_back(string("-DINDIRECT_CLAMP (") +
             to_string(cfg.clampThreshold) + "f)");

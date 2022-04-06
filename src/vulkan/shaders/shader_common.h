@@ -56,7 +56,7 @@ struct InputTile {
 
 struct AdaptiveTile {
     float tileMean;
-    float tileVariance;
+    float tileVarianceM2;
     uint32_t numSamples;
     uint32_t spinLock;
 };

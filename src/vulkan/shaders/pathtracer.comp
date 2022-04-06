@@ -19,6 +19,7 @@
 #extension GL_KHR_shader_subgroup_shuffle : require
 #extension GL_EXT_buffer_reference : require
 #extension GL_EXT_buffer_reference2 : require
+#extension GL_EXT_shader_atomic_float : require
 
 #ifdef VALIDATE 
 #extension GL_EXT_debug_printf : enable
@@ -94,17 +95,17 @@ layout (set = 0, binding = 12, scalar) writeonly buffer PrevReservoirs {
     Reservoir prevReservoirs[];
 };
 
-layout (set = 0, binding = 13, scalar) writeonly buffer Out {
+layout (set = 0, binding = 13, scalar) buffer Out {
     uint32_t outputBuffer[];
 };
 
 #ifdef AUXILIARY_OUTPUTS
 
-layout (set = 0, binding = 14, scalar) writeonly buffer Normals {
+layout (set = 0, binding = 14, scalar) buffer Normals {
     uint16_t normalBuffer[];
 };
 
-layout (set = 0, binding = 15, scalar) writeonly buffer Albedo {
+layout (set = 0, binding = 15, scalar) buffer Albedo {
     uint16_t albedoBuffer[];
 };
 
@@ -112,7 +113,7 @@ layout (set = 0, binding = 15, scalar) writeonly buffer Albedo {
 
 #ifdef TONEMAP
 
-layout (set = 0, binding = 16, scalar) writeonly buffer TonemapIlluminance {
+layout (set = 0, binding = 16, scalar) buffer TonemapIlluminance {
     float tonemapIlluminanceBuffer[];
 };
 
@@ -162,13 +163,9 @@ u32vec4 fetchSceneMaterialParams(MatRef ref, uint32_t idx, uint32_t sub_idx)
 #include "lighting.glsl"
 #include "camera.glsl"
 
-#if defined(TONEMAP) or defined(ADAPTIVE_SAMPLING)
+#ifdef NEED_SHARED_MEM
 shared float workgroupScratch[NUM_SUBGROUPS];
 shared uint32_t workgroupCount;
-#endif
-
-#ifdef ADAPTIVE_SAMPLING
-shared float workgroupSum;
 #endif
 
 #ifdef TONEMAP
@@ -222,9 +219,27 @@ bool traceShadowRay(in uint64_t tlas_addr, in vec3 ray_origin,
         gl_RayQueryCommittedIntersectionNoneEXT;
 }
 
-void setOutput(uint32_t base_offset, vec3 rgb, uint32_t instance_id)
+void setOutput(uint32_t base_offset, vec3 rgb, uint32_t instance_id
+#ifdef ADAPTIVE_SAMPLING
+    , uint32_t num_samples
+#endif
+    )
 {
     rgb = min(rgb, vec3(65504.f));
+
+#ifdef ADAPTIVE_SAMPLING
+    uint32_t old_ab = outputBuffer[nonuniformEXT(base_offset)];
+    uint32_t old_cd = outputBuffer[nonuniformEXT(base_offset + 1)];
+
+    vec2 old_rg = unpackHalf2x16(old_ab);
+    float old_b = unpackHalf2x16(old_cd).x;
+
+    vec3 old_rgb = vec3(old_rg.x, old_rg.y, old_b);
+
+    vec3 delta = rgb - old_rgb;
+
+    rgb = old_rgb + delta / float(num_samples);
+#endif
 
     uint32_t ab = packHalf2x16(rgb.xy);
     uint32_t cd = packHalf2x16(vec2(rgb.z, 0));
@@ -235,8 +250,48 @@ void setOutput(uint32_t base_offset, vec3 rgb, uint32_t instance_id)
 }
 
 #ifdef AUXILIARY_OUTPUTS
-void setAuxiliaries(uint32_t base_offset, vec3 albedo, vec3 normal)
+void setAuxiliaries(uint32_t base_offset, vec3 albedo, vec3 normal
+#ifdef ADAPTIVE_SAMPLING
+    , uint32_t num_samples 
+#endif
+    )
 {
+#ifdef ADAPTIVE_SAMPLING
+    uint16_t old_albedo_a16 = albedoBuffer[nonuniformEXT(base_offset)];
+    uint16_t old_albedo_b16 = albedoBuffer[nonuniformEXT(base_offset + 1)];
+    uint16_t old_albedo_c16 = albedoBuffer[nonuniformEXT(base_offset + 2)];
+
+    uint32_t old_albedo_ab =
+        uint32_t(old_albedo_b16) << 16 + uint32_t(old_albedo_a16);
+    uint32_t old_albedo_cd = uint32_t(old_albedo_c16);
+
+    vec2 old_albedo_rg = unpackHalf2x16(old_albedo_ab);
+    float old_albedo_b = unpackHalf2x16(old_albedo_cd).x;
+
+    vec3 old_albedo = vec3(old_albedo_rg.x, old_albedo_rg.y, old_albedo_b);
+
+    vec3 albedo_delta = albedo - old_albedo;
+
+    albedo = old_albedo + albedo_delta / float(num_samples);
+
+    uint16_t old_normal_a16 = normalBuffer[nonuniformEXT(base_offset)];
+    uint16_t old_normal_b16 = normalBuffer[nonuniformEXT(base_offset + 1)];
+    uint16_t old_normal_c16 = normalBuffer[nonuniformEXT(base_offset + 2)];
+
+    uint32_t old_normal_ab =
+        uint32_t(old_normal_b16) << 16 + uint32_t(old_normal_a16);
+    uint32_t old_normal_cd = uint32_t(old_normal_c16);
+
+    vec2 old_normal_rg = unpackHalf2x16(old_normal_ab);
+    float old_normal_b = unpackHalf2x16(old_normal_cd).x;
+
+    vec3 old_normal = vec3(old_normal_rg.x, old_normal_rg.y, old_normal_b);
+
+    vec3 normal_delta = normal - old_normal;
+
+    normal = old_normal + normal_delta / float(num_samples);
+#endif
+
     uint32_t albedo_ab = packHalf2x16(albedo.xy);
     uint32_t albedo_cd = packHalf2x16(vec2(albedo.z, 0));
     uint32_t normal_ab = packHalf2x16(normal.xy);
@@ -719,6 +774,12 @@ void main()
 #endif
 
 #ifdef ADAPTIVE_SAMPLING
+    const int sample_div = 4;
+#else
+    const int sample_div = SPP
+#endif
+
+#ifdef ADAPTIVE_SAMPLING
     [[dont_unroll]]
     for (int32_t loop_sample_idx = 0; loop_sample_idx < 4; loop_sample_idx++) {
         int32_t sample_idx = int32_t(tile_sample_offset) + loop_sample_idx;
@@ -742,8 +803,8 @@ void main()
             PrimaryResult primary_result =
                 directLighting(idx, linear_idx, cam, prev_cam, env, rng);
 
-            pixel_avg += primary_result.vertState.radiance / SPP;
-            pixel_illuminance += primary_result.illuminance / SPP;
+            pixel_avg += primary_result.vertState.radiance / sample_div;
+            pixel_illuminance += primary_result.illuminance / sample_div;
 
             ray_diff = primary_result.rayDifferential;
             primary_normal = primary_result.hitNormal;
@@ -764,8 +825,8 @@ void main()
             view_normal = view_normal_len > 0.f ?
                 view_normal / view_normal_len : view_normal;
     
-            aux_normal += view_normal / SPP;
-            aux_albedo += primary_result.auxAlbedo / SPP;
+            aux_normal += view_normal / sample_div;
+            aux_albedo += primary_result.auxAlbedo / sample_div;
 #endif
         }
 
@@ -785,13 +846,13 @@ void main()
 
         vec3 indirect_contrib = indirectLighting(
             env, secondary_origin, secondary_dir,
-            secondary_pdf, bounce_flags, ray_diff, rng) / SPP;
+            secondary_pdf, bounce_flags, ray_diff, rng) / sample_div;
 
         pixel_avg += secondary_weight * indirect_contrib;
 
         float indirect_illuminance =
             rgbToLuminance(indirect_contrib) * indirect_illuminance_weight;
-        pixel_illuminance += 0.18f * indirect_illuminance / SPP;
+        pixel_illuminance += 0.18f * indirect_illuminance / sample_div;
     }
 
     // Proper illuminance
@@ -809,40 +870,64 @@ void main()
     if (gl_SubgroupID == 0 && subgroupElect()) {
         adaptiveTileSpinlock(out_tile_idx);
 
-        workgroupSum = 0.0;
+        workgroupScratch[0] = 0.0;
     }
 
     barrier();
 
-    float subgroup_avg = subgroupAdd(pixel_avg) / subgroupAdd(oob ? 0u : 1u);
+    float num_subgroup_inbounds = subgroupAdd(oob ? 0.f : 1.f);
+    vec3 subgroup_pixel_avg = subgroupAdd(pixel_avg) / num_subgroup_inbounds;
 
     if (subgroupElect()) {
-        atomicAdd(workgroupSum, num_subgroup_inbounds)
+        float pixel_scalar = (subgroup_pixel_avg.x + subgroup_pixel_avg.y +
+            subgroup_pixel_avg.z) / 3.0;
+        atomicAdd(workgroupScratch[0], pixel_scalar);
+        atomicAdd(workgroupCount, 1);
     }
 
     barrier();
-    
-    uint32_t old_tile_count = adaptiveTiles[out_tile_idx].numSamples; 
 
+    uint32_t old_tile_count = adaptiveTiles[out_tile_idx].numSamples; 
+    uint32_t new_tile_count = old_tile_count + 1;
+    
     if (gl_SubgroupID == 0 && subgroupElect()) {
-        adaptiveTiles[out_tile_idx].numSamples = old_tile_count + 1;
+        float old_tile_mean = adaptiveTiles[out_tile_idx].tileMean; 
+        float new_sample = workgroupScratch[0] / float(workgroupCount);
+
+        float delta = new_sample - old_tile_mean;
+        float new_mean = old_tile_mean + delta / float(new_tile_count);
+        float delta2 = new_sample - new_mean;
+
+        adaptiveTiles[out_tile_idx].tileMean = new_mean;
+        adaptiveTiles[out_tile_idx].tileVarianceM2 += delta * delta2;
+        adaptiveTiles[out_tile_idx].numSamples = new_tile_count;
     }
 
 #endif
 
-
     if (!oob) {
         //setOutput(base_out_offset, pixel_avg == vec3(0.f) ? vec3(0.f) : 0.18 * pixel_avg / vec3(pixel_illuminance), instance_id);
+#ifdef ADAPTIVE_SAMPLING
+        setOutput(base_out_offset, pixel_avg, instance_id, new_tile_count);
+#else
         setOutput(base_out_offset, pixel_avg, instance_id);
+#endif
 
 #ifdef AUXILIARY_OUTPUTS
+#ifdef ADAPTIVE_SAMPLING
+        setAuxiliaries(base_aux_offset, aux_albedo, aux_normal, new_tile_count);
+#else
         setAuxiliaries(base_aux_offset, aux_albedo, aux_normal);
+#endif
 #endif
     }
 
 #ifdef TONEMAP
-    //setExposureIlluminance(pixel_illuminance, oob);
+#ifdef ADAPTIVE_SAMPLING
+    setExposureIlluminance(idx, workgroup_illuminance, new_tile_count);
+#else
     setExposureIlluminance(idx, workgroup_illuminance);
+#endif
 #endif
 
     barrier();

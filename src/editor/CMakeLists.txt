@@ -90,5 +90,5 @@ add_executable(datagen
 target_link_libraries(datagen PRIVATE
     rlpbr
     navmesh_utils
-    OpenImageIO
+    OpenImageIO OpenImageIO_Util
 )

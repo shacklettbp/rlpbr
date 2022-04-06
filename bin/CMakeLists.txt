@@ -17,7 +17,7 @@ if (OpenImageIO_FOUND)
         save_frame.cpp
         oiio_bridge.hpp oiio_bridge.cpp
     )
-    target_link_libraries(save_frame rlpbr OpenImageIO)
+    target_link_libraries(save_frame rlpbr OpenImageIO OpenImageIO_Util)
 endif()
 
 add_executable(make_sequence
