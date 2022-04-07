@@ -878,6 +878,7 @@ void main()
     }
 
     barrier();
+    memoryBarrierShared();
 
     float num_subgroup_inbounds = subgroupAdd(oob ? 0.f : 1.f);
     vec3 subgroup_pixel_avg =
@@ -894,6 +895,7 @@ void main()
     }
 
     barrier();
+    groupMemoryBarrier();
 
     uint32_t old_tile_count = adaptiveTiles[out_tile_idx].numSamples; 
     uint32_t new_tile_count = old_tile_count + 1;
@@ -937,12 +939,14 @@ void main()
 #endif
 #endif
 
+#ifdef ADAPTIVE_SAMPLING
     barrier();
 
-#ifdef ADAPTIVE_SAMPLING
     if (gl_SubgroupID == 0 && subgroupElect()) {
         adaptiveTiles[out_tile_idx].numSamples = new_tile_count;
         adaptiveTileUnlock(out_tile_idx);
     }
+
+    memoryBarrier();
 #endif
 }

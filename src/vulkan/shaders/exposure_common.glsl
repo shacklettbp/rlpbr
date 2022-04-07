@@ -8,6 +8,7 @@ float avgWorkgroupIlluminance(float illuminance, bool oob)
     }
 
     barrier();
+    memoryBarrierShared();
 
     float denom = oob ? 0.f : 1.f;
     illuminance = oob ? 0.f : illuminance;
@@ -26,6 +27,7 @@ float avgWorkgroupIlluminance(float illuminance, bool oob)
     }
 
     barrier();
+    memoryBarrierShared();
 
     if (gl_SubgroupID == 0) {
         float tmp = gl_SubgroupInvocationID < NUM_SUBGROUPS ?
@@ -34,7 +36,7 @@ float avgWorkgroupIlluminance(float illuminance, bool oob)
         float full_avg = subgroupAdd(tmp) / float(workgroupCount);
         return full_avg;
     } else {
-        return 0.f;
+        return 0.0;
     }
 }
 
@@ -44,8 +46,8 @@ void setExposureIlluminance(u32vec3 idx, float avg_illuminance
 #endif
     )
 {
-    uint32_t subres_x = idx.x / NUM_WORKGROUPS_X;
-    uint32_t subres_y = idx.y / NUM_WORKGROUPS_Y;
+    uint32_t subres_x = idx.x / LOCAL_WORKGROUP_X;
+    uint32_t subres_y = idx.y / LOCAL_WORKGROUP_Y;
     uint32_t linear_idx = idx.z * NUM_WORKGROUPS_Y * NUM_WORKGROUPS_X +
         subres_y * NUM_WORKGROUPS_X + subres_x;
 
