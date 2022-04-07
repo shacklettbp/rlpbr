@@ -866,7 +866,8 @@ void main()
     uint32_t x_tile_idx = input_tile.xOffset;
     uint32_t y_tile_idx = input_tile.yOffset;
 
-    uint32_t out_tile_idx = y_tile_idx * NUM_WORKGROUPS_X + x_tile_idx;
+    uint32_t out_tile_idx = idx.z * NUM_WORKGROUPS_Y * NUM_WORKGROUPS_X +
+        y_tile_idx * NUM_WORKGROUPS_X + x_tile_idx;
 
     barrier();
 

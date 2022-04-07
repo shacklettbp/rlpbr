@@ -106,16 +106,16 @@ static FramebufferConfig getFramebufferConfig(const RenderConfig &cfg)
     uint32_t reservoir_bytes = sizeof(Reservoir) * pixels_per_batch;
 
     // FIXME: dedup this with the EXPOSURE_RES_X code
-    uint32_t tile_width =
+    uint32_t num_tiles_wide =
         divideRoundUp(cfg.imgWidth, VulkanConfig::localWorkgroupX);
-    uint32_t tile_height =
+    uint32_t num_tiles_tall =
         divideRoundUp(cfg.imgHeight, VulkanConfig::localWorkgroupY);
 
     uint32_t illuminance_bytes =
-        sizeof(float) * tile_width * tile_height * batch_size;
+        sizeof(float) * num_tiles_wide * num_tiles_tall * batch_size;
 
     uint32_t adaptive_bytes =
-        sizeof(AdaptiveTile) * tile_width * tile_height * batch_size;
+        sizeof(AdaptiveTile) * num_tiles_wide * num_tiles_tall * batch_size;
 
     return FramebufferConfig {
         cfg.imgWidth,
@@ -127,8 +127,8 @@ static FramebufferConfig getFramebufferConfig(const RenderConfig &cfg)
         batch_fb_images_tall,
         batch_fb_width,
         batch_fb_height,
-        tile_width,
-        tile_height,
+        num_tiles_wide,
+        num_tiles_tall,
         output_bytes,
         normal_bytes,
         albedo_bytes,
@@ -1341,36 +1341,46 @@ void VulkanBackend::render(RenderBatch &batch)
     VulkanBatch &batch_backend = *getVkBatch(batch);
     Environment *envs = batch.getEnvironments();
     PerBatchState &batch_state = batch_backend.state;
-
-    REQ_VK(dev.dt.resetCommandPool(dev.hdl, batch_state.cmdPool, 0));
-
     VkCommandBuffer render_cmd = batch_state.renderCmd;
-    VkCommandBufferBeginInfo begin_info {};
-    begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-    REQ_VK(dev.dt.beginCommandBuffer(render_cmd, &begin_info));
 
-    dev.dt.cmdBindPipeline(render_cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
-                           pipelines_.rt.hdl);
+    auto startRenderSetup = [&]() {
+        REQ_VK(dev.dt.resetCommandPool(dev.hdl, batch_state.cmdPool, 0));
 
-    RTPushConstant push_const {
-        frame_counter_,
+        VkCommandBufferBeginInfo begin_info {};
+        begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+        REQ_VK(dev.dt.beginCommandBuffer(render_cmd, &begin_info));
+
+        dev.dt.cmdBindPipeline(render_cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
+                               pipelines_.rt.hdl);
+
+        RTPushConstant push_const {
+            frame_counter_,
+        };
+
+        dev.dt.cmdPushConstants(render_cmd, pipelines_.rt.layout,
+                                VK_SHADER_STAGE_COMPUTE_BIT,
+                                0,
+                                sizeof(RTPushConstant),
+                                &push_const);
+
+        dev.dt.cmdBindDescriptorSets(render_cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
+                                     pipelines_.rt.layout, 0, 1,
+                                     &batch_state.rtSets[batch_backend.curBuffer],
+                                     0, nullptr);
+
+        dev.dt.cmdBindDescriptorSets(render_cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
+                                     pipelines_.rt.layout, 2, 1,
+                                     &cur_env_maps_->descSet.hdl,
+                                     0, nullptr);
+
+        shared_scene_state_.lock.lock();
+        dev.dt.cmdBindDescriptorSets(render_cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
+                                     pipelines_.rt.layout, 1, 1,
+                                     &shared_scene_state_.descSet, 0, nullptr);
+        shared_scene_state_.lock.unlock();
     };
 
-    dev.dt.cmdPushConstants(render_cmd, pipelines_.rt.layout,
-                            VK_SHADER_STAGE_COMPUTE_BIT,
-                            0,
-                            sizeof(RTPushConstant),
-                            &push_const);
-
-    dev.dt.cmdBindDescriptorSets(render_cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
-                                 pipelines_.rt.layout, 0, 1,
-                                 &batch_state.rtSets[batch_backend.curBuffer],
-                                 0, nullptr);
-
-    dev.dt.cmdBindDescriptorSets(render_cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
-                                 pipelines_.rt.layout, 2, 1,
-                                 &cur_env_maps_->descSet.hdl,
-                                 0, nullptr);
+    startRenderSetup();
 
     // TLAS build
     for (int batch_idx = 0; batch_idx < (int)cfg_.batchSize; batch_idx++) {
@@ -1467,12 +1477,6 @@ void VulkanBackend::render(RenderBatch &batch)
             glm::uintBitsToFloat(env_backend.domainRandomization.envMapIdx);
     }
 
-    shared_scene_state_.lock.lock();
-    dev.dt.cmdBindDescriptorSets(render_cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
-                                 pipelines_.rt.layout, 1, 1,
-                                 &shared_scene_state_.descSet, 0, nullptr);
-    shared_scene_state_.lock.unlock();
-
     batch_backend.renderInputStaging.flush(dev);
 
     VkBufferCopy param_copy;
@@ -1484,6 +1488,52 @@ void VulkanBackend::render(RenderBatch &batch)
                          batch_backend.renderInputStaging.buffer,
                          batch_backend.renderInputDev.buffer,
                          1, &param_copy);
+
+
+    auto submitCmd = [&]() {
+        REQ_VK(dev.dt.endCommandBuffer(render_cmd));
+
+        VkSubmitInfo render_submit {
+            VK_STRUCTURE_TYPE_SUBMIT_INFO,
+            nullptr,
+            0,
+            nullptr,
+            nullptr,
+            1,
+            &batch_state.renderCmd,
+            0,
+            nullptr,
+        };
+
+        uint32_t swapchain_idx = 0;
+        if (present_.has_value()) {
+            render_submit.pSignalSemaphores = &batch_state.renderSignal;
+            render_submit.signalSemaphoreCount = 1;
+
+            swapchain_idx = present_->acquireNext(dev, batch_state.swapchainReady);
+        }
+
+        compute_queues_[cur_queue_].submit(
+            dev, 1, &render_submit, batch_state.fence);
+
+        if (present_.has_value()) {
+            array present_wait_semas {
+                batch_state.swapchainReady,
+                batch_state.renderSignal,
+            };
+            present_->present(dev, swapchain_idx, compute_queues_[cur_queue_],
+                              present_wait_semas.size(),
+                              present_wait_semas.data());
+        }
+    };
+
+    VkMemoryBarrier comp_barrier;
+    comp_barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+    comp_barrier.pNext = nullptr;
+    comp_barrier.srcAccessMask =
+        VK_ACCESS_SHADER_WRITE_BIT;
+    comp_barrier.dstAccessMask =
+        VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
 
     if (cfg_.adaptiveSampling) {
         dev.dt.cmdFillBuffer(render_cmd,
@@ -1540,8 +1590,8 @@ void VulkanBackend::render(RenderBatch &batch)
         };
 
         for (int batch_idx = 0; batch_idx < (int)cfg_.batchSize; batch_idx++) {
-            for (int tile_y = 0; tile_y < (int)fb_cfg_.tileHeight; tile_y++) {
-                for (int tile_x = 0; tile_x < (int)fb_cfg_.tileWidth;
+            for (int tile_y = 0; tile_y < (int)fb_cfg_.numTilesTall; tile_y++) {
+                for (int tile_x = 0; tile_x < (int)fb_cfg_.numTilesWide;
                      tile_x++) {
                     for (int sample_idx = 0; sample_idx < (int)cfg_.spp;
                          sample_idx +=
@@ -1554,10 +1604,112 @@ void VulkanBackend::render(RenderBatch &batch)
 
         batch_backend.adaptiveInput->flush(dev);
 
-        const int num_tiles = cur_tile_idx;
+        int num_tiles = cur_tile_idx;
 
         // FIXME: xy -> yz, z -> x (larger launch limit in X)
         dev.dt.cmdDispatch(render_cmd, num_tiles, 1, 1);
+
+        auto adaptiveReadback = [&]() {
+            VkBufferMemoryBarrier readback_barrier;
+            readback_barrier.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
+            readback_barrier.pNext = nullptr;
+            readback_barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+            readback_barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+            readback_barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            readback_barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            readback_barrier.buffer =
+                batch_backend.fb.outputs[batch_backend.fb.adaptiveIdx].buffer;
+            readback_barrier.offset = 0;
+            readback_barrier.size = fb_cfg_.adaptiveBytes;
+
+            dev.dt.cmdPipelineBarrier(
+                render_cmd,
+                VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                VK_PIPELINE_STAGE_TRANSFER_BIT,
+                0,
+                0, nullptr, 1, &readback_barrier, 0, nullptr);
+
+            VkBufferCopy copy_info;
+            copy_info.srcOffset = 0;
+            copy_info.dstOffset = 0;
+            copy_info.size = fb_cfg_.adaptiveBytes;
+
+            dev.dt.cmdCopyBuffer(render_cmd,
+                batch_backend.fb.outputs[batch_backend.fb.adaptiveIdx].buffer,
+                batch_backend.fb.adaptiveReadback->buffer,
+                1, &copy_info);
+        };
+
+        adaptiveReadback();
+
+        submitCmd();
+        waitForFenceInfinitely(dev, batch_state.fence);
+        resetFence(dev, batch_state.fence);
+
+        constexpr float variance_threshold = -1.00;
+
+        auto processAdaptiveTile = [&](int batch_idx, int tile_x, int tile_y) {
+            AdaptiveTile &tile = batch_state.adaptiveReadbackPtr[
+                batch_idx * fb_cfg_.numTilesTall * fb_cfg_.numTilesWide +
+                    tile_y * fb_cfg_.numTilesWide + tile_x];
+
+            float variance = tile.tileVarianceM2 / tile.numSamples;
+
+            if (variance > variance_threshold) {
+                for (int sample_idx = 0; sample_idx < (int)cfg_.spp;
+                     sample_idx +=
+                        VulkanConfig::adaptive_samples_per_thread) {
+                    writeTile(batch_idx, tile_x, tile_y, sample_idx);
+                }
+            }
+        };
+
+        constexpr int max_adaptive_iters = 10;
+        for (int adaptive_iter = 0; adaptive_iter < max_adaptive_iters;
+             adaptive_iter++) {
+            cur_tile_idx = 0;
+            frame_counter_ += cfg_.batchSize;
+
+            for (int batch_idx = 0; batch_idx < (int)cfg_.batchSize;
+                 batch_idx++) {
+                for (int tile_y = 0; tile_y < (int)fb_cfg_.numTilesTall;
+                     tile_y++) {
+                    for (int tile_x = 0; tile_x < (int)fb_cfg_.numTilesWide;
+                         tile_x++) {
+                        processAdaptiveTile(batch_idx, tile_x, tile_y);
+                    }
+                }
+            }
+
+            num_tiles = cur_tile_idx;
+
+            if (num_tiles == 0) {
+                break;
+            }
+
+            startRenderSetup();
+
+            batch_backend.adaptiveInput->flush(dev);
+
+            // Pipeline barrier on memory reads / writes from previous iter
+            // Is this necessary given fence?
+            dev.dt.cmdPipelineBarrier(render_cmd,
+                                      VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                                      VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                                      0,
+                                      1, &comp_barrier,
+                                      0, nullptr, 0, nullptr);
+
+            dev.dt.cmdDispatch(render_cmd, num_tiles, 1, 1);
+
+            adaptiveReadback();
+
+            submitCmd();
+            waitForFenceInfinitely(dev, batch_state.fence);
+            resetFence(dev, batch_state.fence);
+        }
+
+        startRenderSetup();
     } else {
         VkBufferMemoryBarrier param_barrier;
         param_barrier.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
@@ -1583,14 +1735,9 @@ void VulkanBackend::render(RenderBatch &batch)
             launch_size_.x,
             launch_size_.y,
             launch_size_.z);
-    }
 
-    VkMemoryBarrier comp_barrier;
-    comp_barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
-    comp_barrier.pNext = nullptr;
-    comp_barrier.srcAccessMask =
-        VK_ACCESS_SHADER_WRITE_BIT;
-    comp_barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        frame_counter_ += cfg_.batchSize;
+    }
 
     if (cfg_.tonemap) {
         dev.dt.cmdPipelineBarrier(render_cmd,
@@ -1632,42 +1779,7 @@ void VulkanBackend::render(RenderBatch &batch)
             launch_size_.z);
     }
 
-    REQ_VK(dev.dt.endCommandBuffer(render_cmd));
-
-    VkSubmitInfo render_submit {
-        VK_STRUCTURE_TYPE_SUBMIT_INFO,
-        nullptr,
-        0,
-        nullptr,
-        nullptr,
-        1,
-        &batch_state.renderCmd,
-        0,
-        nullptr,
-    };
-
-    uint32_t swapchain_idx = 0;
-    if (present_.has_value()) {
-        render_submit.pSignalSemaphores = &batch_state.renderSignal;
-        render_submit.signalSemaphoreCount = 1;
-
-        swapchain_idx = present_->acquireNext(dev, batch_state.swapchainReady);
-    }
-
-    compute_queues_[cur_queue_].submit(
-        dev, 1, &render_submit, batch_state.fence);
-
-    if (present_.has_value()) {
-        array present_wait_semas {
-            batch_state.swapchainReady,
-            batch_state.renderSignal,
-        };
-        present_->present(dev, swapchain_idx, compute_queues_[cur_queue_],
-                          present_wait_semas.size(),
-                          present_wait_semas.data());
-    }
-
-    frame_counter_ += cfg_.batchSize;
+    submitCmd();
 
     batch_backend.curBuffer = (batch_backend.curBuffer + 1) & 1;
     cur_queue_ = (cur_queue_ + 1) & 1;

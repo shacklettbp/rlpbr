@@ -46,8 +46,8 @@ struct FramebufferConfig {
     uint32_t frameWidth;
     uint32_t frameHeight;
 
-    uint32_t tileWidth;
-    uint32_t tileHeight;
+    uint32_t numTilesWide;
+    uint32_t numTilesTall;
 
     uint32_t outputBytes;
     uint32_t normalBytes;

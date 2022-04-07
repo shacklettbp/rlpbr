@@ -33,13 +33,14 @@ static constexpr VkBufferUsageFlags hostRTUsage =
     VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
 
 static constexpr VkBufferUsageFlags hostUsage =
-    stageUsage | shaderUsage | paramUsage | hostRTUsage;
+    stageUsage | shaderUsage | paramUsage | hostRTUsage | commonUsage;
 
 static constexpr VkBufferUsageFlags indirectUsage =
     VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT;
 
 static constexpr VkBufferUsageFlags dedicatedUsage =
-    VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+    VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT |
+    VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
 
 static constexpr VkBufferUsageFlags rtGeometryUsage =
     VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR |
