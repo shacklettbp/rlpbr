@@ -774,9 +774,9 @@ void main()
 #endif
 
 #ifdef ADAPTIVE_SAMPLING
-    const float sample_div = float(ADAPTIVE_SAMPLES_PER_THREAD);
+    const float sample_div = 1.f / float(ADAPTIVE_SAMPLES_PER_THREAD);
 #else
-    const float sample_div = float(SPP);
+    const float sample_div = 1.f / float(SPP);
 #endif
 
 #ifdef ADAPTIVE_SAMPLING
@@ -804,8 +804,8 @@ void main()
             PrimaryResult primary_result =
                 directLighting(idx, linear_idx, cam, prev_cam, env, rng);
 
-            pixel_avg += primary_result.vertState.radiance / sample_div;
-            pixel_illuminance += primary_result.illuminance / sample_div;
+            pixel_avg += primary_result.vertState.radiance * sample_div;
+            pixel_illuminance += primary_result.illuminance * sample_div;
 
             ray_diff = primary_result.rayDifferential;
             primary_normal = primary_result.hitNormal;
@@ -826,8 +826,8 @@ void main()
             view_normal = view_normal_len > 0.f ?
                 view_normal / view_normal_len : view_normal;
     
-            aux_normal += view_normal / sample_div;
-            aux_albedo += primary_result.auxAlbedo / sample_div;
+            aux_normal += view_normal * sample_div;
+            aux_albedo += primary_result.auxAlbedo * sample_div;
 #endif
         }
 
@@ -847,13 +847,13 @@ void main()
 
         vec3 indirect_contrib = indirectLighting(
             env, secondary_origin, secondary_dir,
-            secondary_pdf, bounce_flags, ray_diff, rng) / sample_div;
+            secondary_pdf, bounce_flags, ray_diff, rng) * sample_div;
 
         pixel_avg += secondary_weight * indirect_contrib;
 
         float indirect_illuminance =
             rgbToLuminance(indirect_contrib) * indirect_illuminance_weight;
-        pixel_illuminance += 0.18f * indirect_illuminance / sample_div;
+        pixel_illuminance += 0.18f * indirect_illuminance * sample_div;
     }
 
     // Proper illuminance
@@ -874,18 +874,23 @@ void main()
         adaptiveTileSpinlock(out_tile_idx);
 
         workgroupScratch[0] = 0.0;
+        workgroupCount = 0;
     }
 
     barrier();
 
     float num_subgroup_inbounds = subgroupAdd(oob ? 0.f : 1.f);
-    vec3 subgroup_pixel_avg = subgroupAdd(pixel_avg) / num_subgroup_inbounds;
+    vec3 subgroup_pixel_avg =
+        subgroupAdd(oob ? vec3(0.f) : pixel_avg) / num_subgroup_inbounds;
 
     if (subgroupElect()) {
         float pixel_scalar = (subgroup_pixel_avg.x + subgroup_pixel_avg.y +
             subgroup_pixel_avg.z) / 3.0;
         atomicAdd(workgroupScratch[0], pixel_scalar);
-        atomicAdd(workgroupCount, 1);
+
+        if (num_subgroup_inbounds > 0) {
+            atomicAdd(workgroupCount, 1);
+        }
     }
 
     barrier();
