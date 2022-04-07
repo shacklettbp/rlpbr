@@ -169,6 +169,7 @@ public:
         uint32_t batchSize;
         uint32_t maxLoaders;
         uint32_t maxTextureResolution;
+        uint32_t spp;
         bool auxiliaryOutputs;
         bool tonemap;
         bool enableRandomization;

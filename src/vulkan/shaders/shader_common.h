@@ -70,5 +70,6 @@ struct ReGIRCell {
 #define MAX_SCENES (16)
 #define MAX_ENV_MAPS (32)
 #define MAX_TILES (524288)
+#define ADAPTIVE_SAMPLES_PER_THREAD (4)
 
 #endif

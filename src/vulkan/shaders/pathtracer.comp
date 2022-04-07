@@ -774,14 +774,15 @@ void main()
 #endif
 
 #ifdef ADAPTIVE_SAMPLING
-    const int sample_div = 4;
+    const float sample_div = float(ADAPTIVE_SAMPLES_PER_THREAD);
 #else
-    const int sample_div = SPP
+    const float sample_div = float(SPP);
 #endif
 
 #ifdef ADAPTIVE_SAMPLING
     [[dont_unroll]]
-    for (int32_t loop_sample_idx = 0; loop_sample_idx < 4; loop_sample_idx++) {
+    for (int32_t loop_sample_idx = 0; loop_sample_idx < ADAPTIVE_SAMPLES_PER_THREAD;
+         loop_sample_idx++) {
         int32_t sample_idx = int32_t(tile_sample_offset) + loop_sample_idx;
 #else
 #ifndef ONE_SAMPLE
@@ -867,6 +868,8 @@ void main()
 
     uint32_t out_tile_idx = y_tile_idx * NUM_WORKGROUPS_X + x_tile_idx;
 
+    barrier();
+
     if (gl_SubgroupID == 0 && subgroupElect()) {
         adaptiveTileSpinlock(out_tile_idx);
 
@@ -889,7 +892,7 @@ void main()
 
     uint32_t old_tile_count = adaptiveTiles[out_tile_idx].numSamples; 
     uint32_t new_tile_count = old_tile_count + 1;
-    
+
     if (gl_SubgroupID == 0 && subgroupElect()) {
         float old_tile_mean = adaptiveTiles[out_tile_idx].tileMean; 
         float new_sample = workgroupScratch[0] / float(workgroupCount);
@@ -900,7 +903,6 @@ void main()
 
         adaptiveTiles[out_tile_idx].tileMean = new_mean;
         adaptiveTiles[out_tile_idx].tileVarianceM2 += delta * delta2;
-        adaptiveTiles[out_tile_idx].numSamples = new_tile_count;
     }
 
 #endif
@@ -932,7 +934,10 @@ void main()
 
     barrier();
 
+#ifdef ADAPTIVE_SAMPLING
     if (gl_SubgroupID == 0 && subgroupElect()) {
+        adaptiveTiles[out_tile_idx].numSamples = new_tile_count;
         adaptiveTileUnlock(out_tile_idx);
     }
+#endif
 }

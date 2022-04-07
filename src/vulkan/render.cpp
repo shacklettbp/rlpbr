@@ -154,7 +154,15 @@ static RenderState makeRenderState(const DeviceState &dev,
 
     uint32_t spp = cfg.spp;
     if (cfg.flags & RenderFlags::AdaptiveSample) {
-        spp = 64;
+        if (spp > 512) {
+            cerr << "SPP per launch too high for adaptive sampling" << endl;
+            fatalExit();
+        }
+
+        if (spp < VulkanConfig::adaptive_samples_per_thread) {
+            cerr << "SPP per launch too low for adaptive sampling" << endl;
+            fatalExit();
+        }
     }
 
     // In optix these are just C++ constexprs
@@ -1180,6 +1188,7 @@ VulkanBackend::VulkanBackend(const RenderConfig &cfg,
           cfg.numLoaders,
           cfg.maxTextureResolution == 0 ? ~0u :
               cfg.maxTextureResolution,
+          cfg.spp,
           cfg.flags & RenderFlags::AuxiliaryOutputs,
           cfg.flags & RenderFlags::Tonemap,
           cfg.flags & RenderFlags::Randomize,
@@ -1534,8 +1543,9 @@ void VulkanBackend::render(RenderBatch &batch)
             for (int tile_y = 0; tile_y < (int)fb_cfg_.tileHeight; tile_y++) {
                 for (int tile_x = 0; tile_x < (int)fb_cfg_.tileWidth;
                      tile_x++) {
-                    for (int sample_idx = 0; sample_idx < 64;
-                         sample_idx += 4) {
+                    for (int sample_idx = 0; sample_idx < (int)cfg_.spp;
+                         sample_idx +=
+                            VulkanConfig::adaptive_samples_per_thread) {
                         writeTile(batch_idx, tile_x, tile_y, sample_idx);
                     }
                 }
@@ -1547,11 +1557,7 @@ void VulkanBackend::render(RenderBatch &batch)
         const int num_tiles = cur_tile_idx;
 
         // FIXME: xy -> yz, z -> x (larger launch limit in X)
-        dev.dt.cmdDispatch(
-            render_cmd,
-            num_tiles,
-            VulkanConfig::localWorkgroupX,
-            VulkanConfig::localWorkgroupY);
+        dev.dt.cmdDispatch(render_cmd, num_tiles, 1, 1);
     } else {
         VkBufferMemoryBarrier param_barrier;
         param_barrier.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;

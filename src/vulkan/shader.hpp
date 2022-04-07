@@ -42,6 +42,7 @@ constexpr uint32_t max_env_maps = MAX_ENV_MAPS;
 constexpr uint32_t max_lights = MAX_LIGHTS;
 constexpr uint32_t max_tiles = MAX_TILES;
 constexpr uint32_t max_instances = 10000000;
+constexpr uint32_t adaptive_samples_per_thread = ADAPTIVE_SAMPLES_PER_THREAD;
 constexpr uint32_t compute_workgroup_size = WORKGROUP_SIZE;
 constexpr uint32_t localWorkgroupX = LOCAL_WORKGROUP_X;
 constexpr uint32_t localWorkgroupY = LOCAL_WORKGROUP_Y;
