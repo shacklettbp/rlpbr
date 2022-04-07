@@ -1646,7 +1646,8 @@ void VulkanBackend::render(RenderBatch &batch)
         waitForFenceInfinitely(dev, batch_state.fence);
         resetFence(dev, batch_state.fence);
 
-        constexpr float variance_threshold = -1.00;
+        constexpr float norm_variance_threshold = 1e-4;
+        constexpr int max_adaptive_iters = 100;
 
         auto processAdaptiveTile = [&](int batch_idx, int tile_x, int tile_y) {
             AdaptiveTile &tile = batch_state.adaptiveReadbackPtr[
@@ -1655,7 +1656,11 @@ void VulkanBackend::render(RenderBatch &batch)
 
             float variance = tile.tileVarianceM2 / tile.numSamples;
 
-            if (variance > variance_threshold) {
+            float norm_variance = tile.tileMean == 0.f ? 0.f : variance / tile.tileMean;
+
+            if ((norm_variance == 0.f && tile.numSamples < 64) ||
+                norm_variance > norm_variance_threshold) {
+
                 for (int sample_idx = 0; sample_idx < (int)cfg_.spp;
                      sample_idx +=
                         VulkanConfig::adaptive_samples_per_thread) {
@@ -1664,7 +1669,6 @@ void VulkanBackend::render(RenderBatch &batch)
             }
         };
 
-        constexpr int max_adaptive_iters = 10;
         for (int adaptive_iter = 0; adaptive_iter < max_adaptive_iters;
              adaptive_iter++) {
             cur_tile_idx = 0;
@@ -1682,6 +1686,7 @@ void VulkanBackend::render(RenderBatch &batch)
             }
 
             num_tiles = cur_tile_idx;
+            cout << adaptive_iter << " " << num_tiles << endl;
 
             if (num_tiles == 0) {
                 break;

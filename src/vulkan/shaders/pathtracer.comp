@@ -882,8 +882,9 @@ void main()
     memoryBarrierShared();
 
     float num_subgroup_inbounds = subgroupAdd(oob ? 0.f : 1.f);
-    vec3 subgroup_pixel_avg =
-        subgroupAdd(oob ? vec3(0.f) : pixel_avg) / num_subgroup_inbounds;
+    vec3 subgroup_pixel_avg = (num_subgroup_inbounds > 0.f) ?
+        (subgroupAdd(oob ? vec3(0.f) : pixel_avg) / num_subgroup_inbounds) :
+        vec3(0.f);
 
     if (subgroupElect()) {
         float pixel_scalar = (subgroup_pixel_avg.x + subgroup_pixel_avg.y +
