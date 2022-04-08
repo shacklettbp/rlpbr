@@ -82,6 +82,7 @@ struct FramebufferState {
     std::vector<VkDeviceMemory> reservoirMemory;
 
     std::optional<HostBuffer> adaptiveReadback;
+    std::optional<HostBuffer> exposureReadback;
 
     int outputIdx;
     int normalIdx;

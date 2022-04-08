@@ -40,25 +40,26 @@ float avgWorkgroupIlluminance(float illuminance, bool oob)
     }
 }
 
-void setExposureIlluminance(u32vec3 idx, float avg_illuminance
-#ifdef ADAPTIVE_SAMPLING
-    , uint32_t num_samples 
-#endif
-    )
+uint32_t getExposureIlluminanceIdx(u32vec3 idx)
 {
     uint32_t subres_x = idx.x / LOCAL_WORKGROUP_X;
     uint32_t subres_y = idx.y / LOCAL_WORKGROUP_Y;
-    uint32_t linear_idx = idx.z * NUM_WORKGROUPS_Y * NUM_WORKGROUPS_X +
+    return idx.z * NUM_WORKGROUPS_Y * NUM_WORKGROUPS_X +
         subres_y * NUM_WORKGROUPS_X + subres_x;
+}
 
-    if (gl_SubgroupID == 0 && subgroupElect()) {
 #ifdef ADAPTIVE_SAMPLING
-        float old_illuminance = tonemapIlluminanceBuffer[linear_idx];
-        float delta = avg_illuminance - old_illuminance;
-        avg_illuminance = old_illuminance + delta / float(num_samples);
+float getPrevExposureIlluminance(u32vec3 idx)
+{
+    return tonemapIlluminanceBuffer[getExposureIlluminanceIdx(idx)];
+}
 #endif
 
-        tonemapIlluminanceBuffer[linear_idx] = avg_illuminance;
+void setExposureIlluminance(u32vec3 idx, float avg_illuminance)
+{
+    if (gl_SubgroupID == 0 && subgroupElect()) {
+        tonemapIlluminanceBuffer[getExposureIlluminanceIdx(idx)] =
+            avg_illuminance;
     }
 }
 

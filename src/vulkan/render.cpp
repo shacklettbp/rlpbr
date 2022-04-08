@@ -583,6 +583,7 @@ static FramebufferState makeFramebuffer(const DeviceState &dev,
     }
 
     optional<HostBuffer> adaptive_readback;
+    optional<HostBuffer> exposure_readback;
 
     if (cfg.adaptiveSampling) {
         auto [adaptive_buffer, adaptive_mem] =
@@ -593,6 +594,7 @@ static FramebufferState makeFramebuffer(const DeviceState &dev,
 
         // FIXME: specific readback buffer type
         adaptive_readback = alloc.makeHostBuffer(fb_cfg.adaptiveBytes, true);
+        exposure_readback = alloc.makeHostBuffer(fb_cfg.illuminanceBytes, true);
     }
 
     vector<LocalBuffer> reservoirs;
@@ -617,6 +619,7 @@ static FramebufferState makeFramebuffer(const DeviceState &dev,
         move(reservoirs),
         move(reservoir_mem),
         move(adaptive_readback),
+        move(exposure_readback),
         output_idx,
         normal_idx,
         albedo_idx,
@@ -1610,24 +1613,18 @@ void VulkanBackend::render(RenderBatch &batch)
         dev.dt.cmdDispatch(render_cmd, num_tiles, 1, 1);
 
         auto adaptiveReadback = [&]() {
-            VkBufferMemoryBarrier readback_barrier;
-            readback_barrier.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
+            VkMemoryBarrier readback_barrier;
+            readback_barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
             readback_barrier.pNext = nullptr;
             readback_barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
             readback_barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
-            readback_barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-            readback_barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-            readback_barrier.buffer =
-                batch_backend.fb.outputs[batch_backend.fb.adaptiveIdx].buffer;
-            readback_barrier.offset = 0;
-            readback_barrier.size = fb_cfg_.adaptiveBytes;
 
             dev.dt.cmdPipelineBarrier(
                 render_cmd,
                 VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
                 VK_PIPELINE_STAGE_TRANSFER_BIT,
                 0,
-                0, nullptr, 1, &readback_barrier, 0, nullptr);
+                1, &readback_barrier, 0, nullptr, 0, nullptr);
 
             VkBufferCopy copy_info;
             copy_info.srcOffset = 0;
@@ -1638,6 +1635,16 @@ void VulkanBackend::render(RenderBatch &batch)
                 batch_backend.fb.outputs[batch_backend.fb.adaptiveIdx].buffer,
                 batch_backend.fb.adaptiveReadback->buffer,
                 1, &copy_info);
+
+            VkBufferCopy exposure_copy_info;
+            exposure_copy_info.srcOffset = 0;
+            exposure_copy_info.dstOffset = 0;
+            exposure_copy_info.size = fb_cfg_.illuminanceBytes;
+
+            dev.dt.cmdCopyBuffer(render_cmd,
+                batch_backend.fb.outputs[batch_backend.fb.illuminanceIdx].buffer,
+                batch_backend.fb.exposureReadback->buffer,
+                1, &exposure_copy_info);
         };
 
         adaptiveReadback();
@@ -1647,18 +1654,22 @@ void VulkanBackend::render(RenderBatch &batch)
         resetFence(dev, batch_state.fence);
 
         constexpr float norm_variance_threshold = 1e-4;
-        constexpr int max_adaptive_iters = 100;
+        constexpr int max_adaptive_iters = 10000;
 
         auto processAdaptiveTile = [&](int batch_idx, int tile_x, int tile_y) {
-            AdaptiveTile &tile = batch_state.adaptiveReadbackPtr[
+            uint32_t linear_idx =
                 batch_idx * fb_cfg_.numTilesTall * fb_cfg_.numTilesWide +
-                    tile_y * fb_cfg_.numTilesWide + tile_x];
+                    tile_y * fb_cfg_.numTilesWide + tile_x;
+            AdaptiveTile &tile = batch_state.adaptiveReadbackPtr[linear_idx];
+            float &tile_illuminance =
+                ((float *)batch_backend.fb.exposureReadback->ptr)[linear_idx];
 
             float variance = tile.tileVarianceM2 / tile.numSamples;
 
-            float norm_variance = tile.tileMean == 0.f ? 0.f : variance / tile.tileMean;
+            float norm_variance = tile_illuminance == 0.f ? 0.f :
+                tile.tileMean / tile_illuminance;
 
-            if ((norm_variance == 0.f && tile.numSamples < 64) ||
+            if ((norm_variance == 0.f && tile.numSamples < cfg_.spp * 10) ||
                 norm_variance > norm_variance_threshold) {
 
                 for (int sample_idx = 0; sample_idx < (int)cfg_.spp;

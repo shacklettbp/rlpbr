@@ -76,7 +76,7 @@ int main(int argc, char *argv[]) {
 
     uint32_t batch_size = atoi(argv[2]);
 
-    glm::u32vec2 out_dim(1920, 1080);
+    glm::u32vec2 out_dim(240, 128);
     //glm::u32vec2 out_dim(1920, 1080);
 
     uint32_t spp = 1;

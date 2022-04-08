@@ -219,44 +219,35 @@ bool traceShadowRay(in uint64_t tlas_addr, in vec3 ray_origin,
         gl_RayQueryCommittedIntersectionNoneEXT;
 }
 
-void setOutput(uint32_t base_offset, vec3 rgb, uint32_t instance_id
 #ifdef ADAPTIVE_SAMPLING
-    , uint32_t num_samples
-#endif
-    )
-{
-    rgb = min(rgb, vec3(65504.f));
 
-#ifdef ADAPTIVE_SAMPLING
+vec3 updateRunningMean(vec3 old, vec3 new, uint32_t num_samples)
+{
+    vec3 delta = new - old;
+    return old + delta / float(num_samples);
+}
+
+float updateRunningMean(float old, float new, uint32_t num_samples)
+{
+    float delta = new - old;
+    return old + delta / float(num_samples);
+}
+
+vec3 getPrevOutput(uint32_t base_offset)
+{
     uint32_t old_ab = outputBuffer[nonuniformEXT(base_offset)];
     uint32_t old_cd = outputBuffer[nonuniformEXT(base_offset + 1)];
 
     vec2 old_rg = unpackHalf2x16(old_ab);
     float old_b = unpackHalf2x16(old_cd).x;
 
-    vec3 old_rgb = vec3(old_rg.x, old_rg.y, old_b);
-
-    vec3 delta = rgb - old_rgb;
-
-    rgb = old_rgb + delta / float(num_samples);
-#endif
-
-    uint32_t ab = packHalf2x16(rgb.xy);
-    uint32_t cd = packHalf2x16(vec2(rgb.z, 0));
-    cd |= (instance_id << 16);
-
-    outputBuffer[nonuniformEXT(base_offset)] = ab;
-    outputBuffer[nonuniformEXT(base_offset + 1)] = cd;
+    return vec3(old_rg.x, old_rg.y, old_b);
 }
 
 #ifdef AUXILIARY_OUTPUTS
-void setAuxiliaries(uint32_t base_offset, vec3 albedo, vec3 normal
-#ifdef ADAPTIVE_SAMPLING
-    , uint32_t num_samples 
-#endif
-    )
+
+vec3 getPrevAlbedo(uint32_t base_offset)
 {
-#ifdef ADAPTIVE_SAMPLING
     uint16_t old_albedo_a16 = albedoBuffer[nonuniformEXT(base_offset)];
     uint16_t old_albedo_b16 = albedoBuffer[nonuniformEXT(base_offset + 1)];
     uint16_t old_albedo_c16 = albedoBuffer[nonuniformEXT(base_offset + 2)];
@@ -268,12 +259,11 @@ void setAuxiliaries(uint32_t base_offset, vec3 albedo, vec3 normal
     vec2 old_albedo_rg = unpackHalf2x16(old_albedo_ab);
     float old_albedo_b = unpackHalf2x16(old_albedo_cd).x;
 
-    vec3 old_albedo = vec3(old_albedo_rg.x, old_albedo_rg.y, old_albedo_b);
+    return vec3(old_albedo_rg.x, old_albedo_rg.y, old_albedo_b);
+}
 
-    vec3 albedo_delta = albedo - old_albedo;
-
-    albedo = old_albedo + albedo_delta / float(num_samples);
-
+vec3 getPrevNormal(uint32_t base_offset)
+{
     uint16_t old_normal_a16 = normalBuffer[nonuniformEXT(base_offset)];
     uint16_t old_normal_b16 = normalBuffer[nonuniformEXT(base_offset + 1)];
     uint16_t old_normal_c16 = normalBuffer[nonuniformEXT(base_offset + 2)];
@@ -285,13 +275,28 @@ void setAuxiliaries(uint32_t base_offset, vec3 albedo, vec3 normal
     vec2 old_normal_rg = unpackHalf2x16(old_normal_ab);
     float old_normal_b = unpackHalf2x16(old_normal_cd).x;
 
-    vec3 old_normal = vec3(old_normal_rg.x, old_normal_rg.y, old_normal_b);
+    return vec3(old_normal_rg.x, old_normal_rg.y, old_normal_b);
+}
 
-    vec3 normal_delta = normal - old_normal;
-
-    normal = old_normal + normal_delta / float(num_samples);
 #endif
 
+#endif
+
+void setOutput(uint32_t base_offset, vec3 rgb, uint32_t instance_id)
+{
+    rgb = min(rgb, vec3(65504.f));
+
+    uint32_t ab = packHalf2x16(rgb.xy);
+    uint32_t cd = packHalf2x16(vec2(rgb.z, 0));
+    cd |= (instance_id << 16);
+
+    outputBuffer[nonuniformEXT(base_offset)] = ab;
+    outputBuffer[nonuniformEXT(base_offset + 1)] = cd;
+}
+
+#ifdef AUXILIARY_OUTPUTS
+void setAuxiliaries(uint32_t base_offset, vec3 albedo, vec3 normal)
+{
     uint32_t albedo_ab = packHalf2x16(albedo.xy);
     uint32_t albedo_cd = packHalf2x16(vec2(albedo.z, 0));
     uint32_t normal_ab = packHalf2x16(normal.xy);
@@ -875,70 +880,100 @@ void main()
         adaptiveTileSpinlock(out_tile_idx);
 
         workgroupScratch[0] = 0.0;
+        workgroupScratch[1] = 0.0;
         workgroupCount = 0;
     }
 
     barrier();
     memoryBarrierShared();
 
-    float num_subgroup_inbounds = subgroupAdd(oob ? 0.f : 1.f);
-    vec3 subgroup_pixel_avg = (num_subgroup_inbounds > 0.f) ?
-        (subgroupAdd(oob ? vec3(0.f) : pixel_avg) / num_subgroup_inbounds) :
-        vec3(0.f);
+    uint32_t subgroup_count = subgroupAdd(oob ? 0 : 1);
 
     if (subgroupElect()) {
-        float pixel_scalar = (subgroup_pixel_avg.x + subgroup_pixel_avg.y +
-            subgroup_pixel_avg.z) / 3.0;
-        atomicAdd(workgroupScratch[0], pixel_scalar);
+        atomicAdd(workgroupCount, subgroup_count);
+    }
 
-        if (num_subgroup_inbounds > 0) {
-            atomicAdd(workgroupCount, 1);
-        }
+    barrier();
+    memoryBarrierShared();
+
+    uint32_t old_tile_count = adaptiveTiles[out_tile_idx].numSamples; 
+    uint32_t cur_tile_count = workgroupCount;
+    uint32_t new_tile_count = old_tile_count + cur_tile_count;
+    uint32_t per_pixel_count = new_tile_count / workgroupCount;
+
+    vec3 old_output = getPrevOutput(base_out_offset);
+    pixel_avg = updateRunningMean(old_output, pixel_avg, per_pixel_count);
+
+    vec3 output_update_delta = abs(pixel_avg - old_output);
+
+    float pixel_scalar = (output_update_delta.x + output_update_delta.y +
+                          output_update_delta.z) / 3.0;
+    pixel_scalar = oob ? 0.0 : pixel_scalar;
+
+    float subgroup_sum = subgroupAdd(pixel_scalar);
+    float subgroup_sum_sqs = subgroupAdd(pixel_scalar * pixel_scalar);
+
+    if (subgroupElect()) {
+        atomicAdd(workgroupScratch[0], subgroup_sum);
+        atomicAdd(workgroupScratch[1], subgroup_sum_sqs);
     }
 
     barrier();
     groupMemoryBarrier();
 
-    uint32_t old_tile_count = adaptiveTiles[out_tile_idx].numSamples; 
-    uint32_t new_tile_count = old_tile_count + 1;
-
     if (gl_SubgroupID == 0 && subgroupElect()) {
-        float old_tile_mean = adaptiveTiles[out_tile_idx].tileMean; 
-        float new_sample = workgroupScratch[0] / float(workgroupCount);
+        float workgroup_sum = workgroupScratch[0];
+        float workgroup_sum_sqs = workgroupScratch[1];
 
-        float delta = new_sample - old_tile_mean;
-        float new_mean = old_tile_mean + delta / float(new_tile_count);
-        float delta2 = new_sample - new_mean;
+        float workgroup_count = float(cur_tile_count);
+
+        float workgroup_m2 = workgroup_sum_sqs -
+            (workgroup_sum * workgroup_sum) / workgroup_count;
+
+        float workgroup_mean = workgroup_sum / workgroup_count;
+
+        float old_tile_mean = adaptiveTiles[out_tile_idx].tileMean; 
+
+        float delta = workgroup_mean - old_tile_mean;
+        float new_mean = old_tile_mean +
+            delta * (workgroup_count / float(new_tile_count));
+
+        float old_tile_m2 = adaptiveTiles[out_tile_idx].tileVarianceM2;
+        float new_m2 = old_tile_m2 + workgroup_m2 + delta * delta * (
+            float(old_tile_count) * workgroup_count / float(new_tile_count));
 
         adaptiveTiles[out_tile_idx].tileMean = new_mean;
-        adaptiveTiles[out_tile_idx].tileVarianceM2 += delta * delta2;
+        adaptiveTiles[out_tile_idx].tileVarianceM2 = new_m2;
     }
+
+#ifdef AUXILIARY_OUTPUTS
+    vec3 old_albedo = getPrevAlbedo(base_aux_offset);
+    aux_albedo = updateRunningMean(old_albedo, aux_albedo, per_pixel_count);
+
+    vec3 old_normal = getPrevNormal(base_aux_offset);
+    aux_normal = updateRunningMean(old_normal, aux_normal, per_pixel_count);
+#endif
+    
+#ifdef TONEMAP
+    float old_exposure_illum = getPrevExposureIlluminance(idx);
+    workgroup_illuminance = updateRunningMean(old_exposure_illum,
+                                              workgroup_illuminance,
+                                              per_pixel_count);
+#endif
 
 #endif
 
     if (!oob) {
         //setOutput(base_out_offset, pixel_avg == vec3(0.f) ? vec3(0.f) : 0.18 * pixel_avg / vec3(pixel_illuminance), instance_id);
-#ifdef ADAPTIVE_SAMPLING
-        setOutput(base_out_offset, pixel_avg, instance_id, new_tile_count);
-#else
         setOutput(base_out_offset, pixel_avg, instance_id);
-#endif
 
 #ifdef AUXILIARY_OUTPUTS
-#ifdef ADAPTIVE_SAMPLING
-        setAuxiliaries(base_aux_offset, aux_albedo, aux_normal, new_tile_count);
-#else
         setAuxiliaries(base_aux_offset, aux_albedo, aux_normal);
-#endif
 #endif
     }
 
 #ifdef TONEMAP
-#ifdef ADAPTIVE_SAMPLING
-    setExposureIlluminance(idx, workgroup_illuminance, new_tile_count);
-#else
     setExposureIlluminance(idx, workgroup_illuminance);
-#endif
 #endif
 
 #ifdef ADAPTIVE_SAMPLING
