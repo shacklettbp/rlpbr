@@ -323,7 +323,7 @@ static RenderState makeRenderState(const DeviceState &dev,
             {0, 5, clamp_sampler, 1, 0},
             {
                 1, 1, VK_NULL_HANDLE,
-                VulkanConfig::max_scenes * (1 + VulkanConfig::max_materials *
+                VulkanConfig::max_scenes * (VulkanConfig::max_materials *
                     VulkanConfig::textures_per_material),
                 VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT |
                 VK_DESCRIPTOR_BINDING_UPDATE_UNUSED_WHILE_PENDING_BIT,
