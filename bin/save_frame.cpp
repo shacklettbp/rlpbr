@@ -53,8 +53,6 @@ void saveFrame(string fprefix, const half *dev_ptr,
             float(buffer[i + 2]),
         };
 
-        assert(rgb.r >= 0 && rgb.g >= 0 && rgb.b >= 0);
-
         for (int j = 0; j < 3; j++) {
             float v = toSRGB(rgb[j]);
             if (v < 0) v = 0.f;
@@ -215,10 +213,24 @@ int main(int argc, char *argv[]) {
     renderer.waitForBatch(batch);
 
     half *base_out_ptr = renderer.getOutputPointer(batch);
+    auto [base_normal_ptr, base_albedo_ptr] =
+        renderer.getAuxiliaryOutputs(batch);
 
     for (uint32_t batch_idx = 0; batch_idx < batch_size; batch_idx++) {
         saveFrame("/tmp/out_color_" + to_string(batch_idx),
                   base_out_ptr + batch_idx * out_dim.x * out_dim.y * 4,
                   out_dim.x, out_dim.y, 4);
+    }
+
+    for (uint32_t batch_idx = 0; batch_idx < batch_size; batch_idx++) {
+        saveFrame("/tmp/out_normal_" + to_string(batch_idx),
+                  base_normal_ptr + batch_idx * out_dim.x * out_dim.y * 3,
+                  out_dim.x, out_dim.y, 3);
+    }
+
+    for (uint32_t batch_idx = 0; batch_idx < batch_size; batch_idx++) {
+        saveFrame("/tmp/out_albedo_" + to_string(batch_idx),
+                  base_albedo_ptr + batch_idx * out_dim.x * out_dim.y * 3,
+                  out_dim.x, out_dim.y, 3);
     }
 }

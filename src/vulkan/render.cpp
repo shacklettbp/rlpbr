@@ -797,13 +797,13 @@ static PerBatchState makePerBatchState(const DeviceState &dev,
 
     if (auxiliary_outputs) {
         normal_info = {
-            fb.outputs[fb.albedoIdx].buffer,
+            fb.outputs[fb.normalIdx].buffer,
             0,
             fb_cfg.normalBytes,
         };
 
         albedo_info = {
-            fb.outputs[fb.normalIdx].buffer,
+            fb.outputs[fb.albedoIdx].buffer,
             0,
             fb_cfg.albedoBytes,
         };
@@ -1653,7 +1653,7 @@ void VulkanBackend::render(RenderBatch &batch)
         waitForFenceInfinitely(dev, batch_state.fence);
         resetFence(dev, batch_state.fence);
 
-        constexpr float norm_variance_threshold = 1e-4;
+        constexpr float norm_variance_threshold = 1e-3;
         constexpr int max_adaptive_iters = 10000;
 
         auto processAdaptiveTile = [&](int batch_idx, int tile_x, int tile_y) {

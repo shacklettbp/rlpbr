@@ -248,34 +248,30 @@ vec3 getPrevOutput(uint32_t base_offset)
 
 vec3 getPrevAlbedo(uint32_t base_offset)
 {
-    uint16_t old_albedo_a16 = albedoBuffer[nonuniformEXT(base_offset)];
-    uint16_t old_albedo_b16 = albedoBuffer[nonuniformEXT(base_offset + 1)];
-    uint16_t old_albedo_c16 = albedoBuffer[nonuniformEXT(base_offset + 2)];
+    uint32_t old_albedo_a = albedoBuffer[nonuniformEXT(base_offset)];
+    uint32_t old_albedo_b = albedoBuffer[nonuniformEXT(base_offset + 1)];
+    uint32_t old_albedo_c = albedoBuffer[nonuniformEXT(base_offset + 2)];
 
-    uint32_t old_albedo_ab =
-        uint32_t(old_albedo_b16) << 16 + uint32_t(old_albedo_a16);
-    uint32_t old_albedo_cd = uint32_t(old_albedo_c16);
+    uint32_t old_albedo_ab = (old_albedo_b << 16) + old_albedo_a;
 
-    vec2 old_albedo_rg = unpackHalf2x16(old_albedo_ab);
-    float old_albedo_b = unpackHalf2x16(old_albedo_cd).x;
+    vec2 reconstructed_rg = unpackHalf2x16(old_albedo_ab);
+    float reconstructed_b = unpackHalf2x16(old_albedo_c).x;
 
-    return vec3(old_albedo_rg.x, old_albedo_rg.y, old_albedo_b);
+    return vec3(reconstructed_rg.x, reconstructed_rg.y, reconstructed_b);
 }
 
 vec3 getPrevNormal(uint32_t base_offset)
 {
-    uint16_t old_normal_a16 = normalBuffer[nonuniformEXT(base_offset)];
-    uint16_t old_normal_b16 = normalBuffer[nonuniformEXT(base_offset + 1)];
-    uint16_t old_normal_c16 = normalBuffer[nonuniformEXT(base_offset + 2)];
+    uint32_t old_normal_a = normalBuffer[nonuniformEXT(base_offset)];
+    uint32_t old_normal_b = normalBuffer[nonuniformEXT(base_offset + 1)];
+    uint32_t old_normal_c = normalBuffer[nonuniformEXT(base_offset + 2)];
 
-    uint32_t old_normal_ab =
-        uint32_t(old_normal_b16) << 16 + uint32_t(old_normal_a16);
-    uint32_t old_normal_cd = uint32_t(old_normal_c16);
+    uint32_t old_normal_ab = (old_normal_b << 16) + old_normal_a;
 
-    vec2 old_normal_rg = unpackHalf2x16(old_normal_ab);
-    float old_normal_b = unpackHalf2x16(old_normal_cd).x;
+    vec2 reconstructed_rg = unpackHalf2x16(old_normal_ab);
+    float reconstructed_b = unpackHalf2x16(old_normal_c).x;
 
-    return vec3(old_normal_rg.x, old_normal_rg.y, old_normal_b);
+    return vec3(reconstructed_rg.x, reconstructed_rg.y, reconstructed_b);
 }
 
 #endif
