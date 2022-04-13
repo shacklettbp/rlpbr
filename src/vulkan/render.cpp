@@ -535,13 +535,11 @@ static FramebufferState makeFramebuffer(const DeviceState &dev,
     }
 
     if (cfg.tonemap) {
-        illuminance_idx = 3;
-        num_buffers += 1;
+        illuminance_idx = num_buffers++;
     }
 
     if (cfg.adaptiveSampling) {
-        adaptive_idx = 4;
-        num_buffers += 1;
+        adaptive_idx = num_buffers++;
     }
 
     outputs.reserve(num_buffers);
@@ -1653,7 +1651,7 @@ void VulkanBackend::render(RenderBatch &batch)
         waitForFenceInfinitely(dev, batch_state.fence);
         resetFence(dev, batch_state.fence);
 
-        constexpr float norm_variance_threshold = 1e-3;
+        constexpr float norm_variance_threshold = 5e-4;
         constexpr int max_adaptive_iters = 10000;
 
         auto processAdaptiveTile = [&](int batch_idx, int tile_x, int tile_y) {
