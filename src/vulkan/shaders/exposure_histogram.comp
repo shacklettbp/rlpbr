@@ -1,6 +1,7 @@
 #version 460
 #extension GL_GOOGLE_include_directive : require
 #extension GL_EXT_scalar_block_layout : require
+#extension GL_EXT_nonuniform_qualifier : require
 #extension GL_EXT_shader_explicit_arithmetic_types : require
 #extension GL_EXT_shader_explicit_arithmetic_types_int8 : require
 #extension GL_EXT_shader_explicit_arithmetic_types_int16 : require
@@ -33,7 +34,7 @@ layout (set = 0, binding = 0, scalar) buffer TonemapIlluminance {
 };
 
 layout (set = 0, binding = 1, scalar) buffer HDRInput {
-    float colorBuffer[];
+    uint32_t colorBuffer[];
 };
 
 shared float histogramBins[NUM_BINS];
@@ -59,6 +60,19 @@ float exposureCompensation(float orig)
     return 0.f;
 }
 
+float getLuminance(uint32_t idx)
+{
+    uint32_t color_ab = colorBuffer[nonuniformEXT(idx)];
+    uint32_t color_cd = colorBuffer[nonuniformEXT(idx + 1)];
+    
+    vec2 rg = unpackHalf2x16(color_ab);
+    float b = unpackHalf2x16(color_cd).x;
+    
+    vec3 rgb = vec3(rg.x, rg.y, b);
+
+    return rgbToLuminance(rgb);
+}
+
 // https://knarkowicz.wordpress.com/2016/01/09/automatic-exposure/
 layout (local_size_x = LOCAL_WORKGROUP_X,
         local_size_y = LOCAL_WORKGROUP_Y,
@@ -81,12 +95,15 @@ void main()
 
             bool oob = y_idx >= RES_Y || x_idx >= RES_X;
 
-            uint32_t idx = batch_idx * RES_X * RES_Y +
-                y_idx * RES_X + x_idx;
+            y_idx = min(y_idx, RES_Y - 1);
+            x_idx = min(x_idx, RES_X - 1);
 
-            float illuminance = oob ? 0 : colorBuffer[idx];
+            uint32_t idx = batch_idx * RES_X * RES_Y * 2 +
+                y_idx * RES_X * 2 + x_idx * 2;
 
-            float bin = computeBin(illuminance);
+            float luminance = getLuminance(idx);
+
+            float bin = computeBin(luminance);
             int low_bin = clamp(int(bin), 0, NUM_BINS - 1);
             int high_bin = min(low_bin + 1, NUM_BINS - 1);
             float high_weight = fract(bin);
