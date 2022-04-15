@@ -278,9 +278,9 @@ static RenderState makeRenderState(const DeviceState &dev,
     int num_exposure_bins = 128;
     float exposure_bias = 0.f;
 
-    uint32_t thread_elems_x = divideRoundUp(num_workgroups_x,
+    uint32_t thread_elems_x = divideRoundUp(cfg.imgWidth,
                                             VulkanConfig::localWorkgroupX);
-    uint32_t thread_elems_y = divideRoundUp(num_workgroups_y,
+    uint32_t thread_elems_y = divideRoundUp(cfg.imgHeight,
                                             VulkanConfig::localWorkgroupY);
 
     vector<string> exposure_defines {
@@ -297,10 +297,10 @@ static RenderState makeRenderState(const DeviceState &dev,
             floatToString(exposure_bias) + "f)",
         string("MIN_LUMINANCE (") +
             floatToString(min_luminance) + "f)",
-        string("EXPOSURE_RES_X (") + to_string(num_workgroups_x) + "u)",
-        string("EXPOSURE_RES_Y (") + to_string(num_workgroups_y) + "u)",
-        string("THREAD_ELEMS_X (") + to_string(thread_elems_x) + "u)",
-        string("THREAD_ELEMS_Y (") + to_string(thread_elems_y) + "u)",
+        string("RES_X (") + to_string(cfg.imgWidth) + "u)",
+        string("RES_Y (") + to_string(cfg.imgHeight) + "u)",
+        string("EXPOSURE_THREAD_ELEMS_X (") + to_string(thread_elems_x) + "u)",
+        string("EXPOSURE_THREAD_ELEMS_Y (") + to_string(thread_elems_y) + "u)",
     };
 
     vector<string> tonemap_defines {
@@ -831,6 +831,9 @@ static PerBatchState makePerBatchState(const DeviceState &dev,
         desc_updates.buffer(exposure_set, &illuminance_info, 0,
                             VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
 
+        desc_updates.buffer(exposure_set, &out_info, 1,
+                            VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
+
         desc_updates.buffer(tonemap_set, &illuminance_info, 0,
                             VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
 
@@ -1194,6 +1197,7 @@ VulkanBackend::VulkanBackend(const RenderConfig &cfg,
           cfg.flags & RenderFlags::Tonemap,
           cfg.flags & RenderFlags::Randomize,
           cfg.flags & RenderFlags::AdaptiveSample,
+          cfg.flags & RenderFlags::Denoise,
       }),
       inst(makeInstance(init_cfg)),
       dev(makeDevice(inst, cfg, init_cfg)),
@@ -1220,7 +1224,10 @@ VulkanBackend::VulkanBackend(const RenderConfig &cfg,
       present_(init_cfg.needPresent ?
           make_optional<PresentationState>(inst, dev, dev.computeQF,
                                            1, glm::u32vec2(1, 1), true) :
-          optional<PresentationState>())
+          optional<PresentationState>()),
+      denoiser_((cfg.flags & RenderFlags::Denoise) ?
+                make_optional<Denoiser>(alloc, cfg) :
+                optional<Denoiser>())
 {
     if (init_cfg.needPresent) {
         present_->forceTransition(dev, compute_queues_[0], dev.computeQF);
@@ -1753,7 +1760,24 @@ void VulkanBackend::render(RenderBatch &batch)
         frame_counter_ += cfg_.batchSize;
     }
 
+    if (cfg_.denoise) {
+        submitCmd();
+        waitForFenceInfinitely(dev, batch_state.fence);
+        resetFence(dev, batch_state.fence);
+
+        denoiser_->denoise(dev, fb_cfg_, batch_state.cmdPool, 
+            render_cmd, batch_state.fence, compute_queues_[cur_queue_],
+            batch_backend.fb.outputs[batch_backend.fb.outputIdx],
+            batch_backend.fb.outputs[batch_backend.fb.albedoIdx],
+            batch_backend.fb.outputs[batch_backend.fb.normalIdx],
+            cfg_.batchSize);
+
+        startRenderSetup();
+    }
+
     if (cfg_.tonemap) {
+        // comp barrier and stages here are worst case
+        // assuming we're denoising
         dev.dt.cmdPipelineBarrier(render_cmd,
             VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
             VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1,

@@ -21,6 +21,7 @@ enum class RenderFlags : uint32_t {
     EnablePhysics = 1 << 4,
     Randomize = 1 << 5,
     AdaptiveSample = 1 << 6,
+    Denoise = 1 << 7,
 };
 
 struct RenderConfig {

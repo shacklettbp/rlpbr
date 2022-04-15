@@ -58,3 +58,5 @@ if (ENABLE_EDITOR)
         ${CMAKE_CURRENT_SOURCE_DIR}/imgui
     )
 endif()
+
+add_subdirectory(oidn EXCLUDE_FROM_ALL)

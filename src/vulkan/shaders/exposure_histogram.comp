@@ -24,11 +24,16 @@
 #undef SHADER_CONST
 
 #include "comp_definitions.h"
+#include "utils.glsl"
 
 #define NUM_BINS (128)
 
 layout (set = 0, binding = 0, scalar) buffer TonemapIlluminance {
     float illuminanceBuffer[];
+};
+
+layout (set = 0, binding = 1, scalar) buffer HDRInput {
+    float colorBuffer[];
 };
 
 shared float histogramBins[NUM_BINS];
@@ -67,20 +72,19 @@ void main()
         histogramBins[gl_LocalInvocationIndex] = 0.f;
     }
 
-    const float normalize_factor =
-        1.f / float(EXPOSURE_RES_X * EXPOSURE_RES_Y);
+    const float normalize_factor = 1.f / float(RES_X * RES_Y);
 
-    for (int y = 0; y < int(THREAD_ELEMS_Y); y++) {
-        for (int x = 0; x < int(THREAD_ELEMS_X); x++) {
-            uint32_t y_idx = xy_idx.y * THREAD_ELEMS_Y + y;
-            uint32_t x_idx = xy_idx.x * THREAD_ELEMS_X + x;
+    for (int y = 0; y < int(EXPOSURE_THREAD_ELEMS_Y); y++) {
+        for (int x = 0; x < int(EXPOSURE_THREAD_ELEMS_X); x++) {
+            uint32_t y_idx = xy_idx.y * EXPOSURE_THREAD_ELEMS_Y + y;
+            uint32_t x_idx = xy_idx.x * EXPOSURE_THREAD_ELEMS_X + x;
 
-            bool oob = y_idx >= EXPOSURE_RES_Y || x_idx >= EXPOSURE_RES_X;
+            bool oob = y_idx >= RES_Y || x_idx >= RES_X;
 
-            uint32_t idx = batch_idx * EXPOSURE_RES_X * EXPOSURE_RES_Y +
-                y_idx * EXPOSURE_RES_X + x_idx;
+            uint32_t idx = batch_idx * RES_X * RES_Y +
+                y_idx * RES_X + x_idx;
 
-            float illuminance = oob ? 0 : illuminanceBuffer[idx];
+            float illuminance = oob ? 0 : colorBuffer[idx];
 
             float bin = computeBin(illuminance);
             int low_bin = clamp(int(bin), 0, NUM_BINS - 1);

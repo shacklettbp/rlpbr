@@ -21,6 +21,7 @@
 #include "shader.hpp"
 #include "present.hpp"
 #include "scene.hpp"
+#include "denoiser.hpp"
 
 namespace RLpbr {
 namespace vk {
@@ -175,6 +176,7 @@ public:
         bool tonemap;
         bool enableRandomization;
         bool adaptiveSampling;
+        bool denoise;
     };
 
     VulkanBackend(const RenderConfig &cfg, bool validate);
@@ -227,6 +229,7 @@ private:
     uint32_t frame_counter_;
 
     std::optional<PresentationState> present_;
+    std::optional<Denoiser> denoiser_;
 };
 
 }

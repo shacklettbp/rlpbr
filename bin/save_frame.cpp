@@ -91,7 +91,7 @@ int main(int argc, char *argv[]) {
     Renderer renderer({0, 1, batch_size, out_dim.x, out_dim.y, spp, depth,
                        0, RenderMode::PathTracer,
                        RenderFlags::AuxiliaryOutputs | RenderFlags::Tonemap |
-                           RenderFlags::AdaptiveSample,
+                           /*RenderFlags::AdaptiveSample */ RenderFlags::Denoise,
                        0.f, BackendSelect::Vulkan});
 
     auto loader = renderer.makeLoader();
