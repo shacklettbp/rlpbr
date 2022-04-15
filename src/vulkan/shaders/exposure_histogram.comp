@@ -123,7 +123,7 @@ void main()
         return;
     }
 
-    const float low_drop_threshold = 0.2;
+    const float low_drop_threshold = 0.4;
     const float high_drop_threshold = 0.05;
     const float cutoff_threshold = (1.0 - high_drop_threshold);
 

@@ -267,9 +267,9 @@ static RenderState makeRenderState(const DeviceState &dev,
         return strm.str();
     };
     
-    // 22 is probably overkill but makes for 32 stops
-    float min_log_luminance = -10.f;
-    float max_log_luminance = 22.f;
+    // 64 stops. Probably overkill, especially on high end
+    float min_log_luminance = -30.f;
+    float max_log_luminance = 34.f;
     float min_luminance = exp2(min_log_luminance);
 
     float log_luminance_range = max_log_luminance - min_log_luminance;

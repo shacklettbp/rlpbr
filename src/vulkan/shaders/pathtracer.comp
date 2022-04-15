@@ -293,6 +293,10 @@ void setOutput(uint32_t base_offset, vec3 rgb, uint32_t instance_id)
 #ifdef AUXILIARY_OUTPUTS
 void setAuxiliaries(uint32_t base_offset, vec3 albedo, vec3 normal)
 {
+    // Albedo can be large on a primary env map hit, which simply
+    //reads the env map directly as albedo
+    albedo = min(albedo, vec3(65504.f));
+
     uint32_t albedo_ab = packHalf2x16(albedo.xy);
     uint32_t albedo_cd = packHalf2x16(vec2(albedo.z, 0));
     uint32_t normal_ab = packHalf2x16(normal.xy);
