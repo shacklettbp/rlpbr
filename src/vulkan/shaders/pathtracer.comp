@@ -96,7 +96,7 @@ layout (set = 0, binding = 12, scalar) writeonly buffer PrevReservoirs {
 };
 
 layout (set = 0, binding = 13, scalar) buffer Out {
-    uint32_t outputBuffer[];
+    float outputBuffer[];
 };
 
 #ifdef AUXILIARY_OUTPUTS
@@ -235,13 +235,11 @@ float updateRunningMean(float old, float new, uint32_t num_samples)
 
 vec3 getPrevOutput(uint32_t base_offset)
 {
-    uint32_t old_ab = outputBuffer[nonuniformEXT(base_offset)];
-    uint32_t old_cd = outputBuffer[nonuniformEXT(base_offset + 1)];
+    float r = outputBuffer[nonuniformEXT(base_offset)];
+    float g = outputBuffer[nonuniformEXT(base_offset + 1)];
+    float b = outputBuffer[nonuniformEXT(base_offset + 2)];
 
-    vec2 old_rg = unpackHalf2x16(old_ab);
-    float old_b = unpackHalf2x16(old_cd).x;
-
-    return vec3(old_rg.x, old_rg.y, old_b);
+    return vec3(r, g, b);
 }
 
 #ifdef AUXILIARY_OUTPUTS
@@ -280,14 +278,11 @@ vec3 getPrevNormal(uint32_t base_offset)
 
 void setOutput(uint32_t base_offset, vec3 rgb, uint32_t instance_id)
 {
-    rgb = min(rgb, vec3(65504.f));
-
-    uint32_t ab = packHalf2x16(rgb.xy);
-    uint32_t cd = packHalf2x16(vec2(rgb.z, 0));
-    cd |= (instance_id << 16);
-
-    outputBuffer[nonuniformEXT(base_offset)] = ab;
-    outputBuffer[nonuniformEXT(base_offset + 1)] = cd;
+    outputBuffer[nonuniformEXT(base_offset)] = rgb.x;
+    outputBuffer[nonuniformEXT(base_offset + 1)] = rgb.y;
+    outputBuffer[nonuniformEXT(base_offset + 2)] = rgb.z;
+    outputBuffer[nonuniformEXT(base_offset + 3)] =
+        uintBitsToFloat(instance_id);
 }
 
 #ifdef AUXILIARY_OUTPUTS
@@ -759,7 +754,7 @@ void main()
     idx.y = min(idx.y, RES_Y - 1);
 
     uint32_t linear_idx = batch_idx * RES_Y * RES_X + idx.y * RES_X + idx.x;
-    uint32_t base_out_offset = 2 * linear_idx;
+    uint32_t base_out_offset = 4 * linear_idx;
 
 #ifdef AUXILIARY_OUTPUTS
     uint32_t base_aux_offset = 3 * linear_idx;

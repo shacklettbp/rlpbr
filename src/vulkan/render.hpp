@@ -51,6 +51,7 @@ struct FramebufferConfig {
     uint32_t numTilesTall;
 
     uint32_t outputBytes;
+    uint32_t hdrBytes;
     uint32_t normalBytes;
     uint32_t albedoBytes;
     uint32_t reservoirBytes;
@@ -86,6 +87,7 @@ struct FramebufferState {
     std::optional<HostBuffer> exposureReadback;
 
     int outputIdx;
+    int hdrIdx;
     int normalIdx;
     int albedoIdx;
     int illuminanceIdx;

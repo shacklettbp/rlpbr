@@ -101,6 +101,7 @@ static FramebufferConfig getFramebufferConfig(const RenderConfig &cfg)
     uint32_t pixels_per_batch = batch_fb_width * batch_fb_height;
 
     uint32_t output_bytes = 4 * sizeof(uint16_t) * pixels_per_batch;
+    uint32_t hdr_bytes = 4 * sizeof(float) * pixels_per_batch;
     uint32_t normal_bytes = 3 * sizeof(uint16_t) * pixels_per_batch;
     uint32_t albedo_bytes = 3 * sizeof(uint16_t) * pixels_per_batch;
     uint32_t reservoir_bytes = sizeof(Reservoir) * pixels_per_batch;
@@ -130,6 +131,7 @@ static FramebufferConfig getFramebufferConfig(const RenderConfig &cfg)
         num_tiles_wide,
         num_tiles_tall,
         output_bytes,
+        hdr_bytes,
         normal_bytes,
         albedo_bytes,
         reservoir_bytes,
@@ -517,10 +519,11 @@ static FramebufferState makeFramebuffer(const DeviceState &dev,
     vector<VkDeviceMemory> backings;
     vector<CudaImportedBuffer> exported;
 
-    uint32_t num_buffers = 1;
+    uint32_t num_buffers = 2;
     uint32_t num_exported_buffers = 1;
 
     int output_idx = 0;
+    int hdr_idx = 1;
     int normal_idx = -1;
     int albedo_idx = -1;
     int illuminance_idx = -1;
@@ -530,8 +533,8 @@ static FramebufferState makeFramebuffer(const DeviceState &dev,
         num_buffers += 2;
         num_exported_buffers += 2;
 
-        normal_idx = 1;
-        albedo_idx = 2;
+        normal_idx = 2;
+        albedo_idx = 3;
     }
 
     if (cfg.tonemap) {
@@ -553,6 +556,12 @@ static FramebufferState makeFramebuffer(const DeviceState &dev,
     backings.emplace_back(move(main_mem));
     exported.emplace_back(dev, cfg.gpuID, backings.back(),
                           fb_cfg.outputBytes);
+
+    auto [hdr_buffer, hdr_mem] =
+        alloc.makeDedicatedBuffer(fb_cfg.hdrBytes);
+
+    outputs.emplace_back(move(hdr_buffer));
+    backings.emplace_back(move(hdr_mem));
 
     if (cfg.auxiliaryOutputs) {
         auto [normal_buffer, normal_mem] =
@@ -619,6 +628,7 @@ static FramebufferState makeFramebuffer(const DeviceState &dev,
         move(adaptive_readback),
         move(exposure_readback),
         output_idx,
+        hdr_idx,
         normal_idx,
         albedo_idx,
         illuminance_idx,
@@ -746,6 +756,12 @@ static PerBatchState makePerBatchState(const DeviceState &dev,
         fb_cfg.outputBytes,
     };
 
+    VkDescriptorBufferInfo hdr_info {
+        fb.outputs[fb.hdrIdx].buffer,
+        0,
+        fb_cfg.hdrBytes,
+    };
+
     for (int i = 0; i < (int)rt_sets.size(); i++) {
         desc_updates.buffer(rt_sets[i], &transform_info, 0,
                             VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
@@ -764,7 +780,7 @@ static PerBatchState makePerBatchState(const DeviceState &dev,
         desc_updates.textures(rt_sets[i], &ggx_avg_info, 1, 8);
         desc_updates.textures(rt_sets[i], &ggx_dir_info, 1, 9);
         desc_updates.textures(rt_sets[i], &ggx_inv_info, 1, 10);
-        desc_updates.buffer(rt_sets[i], &out_info, 13,
+        desc_updates.buffer(rt_sets[i], &hdr_info, 13,
                             VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
     }
 
@@ -831,13 +847,16 @@ static PerBatchState makePerBatchState(const DeviceState &dev,
         desc_updates.buffer(exposure_set, &illuminance_info, 0,
                             VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
 
-        desc_updates.buffer(exposure_set, &out_info, 1,
+        desc_updates.buffer(exposure_set, &hdr_info, 1,
                             VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
 
         desc_updates.buffer(tonemap_set, &illuminance_info, 0,
                             VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
 
-        desc_updates.buffer(tonemap_set, &out_info, 1,
+        desc_updates.buffer(tonemap_set, &hdr_info, 1,
+                            VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
+
+        desc_updates.buffer(tonemap_set, &out_info, 2,
                             VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
     }
 
@@ -1549,8 +1568,8 @@ void VulkanBackend::render(RenderBatch &batch)
             0, fb_cfg_.adaptiveBytes, 0);
 
         dev.dt.cmdFillBuffer(render_cmd,
-            batch_backend.fb.outputs[batch_backend.fb.outputIdx].buffer,
-            0, fb_cfg_.outputBytes, 0);
+            batch_backend.fb.outputs[batch_backend.fb.hdrIdx].buffer,
+            0, fb_cfg_.hdrBytes, 0);
 
         if (cfg_.tonemap) {
             dev.dt.cmdFillBuffer(render_cmd,
@@ -1767,7 +1786,7 @@ void VulkanBackend::render(RenderBatch &batch)
 
         denoiser_->denoise(dev, fb_cfg_, batch_state.cmdPool, 
             render_cmd, batch_state.fence, compute_queues_[cur_queue_],
-            batch_backend.fb.outputs[batch_backend.fb.outputIdx],
+            batch_backend.fb.outputs[batch_backend.fb.hdrIdx],
             batch_backend.fb.outputs[batch_backend.fb.albedoIdx],
             batch_backend.fb.outputs[batch_backend.fb.normalIdx],
             cfg_.batchSize);

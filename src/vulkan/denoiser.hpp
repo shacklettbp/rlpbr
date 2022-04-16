@@ -31,10 +31,10 @@ private:
     HostBuffer color_readback_;
     HostBuffer albedo_readback_;
     HostBuffer normal_readback_;
-    std::unique_ptr<uint16_t[]> color_input_;
-    std::unique_ptr<uint16_t[]> albedo_input_;
-    std::unique_ptr<uint16_t[]> normal_input_;
-    std::unique_ptr<uint16_t[]> output_;
+    std::unique_ptr<float[]> color_input_;
+    std::unique_ptr<float[]> albedo_input_;
+    std::unique_ptr<float[]> normal_input_;
+    std::unique_ptr<float[]> output_;
 
     std::unique_ptr<Impl> impl_;
 };

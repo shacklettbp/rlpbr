@@ -34,7 +34,7 @@ layout (set = 0, binding = 0, scalar) buffer TonemapIlluminance {
 };
 
 layout (set = 0, binding = 1, scalar) buffer HDRInput {
-    uint32_t colorBuffer[];
+    float colorBuffer[];
 };
 
 shared float histogramBins[NUM_BINS];
@@ -62,13 +62,11 @@ float exposureCompensation(float orig)
 
 float getLuminance(uint32_t idx)
 {
-    uint32_t color_ab = colorBuffer[nonuniformEXT(idx)];
-    uint32_t color_cd = colorBuffer[nonuniformEXT(idx + 1)];
+    float r = colorBuffer[nonuniformEXT(idx)];
+    float g = colorBuffer[nonuniformEXT(idx + 1)];
+    float b = colorBuffer[nonuniformEXT(idx + 2)];
     
-    vec2 rg = unpackHalf2x16(color_ab);
-    float b = unpackHalf2x16(color_cd).x;
-    
-    vec3 rgb = vec3(rg.x, rg.y, b);
+    vec3 rgb = vec3(r, g, b);
 
     return rgbToLuminance(rgb);
 }
@@ -98,8 +96,8 @@ void main()
             y_idx = min(y_idx, RES_Y - 1);
             x_idx = min(x_idx, RES_X - 1);
 
-            uint32_t idx = batch_idx * RES_X * RES_Y * 2 +
-                y_idx * RES_X * 2 + x_idx * 2;
+            uint32_t idx = 4 * (batch_idx * RES_X * RES_Y +
+                y_idx * RES_X + x_idx);
 
             float luminance = getLuminance(idx);
 

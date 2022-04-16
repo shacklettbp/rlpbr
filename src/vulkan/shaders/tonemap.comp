@@ -31,24 +31,30 @@ layout (set = 0, binding = 0, scalar) buffer TonemapIlluminance {
     float illuminanceBuffer[];
 };
 
-layout (set = 0, binding = 1, scalar) buffer Output {
+layout (set = 0, binding = 1, scalar) buffer Input {
+    float inputBuffer[];
+};
+
+layout (set = 0, binding = 2, scalar) buffer Output {
     uint32_t outputBuffer[];
 };
 
-vec3 getOutput(uint32_t base_offset, out uint32_t instance_id)
+vec3 getInput(uint32_t base_offset, out uint32_t instance_id)
 {
-    uint32_t ab = outputBuffer[nonuniformEXT(base_offset)];
-    uint32_t cd = outputBuffer[nonuniformEXT(base_offset + 1)];
+    float r = inputBuffer[nonuniformEXT(base_offset)];
+    float g = inputBuffer[nonuniformEXT(base_offset + 1)];
+    float b = inputBuffer[nonuniformEXT(base_offset + 2)];
+    float inst_f = inputBuffer[nonuniformEXT(base_offset + 1)];
 
-    vec2 rb = unpackHalf2x16(ab);
-    vec2 ga = unpackHalf2x16(cd);
-    instance_id = cd >> 16;
+    instance_id = floatBitsToUint(inst_f);
 
-    return vec3(rb, ga.x);
+    return vec3(r, g, b);
 }
 
 void setOutput(uint32_t base_offset, vec3 rgb, uint32_t instance_id)
 {
+    rgb = min(rgb, vec3(65504.f));
+
     uint32_t ab = packHalf2x16(rgb.xy);
     uint32_t cd = packHalf2x16(vec2(rgb.z, 0));
     cd |= instance_id << 16;
@@ -344,15 +350,18 @@ void main()
 
     float exposure = illuminanceBuffer[batch_idx];
 
-    uint32_t idx = 2 * (
+    uint32_t input_idx = 4 * (
+        batch_idx * RES_Y * RES_X + xy_idx.y * RES_X + xy_idx.x);
+
+    uint32_t output_idx = 2 * (
         batch_idx * RES_Y * RES_X + xy_idx.y * RES_X + xy_idx.x);
 
     uint32_t instance_id;
-    vec3 untonemapped = getOutput(idx, instance_id);
+    vec3 untonemapped = getInput(input_idx, instance_id);
 
     vec3 exposed = untonemapped * exposure;
 
     vec3 tonemapped = eaTonemap(exposed);
 
-    setOutput(idx, tonemapped, instance_id);
+    setOutput(output_idx, tonemapped, instance_id);
 }

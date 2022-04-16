@@ -14,7 +14,7 @@ struct Denoiser::Impl {
 
 Denoiser::Denoiser(MemoryAllocator &alloc, const RenderConfig &cfg)
     : color_readback_(alloc.makeHostBuffer(
-        cfg.batchSize * cfg.imgHeight * cfg.imgWidth * sizeof(uint16_t) * 4,
+        cfg.batchSize * cfg.imgHeight * cfg.imgWidth * sizeof(float) * 4,
         true)),
       albedo_readback_(alloc.makeHostBuffer(
         cfg.batchSize * cfg.imgHeight * cfg.imgWidth * sizeof(uint16_t) * 3,
@@ -23,13 +23,13 @@ Denoiser::Denoiser(MemoryAllocator &alloc, const RenderConfig &cfg)
         cfg.batchSize * cfg.imgHeight * cfg.imgWidth * sizeof(uint16_t) * 3,
         true)),
       color_input_(
-          new uint16_t[cfg.imgHeight * cfg.imgWidth * 3]),
+          new float[cfg.imgHeight * cfg.imgWidth * 3]),
       albedo_input_(
-          new uint16_t[cfg.imgHeight * cfg.imgWidth * 3]),
+          new float[cfg.imgHeight * cfg.imgWidth * 3]),
       normal_input_(
-          new uint16_t[cfg.imgHeight * cfg.imgWidth * 3]),
+          new float[cfg.imgHeight * cfg.imgWidth * 3]),
       output_(
-          new uint16_t[cfg.imgHeight * cfg.imgWidth * 3]),
+          new float[cfg.imgHeight * cfg.imgWidth * 3]),
       impl_([&]() {
           using namespace oidn;
 
@@ -38,12 +38,12 @@ Denoiser::Denoiser(MemoryAllocator &alloc, const RenderConfig &cfg)
 
           auto filter = dev.newFilter("RT");
           filter.setImage("color", color_input_.get(),
-                          Format::Half3, cfg.imgWidth, cfg.imgHeight);
-          filter.setImage("albedo", albedo_input_.get(), Format::Half3,
+                          Format::Float3, cfg.imgWidth, cfg.imgHeight);
+          filter.setImage("albedo", albedo_input_.get(), Format::Float3,
                           cfg.imgWidth, cfg.imgHeight);
-          filter.setImage("normal", normal_input_.get(), Format::Half3,
+          filter.setImage("normal", normal_input_.get(), Format::Float3,
                           cfg.imgWidth, cfg.imgHeight);
-          filter.setImage("output", output_.get(), Format::Half3,
+          filter.setImage("output", output_.get(), Format::Float3,
                           cfg.imgWidth, cfg.imgHeight);
           filter.set("hdr", true);
           filter.commit();
@@ -89,7 +89,7 @@ void Denoiser::denoise(const DeviceState &dev,
     VkBufferCopy color_copy;
     color_copy.srcOffset = 0;
     color_copy.dstOffset = 0;
-    color_copy.size = fb_cfg.outputBytes;
+    color_copy.size = fb_cfg.hdrBytes;
 
     dev.dt.cmdCopyBuffer(cmd, output.buffer,
                          color_readback_.buffer, 1, &color_copy);
@@ -140,16 +140,16 @@ void Denoiser::denoise(const DeviceState &dev,
                         i * fb_cfg.imgHeight * fb_cfg.imgWidth * 3;
 
                     color_input_.get()[idx_3c] = 
-                        ((uint16_t *)color_readback_.ptr)[
+                        ((float *)color_readback_.ptr)[
                            i * fb_cfg.imgHeight * fb_cfg.imgWidth * 4 +
                                y * fb_cfg.imgWidth * 4 + x * 4 + c];
 
                     albedo_input_.get()[idx_3c] =
-                        ((uint16_t *)albedo_readback_.ptr)[
+                        ((half *)albedo_readback_.ptr)[
                             batch_offset_3c + idx_3c];
 
                     normal_input_.get()[idx_3c] =
-                        ((uint16_t *)normal_readback_.ptr)[
+                        ((half *)normal_readback_.ptr)[
                             batch_offset_3c + idx_3c];
 
                     output_.get()[idx_3c] = 0;
@@ -168,7 +168,7 @@ void Denoiser::denoise(const DeviceState &dev,
         for (int y = 0; y < (int)fb_cfg.imgHeight; y++) {
             for (int x = 0; x < (int)fb_cfg.imgWidth; x++) {
                 for (int c = 0; c < 3; c++) {
-                    ((uint16_t *)color_readback_.ptr)[
+                    ((float *)color_readback_.ptr)[
                         i * fb_cfg.imgHeight * fb_cfg.imgWidth * 4 +
                             y * fb_cfg.imgWidth * 4 + x * 4 + c] =
                         output_.get()[y * fb_cfg.imgWidth * 3 + x * 3 + c];
