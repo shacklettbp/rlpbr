@@ -174,6 +174,21 @@ AuxiliaryOutputs Renderer::getAuxiliaryOutputs(RenderBatch &batch) const
     return backend_.getAuxiliaryOutputs(batch);
 }
 
+static void randomizeMaterials(vector<uint32_t> &inst_materials, int num_materials)
+{
+    if (gRandomizeMaterials) {
+        // FIXME: allow seeding, get rid of thread_local, need some kind of
+        // VulkanBackend thread context
+        static thread_local mt19937 rand_gen {random_device {}() + 5};
+
+        uniform_int_distribution<> rand_dist(0, num_materials - 1);
+
+        for (int i = 0; i < (int)inst_materials.size(); i++) {
+            inst_materials[i] = rand_dist(rand_gen);
+        }
+    }
+}
+
 Environment::Environment(EnvironmentImpl &&backend,
                          const shared_ptr<Scene> &scene,
                          const Camera &cam)
@@ -194,17 +209,7 @@ Environment::Environment(EnvironmentImpl &&backend,
 {
     // FIXME use EnvironmentInit lights
  
-    if (gRandomizeMaterials) {
-        // FIXME: allow seeding, get rid of thread_local, need some kind of
-        // VulkanBackend thread context
-        static thread_local mt19937 rand_gen {random_device {}() + 5};
-
-        uniform_int_distribution<> rand_dist(0, scene_->numMaterials - 1);
-
-        for (int i = 0; i < (int)instance_materials_.size(); i++) {
-            instance_materials_[i] = rand_dist(rand_gen);
-        }
-    }
+    randomizeMaterials(instance_materials_, scene_->numMaterials);
 }
 
 void Environment::reset()
@@ -219,6 +224,8 @@ void Environment::reset()
     free_light_ids_.clear();
     light_ids_ = scene_->envInit.lightIDs;
     light_reverse_ids_ = scene_->envInit.lightReverseIDs;
+
+    randomizeMaterials(instance_materials_, scene_->numMaterials);
 
     setDirty();
 }
