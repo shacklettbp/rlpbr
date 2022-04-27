@@ -89,9 +89,9 @@ int main(int argc, char *argv[]) {
     }
 
     Renderer renderer({0, 1, batch_size, out_dim.x, out_dim.y, spp, depth,
-                       0, RenderMode::PathTracer,
+                       0, RenderMode::Biased,
                        RenderFlags::AuxiliaryOutputs | RenderFlags::Tonemap |
-                           /*RenderFlags::AdaptiveSample */ RenderFlags::Denoise,
+                           /*RenderFlags::AdaptiveSample */ /* RenderFlags::Denoise | */ RenderFlags::RandomizeMaterials,
                        0.f, BackendSelect::Vulkan});
 
     auto loader = renderer.makeLoader();

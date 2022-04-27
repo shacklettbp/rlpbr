@@ -3,7 +3,7 @@
 
 #include "comp_definitions.h"
 
-struct SceneAddresses {
+struct GPUSceneInfo {
     VertRef vertAddr;
     IdxRef idxAddr;
     MatRef matAddr;

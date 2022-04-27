@@ -1468,7 +1468,7 @@ SharedSceneState::SharedSceneState(const DeviceState &dev,
     : lock(),
       descSet(makeDescriptorSet(dev, scene_pool, scene_layout)),
       addrData([&]() {
-          size_t num_addr_bytes = sizeof(SceneAddresses) * VulkanConfig::max_scenes;
+          size_t num_addr_bytes = sizeof(GPUSceneInfo) * VulkanConfig::max_scenes;
           HostBuffer addr_data = alloc.makeParamBuffer(num_addr_bytes);
 
           VkDescriptorBufferInfo addr_buf_info {
@@ -1884,12 +1884,12 @@ shared_ptr<Scene> VulkanLoader::loadScene(SceneLoadData &&load_info)
     desc_updates.update(dev);
 
     if (shared_scene_state_) {
-        SceneAddresses &scene_dev_addrs = 
-            ((SceneAddresses *)shared_scene_state_->addrData.ptr)[scene_id];
-        scene_dev_addrs.vertAddr = geometry_addr;
-        scene_dev_addrs.idxAddr = geometry_addr + load_info.hdr.indexOffset;
-        scene_dev_addrs.matAddr = geometry_addr + load_info.hdr.materialOffset;
-        scene_dev_addrs.meshAddr = geometry_addr + load_info.hdr.meshOffset;
+        GPUSceneInfo &gpu_scene_info = 
+            ((GPUSceneInfo *)shared_scene_state_->addrData.ptr)[scene_id];
+        gpu_scene_info.vertAddr = geometry_addr;
+        gpu_scene_info.idxAddr = geometry_addr + load_info.hdr.indexOffset;
+        gpu_scene_info.matAddr = geometry_addr + load_info.hdr.materialOffset;
+        gpu_scene_info.meshAddr = geometry_addr + load_info.hdr.meshOffset;
         shared_scene_state_->addrData.flush(dev);
         shared_scene_state_->lock.unlock();
     }
@@ -1901,6 +1901,7 @@ shared_ptr<Scene> VulkanLoader::loadScene(SceneLoadData &&load_info)
             move(load_info.meshInfo),
             move(load_info.objectInfo),
             move(load_info.envInit),
+            load_info.hdr.numMaterials,
         },
         move(texture_store),
         move(data),

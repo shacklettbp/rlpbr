@@ -132,7 +132,7 @@ layout (set = 0, binding = 18, scalar) buffer AdaptiveTiles {
 #endif
 
 layout (set = 1, binding = 0) readonly uniform Addrs {
-    SceneAddresses sceneAddrs[MAX_SCENES];
+    GPUSceneInfo sceneInfos[MAX_SCENES];
 };
 
 layout (set = 1, binding = 1) uniform texture2D textures[];

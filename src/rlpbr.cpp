@@ -11,6 +11,7 @@
 
 #include <functional>
 #include <iostream>
+#include <random>
 
 #include <glm/gtc/quaternion.hpp>
 #include <glm/gtx/transform.hpp>
@@ -76,11 +77,16 @@ static RendererImpl makeBackend(const RenderConfig &cfg)
     abort();
 }
 
+static bool gRandomizeMaterials;
+
 Renderer::Renderer(const RenderConfig &cfg)
     : backend_(makeBackend(cfg)),
       aspect_ratio_(float(cfg.imgWidth) / float(cfg.imgHeight)),
       batch_size_(cfg.batchSize)
-{}
+{
+    // hack hack hack
+    gRandomizeMaterials = cfg.flags & RenderFlags::RandomizeMaterials;
+}
 
 AssetLoader Renderer::makeLoader()
 {
@@ -92,7 +98,9 @@ Environment Renderer::makeEnvironment(const shared_ptr<Scene> &scene)
     Camera cam(glm::vec3(0.f), glm::vec3(0.f, 0.f, 1.f),
                glm::vec3(0.f, 1.f, 0.f), 90.f, aspect_ratio_);
 
-    return Environment(backend_.makeEnvironment(scene, cam), scene, cam);
+    Environment env(backend_.makeEnvironment(scene, cam), scene, cam);
+
+    return env;
 }
 
 Environment Renderer::makeEnvironment(const shared_ptr<Scene> &scene,
@@ -185,6 +193,18 @@ Environment::Environment(EnvironmentImpl &&backend,
       dirty_(true)
 {
     // FIXME use EnvironmentInit lights
+ 
+    if (gRandomizeMaterials) {
+        // FIXME: allow seeding, get rid of thread_local, need some kind of
+        // VulkanBackend thread context
+        static thread_local mt19937 rand_gen {random_device {}() + 5};
+
+        uniform_int_distribution<> rand_dist(0, scene_->numMaterials - 1);
+
+        for (int i = 0; i < (int)instance_materials_.size(); i++) {
+            instance_materials_[i] = rand_dist(rand_gen);
+        }
+    }
 }
 
 void Environment::reset()

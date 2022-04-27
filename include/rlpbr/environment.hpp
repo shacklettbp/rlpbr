@@ -113,6 +113,9 @@ public:
     inline const std::vector<uint32_t> &
         getInstanceMaterials() const;
 
+    inline std::vector<uint32_t> &
+        getInstanceMaterials();
+
     inline const std::vector<InstanceTransform> &
         getTransforms() const;
 

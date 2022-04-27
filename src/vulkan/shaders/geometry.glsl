@@ -319,14 +319,14 @@ HitInfo processHit(in rayQueryEXT ray_query, in Environment env,
     getHitParams(ray_query, barys, tri_idx,
                  material_offset, geo_idx, mesh_offset, o2w, w2o);
 
-    SceneAddresses scene_addrs = sceneAddrs[env.sceneID];
+    GPUSceneInfo scene_info = sceneInfos[env.sceneID];
 
     MeshInfo mesh_info =
-        unpackMeshInfo(scene_addrs.meshAddr, mesh_offset + geo_idx);
+        unpackMeshInfo(scene_info.meshAddr, mesh_offset + geo_idx);
 
     uint32_t index_offset = mesh_info.indexOffset + tri_idx * 3;
     Triangle hit_tri =
-        fetchTriangle(scene_addrs.vertAddr, scene_addrs.idxAddr, index_offset);
+        fetchTriangle(scene_info.vertAddr, scene_info.idxAddr, index_offset);
     vec3 world_a = transformPosition(o2w, hit_tri.a.position);
     vec3 world_b = transformPosition(o2w, hit_tri.b.position);
     vec3 world_c = transformPosition(o2w, hit_tri.c.position);
@@ -366,7 +366,7 @@ HitInfo processHit(in rayQueryEXT ray_query, in Environment env,
         env.baseMaterialOffset + material_offset + geo_idx);
 
     MaterialParams material_params =
-        unpackMaterialParams(scene_addrs.matAddr, material_id);
+        unpackMaterialParams(scene_info.matAddr, material_id);
 
     uint32_t mat_texture_offset = env.baseTextureOffset +
         material_id * TextureConstantsTexturesPerMaterial;

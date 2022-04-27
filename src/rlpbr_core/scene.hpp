@@ -175,6 +175,7 @@ struct Scene {
     std::vector<MeshInfo> meshInfo;
     std::vector<ObjectInfo> objectInfo;
     EnvironmentInit envInit;
+    uint32_t numMaterials;
 };
 
 }

@@ -245,6 +245,12 @@ const std::vector<uint32_t> &
     return instance_materials_;
 }
 
+std::vector<uint32_t> &
+    Environment::getInstanceMaterials()
+{
+    return instance_materials_;
+}
+
 const std::vector<InstanceTransform> &
     Environment::getTransforms() const
 {

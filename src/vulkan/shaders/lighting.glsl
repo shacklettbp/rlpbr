@@ -399,7 +399,7 @@ LightInfo sampleLights(inout Sampler rng, in Environment env,
     float inv_selection_pdf = float(total_lights);
     
     const int num_ris_lights = 4;
-    SceneAddresses scene_addrs = sceneAddrs[env.sceneID];
+    GPUSceneInfo scene_info = sceneInfos[env.sceneID];
 
     vec3 selected_origin;
     vec3 selected_dir;
@@ -419,8 +419,8 @@ LightInfo sampleLights(inout Sampler rng, in Environment env,
 
             PackedLight packed =
                 lights[nonuniformEXT(env.baseLightOffset + light_idx)];
-            light = unpackTriangleLight(scene_addrs.vertAddr,
-                                        scene_addrs.idxAddr,
+            light = unpackTriangleLight(scene_info.vertAddr,
+                                        scene_info.idxAddr,
                                         packed.data);
         } else {
             light.matIdx = 0;
@@ -486,7 +486,7 @@ LightInfo sampleLights(inout Sampler rng, in Environment env,
         selected_weight * (num_ris_lights / total_ris_weight) *
             (selected_dist2 / selected_cos_theta);
 
-    vec3 emittance = getMaterialEmittance(scene_addrs.matAddr,
+    vec3 emittance = getMaterialEmittance(scene_info.matAddr,
                                           selected_mat);
 
     LightInfo info;
@@ -519,10 +519,10 @@ LightInfo sampleLights(inout Sampler rng, in Environment env,
     PortalLight portal_light = {{ vec3(0), vec3(0), vec3(0), vec3(0) }};
     uint32_t light_type = 0;
 
-    SceneAddresses scene_addrs = sceneAddrs[env.sceneID];
+    GPUSceneInfo scene_info = sceneInfos[env.sceneID];
 
     if (light_idx < env.numLights) {
-        light_type = unpackLight(env, scene_addrs.vertAddr, scene_addrs.idxAddr,
+        light_type = unpackLight(env, scene_info.vertAddr, scene_info.idxAddr,
                                  light_idx, sphere_light, tri_light,
                                  portal_light);
     } else {
@@ -558,12 +558,12 @@ LightInfo sampleLights(inout Sampler rng, in Environment env,
     float shadow_len = 0;
     if (light_type == LightTypeSphere) {
         sampleSphereLight(sphere_light,
-                          scene_addrs.matAddr,
+                          scene_info.matAddr,
                           shadow_origin, inv_selection_pdf,
                           light_sample_uv, light_sample, shadow_len);
     } else if (light_type == LightTypeTriangle) {
         sampleTriangleLight(
-            tri_light, scene_addrs.matAddr,
+            tri_light, scene_info.matAddr,
             shadow_origin, light_position, inv_selection_pdf,
             light_sample, shadow_len);
     } else if (light_type == LightTypePortal) {
@@ -591,13 +591,13 @@ DeltaLightInfo getLight(in Environment env, int idx)
     PackedLight packed =
         lights[nonuniformEXT(env.baseLightOffset + idx)];
 
-    SceneAddresses scene_addrs = sceneAddrs[env.sceneID];
+    GPUSceneInfo scene_info = sceneInfos[env.sceneID];
 
-    TriangleLight light = unpackTriangleLight(scene_addrs.vertAddr,
-        scene_addrs.idxAddr,
+    TriangleLight light = unpackTriangleLight(scene_info.vertAddr,
+        scene_info.idxAddr,
         packed.data);
 
-    vec3 emittance = getMaterialEmittance(scene_addrs.matAddr,
+    vec3 emittance = getMaterialEmittance(scene_info.matAddr,
                                           light.matIdx);
 
     vec3 position = 0.5 * light.verts[0] + 0.5 * light.verts[2];

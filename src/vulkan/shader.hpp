@@ -27,7 +27,7 @@ using Shader::PackedInstance;
 using Shader::PackedCamera;
 using Shader::PackedLight;
 using Shader::PackedEnv;
-using Shader::SceneAddresses;
+using Shader::GPUSceneInfo;
 using Shader::RTPushConstant;
 using Shader::Reservoir;
 using Shader::InputTile;
