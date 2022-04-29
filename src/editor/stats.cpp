@@ -54,27 +54,52 @@ static tuple<glm::vec3, glm::vec3, uint64_t> updateMeanAndVar(
 }
 
 int main(int argc, char *argv[]) {
-    if (argc < 8) {
-        cerr << argv[0] << " scene_list batch_size res spp path_depth points_per_env mode" << endl;
+    if (argc < 9) {
+        cerr << argv[0] << " scene_list env_maps batch_size res spp path_depth points_per_env mode" << endl;
         exit(EXIT_FAILURE);
     }
 
-    uint32_t batch_size = stoul(argv[2]);
-    uint32_t res = stoul(argv[3]);
-    uint32_t spp = stoul(argv[4]);
-    uint32_t path_depth = stoul(argv[5]);
-    uint32_t points_per_env = stoul(argv[6]);
+    uint32_t batch_size = stoul(argv[3]);
+    uint32_t res = stoul(argv[4]);
+    uint32_t spp = stoul(argv[5]);
+    uint32_t path_depth = stoul(argv[6]);
+    uint32_t points_per_env = stoul(argv[7]);
     RenderMode mode {};
-    if (!strcmp(argv[7], "PathTracer")) {
+    if (!strcmp(argv[8], "PathTracer")) {
         mode = RenderMode::PathTracer;
-    } else if (!strcmp(argv[7], "Biased")) {
+    } else if (!strcmp(argv[8], "Biased")) {
         mode = RenderMode::Biased;
     }
 
+    RenderFlags flags {};
+    flags |= RenderFlags::Tonemap;
+    flags |= RenderFlags::Randomize;
+    flags |= RenderFlags::Denoise;
+    flags |= RenderFlags::AuxiliaryOutputs;
+
     Renderer renderer({0, 1, batch_size, res, res, spp, path_depth, 128,
-        mode, {}, 0.f, BackendSelect::Vulkan});
+        mode, flags, 0.f, BackendSelect::Vulkan});
 
     auto loader = renderer.makeLoader();
+
+     // Load environment maps
+    {
+        auto env_dir = filesystem::path(argv[2]);
+    
+        vector<string> env_paths;
+        vector<const char *> env_cstrs;
+        for (auto &entry : filesystem::directory_iterator(env_dir)) {
+            const string filename = entry.path().string();
+            if (string_view(filename).substr(
+                    filename.size() - strlen("bpsenv")) == "bpsenv") {
+                env_paths.emplace_back(move(filename));
+                env_cstrs.push_back(env_paths.back().c_str());
+            }
+        }
+    
+        auto env_maps = loader.loadEnvironmentMaps(env_cstrs.data(), env_cstrs.size());
+        renderer.setActiveEnvironmentMaps(move(env_maps));
+    }
 
     vector<pair<string, string>> scenes;
     {
@@ -138,7 +163,7 @@ int main(int argc, char *argv[]) {
 
         for (int i = 0; i < (int)points_per_env; i++) {
             for (int env_idx = 0; env_idx < (int)batch_size; env_idx++) {
-                glm::vec3 pos = navmesh.getRandomPoint();
+                glm::vec3 pos = navmesh.getRandomPoint() + glm::vec3(0, 1, 0);
                 float angle = rot_dist(mt) * 2.f * M_PI;
                 glm::quat rot = glm::angleAxis(angle, glm::vec3(0, 1, 0));
 

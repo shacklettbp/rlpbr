@@ -432,7 +432,7 @@ static void handleEpisodes(EditorScene &scene)
     ImGui::PushItemWidth(10.f * ImGui::GetFontSize());
     ImGuiEXT::PushDisabled(!scene.episodes.has_value());
     ImGui::DragInt("# Visualized", (int *)&scene.episodeCfg.numVisualized,
-                   10.f, 0.f, scene.episodes->episodes.size(),
+                   5.f, 0.f, scene.episodes->episodes.size(),
                    "%0.f", ImGuiSliderFlags_AlwaysClamp);
 
     ImGui::DragInt("Episode Offset", (int *)&scene.episodeCfg.offset,
