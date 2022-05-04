@@ -156,10 +156,12 @@ static RenderState makeRenderState(const DeviceState &dev,
 
     uint32_t spp = cfg.spp;
     if (cfg.flags & RenderFlags::AdaptiveSample) {
+#if 0
         if (spp > 512) {
             cerr << "SPP per launch too high for adaptive sampling" << endl;
             fatalExit();
         }
+#endif
 
         if (spp < VulkanConfig::adaptive_samples_per_thread) {
             cerr << "SPP per launch too low for adaptive sampling" << endl;
@@ -1692,6 +1694,8 @@ void VulkanBackend::render(RenderBatch &batch)
 
             float norm_variance = tile_illuminance == 0.f ? 0.f :
                 tile.tileMean / tile_illuminance;
+
+            return;
 
             if ((norm_variance == 0.f && tile.numSamples < cfg_.spp * 10) ||
                 norm_variance > norm_variance_threshold) {

@@ -1,6 +1,7 @@
 #include <rlpbr.hpp>
 #include <iostream>
 #include <cstdlib>
+#include <chrono>
 
 #include <cuda_runtime.h>
 
@@ -74,7 +75,7 @@ int main(int argc, char *argv[]) {
 
     uint32_t batch_size = atoi(argv[2]);
 
-    glm::u32vec2 out_dim(240, 128);
+    glm::u32vec2 out_dim(128, 128);
     //glm::u32vec2 out_dim(1920, 1080);
 
     uint32_t spp = 1;
@@ -89,9 +90,9 @@ int main(int argc, char *argv[]) {
     }
 
     Renderer renderer({0, 1, batch_size, out_dim.x, out_dim.y, spp, depth,
-                       0, RenderMode::Biased,
+                       0, RenderMode::PathTracer,
                        RenderFlags::AuxiliaryOutputs | RenderFlags::Tonemap |
-                           /*RenderFlags::AdaptiveSample */ /* RenderFlags::Denoise | */ RenderFlags::RandomizeMaterials,
+                           RenderFlags::AdaptiveSample | RenderFlags::Denoise /*| RenderFlags::RandomizeMaterials*/,
                        0.f, BackendSelect::Vulkan});
 
     auto loader = renderer.makeLoader();
@@ -209,8 +210,15 @@ int main(int argc, char *argv[]) {
     //envs.back().addLight(glm::vec3(8.107919, 1.345027, -1.867001), glm::vec3(10.f));
     //envs.back().addLight(glm::vec3(12.499360, 2.102839, 1.691340), glm::vec3(10.f));
 
+    auto start = chrono::system_clock::now();
+
     renderer.render(batch);
     renderer.waitForBatch(batch);
+
+    auto end = chrono::system_clock::now();
+
+    chrono::duration<double> diff = end - start;
+    cout << "Time: " << diff.count() << endl;
 
     half *base_out_ptr = renderer.getOutputPointer(batch);
     auto [base_normal_ptr, base_albedo_ptr] =
