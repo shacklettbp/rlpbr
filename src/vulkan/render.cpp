@@ -1725,7 +1725,6 @@ void VulkanBackend::render(RenderBatch &batch)
             }
 
             num_tiles = cur_tile_idx;
-            cout << adaptive_iter << " " << num_tiles << endl;
 
             if (num_tiles == 0) {
                 break;
