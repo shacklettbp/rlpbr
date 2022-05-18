@@ -5,6 +5,7 @@
 #include <glm/gtc/quaternion.hpp>
 #include <glm/gtx/string_cast.hpp>
 #include <chrono>
+#include <array>
 
 #include <GL/glew.h>
 #define GLFW_INCLUDE_NONE
