@@ -543,7 +543,7 @@ LightInfo sampleLights(inout Sampler rng, in Environment env,
         light_position = getPortalLightPoint(portal_light, light_sample_uv);
         dir_check = light_position - origin;
     } else {
-        light_sample = sampleEnvMap(env.baseTextureOffset, light_sample_uv,
+        light_sample = sampleEnvMap(env.envMapIdx, light_sample_uv,
                                     inv_selection_pdf);
 
         dir_check = light_sample.toLight;
